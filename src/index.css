@@ -197,6 +197,22 @@ p {
   white-space: nowrap;
 }
 
+.header-logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  padding: 0.45rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.header-logout:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 @media (max-width: 480px) {
   .header-profile-name {
     display: none;
