@@ -135,6 +135,12 @@ export default function HomePage() {
   const [progress, setProgress] = useState<LessonProgress[]>([])
   const [announcements, setAnnouncements] = useState<Announcement[] | null>(null)
   const [loading, setLoading] = useState(true)
+  // dataLoading = data milik pengguna (lesson, tugas, proyek, event) masih
+  // dimuat di latar belakang. Halaman ditampilkan begitu batch pertama
+  // (course + pengumuman + enrollment + progres) selesai, dan seksi-seksi
+  // ini menampilkan "Memuat…" sampai datanya tiba — supaya Beranda terasa
+  // di bawah 1 detik, bukan menunggu semua query selesai.
+  const [dataLoading, setDataLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [coursesError, setCoursesError] = useState<string | null>(null)
   const [exploreNotice, setExploreNotice] = useState<string | null>(null)
@@ -237,6 +243,12 @@ export default function HomePage() {
           if (cancelled) return
           setEnrolledIds(enr.map((e) => e.course_id))
           setProgress(prog)
+          // Batch pertama selesai — tampilkan halaman SEKARANG (hero,
+          // rekomendasi dari course yang sudah di-cache, dan Kursus Aktifku
+          // dari enrollment). Data milik pengguna (lesson, tugas, proyek,
+          // event) lanjut dimuat di latar belakang dan mengisi seksi-seksi
+          // di bawah begitu tiba.
+          if (!cancelled) setLoading(false)
           // Lesson tiap course yang diambil: untuk "Lanjutkan belajar",
           // hitung progres per course, dan daftar tugasnya. Diambil paralel
           // (bukan satu per satu) supaya Beranda tidak lama memuat.
@@ -289,7 +301,10 @@ export default function HomePage() {
             if (!cancelled) setError('Gagal memuat data dashboard. Coba muat ulang halaman.')
           }
         }
-      if (!cancelled) setLoading(false)
+      if (!cancelled) {
+        setLoading(false)
+        setDataLoading(false)
+      }
     }
     void load()
     return () => {
@@ -331,6 +346,7 @@ export default function HomePage() {
             events={events}
             submissions={submissions}
             assignments={assignments}
+            dataLoading={dataLoading}
           />
         ) : profile?.role === 'mentor' ? (
           <MentorHome
@@ -603,6 +619,7 @@ interface SiswaHomeProps {
   events: SineEvent[]
   submissions: Submission[]
   assignments: Assignment[]
+  dataLoading: boolean
 }
 
 function SiswaHome(props: SiswaHomeProps) {
@@ -623,6 +640,7 @@ function SiswaHome(props: SiswaHomeProps) {
     events,
     submissions,
     assignments,
+    dataLoading,
   } = props
 
   const firstName = profileName.trim().split(/\s+/)[0] || ''
@@ -749,7 +767,9 @@ function SiswaHome(props: SiswaHomeProps) {
           <h2>Kursus Aktifku</h2>
           <Link to="/akademi">Semua kursus →</Link>
         </div>
-        {myCourses.length === 0 ? (
+        {dataLoading ? (
+          <p className="muted">Memuat progres kursus…</p>
+        ) : myCourses.length === 0 ? (
           <div className="empty-card">
             <h3>Belum ada kursus aktif</h3>
             <p>Ikuti kursus pertamamu dari katalog Academy.</p>
@@ -789,7 +809,9 @@ function SiswaHome(props: SiswaHomeProps) {
 
       <section className="section">
         <h2>Feedback Terbaru</h2>
-        {feedback.length === 0 ? (
+        {dataLoading ? (
+          <p className="muted">Memuat feedback…</p>
+        ) : feedback.length === 0 ? (
           <div className="empty-card">
             <h3>Belum ada feedback</h3>
             <p>Feedback dan nilai dari mentor akan muncul di sini setelah tugasmu dinilai.</p>
@@ -815,7 +837,9 @@ function SiswaHome(props: SiswaHomeProps) {
 
       <section className="section">
         <h2>Tugas &amp; Tenggat</h2>
-        {tasks.length === 0 ? (
+        {dataLoading ? (
+          <p className="muted">Memuat tugas…</p>
+        ) : tasks.length === 0 ? (
           <div className="empty-card">
             <h3>Tidak ada tugas</h3>
             <p>Tugas dari kursus yang kamu ikuti akan tampil di sini.</p>
@@ -845,7 +869,9 @@ function SiswaHome(props: SiswaHomeProps) {
 
       <section className="section">
         <h2>Proyekku &amp; Rekrutmen Kru</h2>
-        {myProjects.length === 0 && openCrew.length === 0 ? (
+        {dataLoading ? (
+          <p className="muted">Memuat proyek…</p>
+        ) : myProjects.length === 0 && openCrew.length === 0 ? (
           <p className="empty">
             Belum ada proyek atau panggilan kru.{' '}
             <Link to="/proyek">Lihat Projects</Link>
@@ -887,7 +913,9 @@ function SiswaHome(props: SiswaHomeProps) {
           <h2>Event Mendatang</h2>
           <Link to="/acara">Semua event →</Link>
         </div>
-        {upcomingEvents.length === 0 ? (
+        {dataLoading ? (
+          <p className="muted">Memuat event…</p>
+        ) : upcomingEvents.length === 0 ? (
           <p className="empty">Belum ada event mendatang.</p>
         ) : (
           <ul className="discussion-list">
@@ -1449,9 +1477,70 @@ function AdminHome(props: {
 
   async function load() {
     try {
-      const { data: profiles, error: profilesErr } = await supabase
-        .from('profiles')
-        .select('id,name,role')
+      // Tujuh fetch independen dijalankan PARALEL dalam satu batch, bukan
+      // berurutan — sebelumnya delapan await berurutan membuat Beranda admin
+      // paling lambat. fetchProfileNames menyusul setelah profil didapat.
+      const [
+        { data: profiles, error: profilesErr },
+        { count: filmCount },
+        { count: enrCount },
+        appData,
+        schoolData,
+        dData,
+        mData,
+      ] = await Promise.all([
+        supabase.from('profiles').select('id,name,role'),
+        safe(
+          async () =>
+            supabase.from('films').select('id', { count: 'exact', head: true }),
+          { count: 0 } as { count: number | null },
+        ),
+        safe(
+          async () =>
+            supabase.from('enrollments').select('id', { count: 'exact', head: true }),
+          { count: 0 } as { count: number | null },
+        ),
+        safe(
+          async () => {
+            const { data } = await supabase
+              .from('mentor_applications')
+              .select('*')
+              .eq('status', 'pending')
+              .order('created_at')
+            return (data ?? []) as MentorApplication[]
+          },
+          [] as MentorApplication[],
+        ),
+        safe(
+          async () => {
+            const { data } = await supabase.from('schools').select('*').order('name')
+            return (data ?? []) as School[]
+          },
+          [] as School[],
+        ),
+        safe(
+          async () => {
+            const { data } = await supabase
+              .from('discussion_reports')
+              .select('*')
+              .eq('status', 'open')
+              .order('created_at', { ascending: false })
+            return (data ?? []) as DiscussionReport[]
+          },
+          [] as DiscussionReport[],
+        ),
+        safe(
+          async () => {
+            const { data } = await supabase
+              .from('moderation_reports')
+              .select('*')
+              .eq('status', 'open')
+              .order('created_at', { ascending: false })
+            return (data ?? []) as ModerationReport[]
+          },
+          [] as ModerationReport[],
+        ),
+      ])
       // Kegagalan memuat profil jangan disamarkan sebagai 0 pengguna.
       if (profilesErr) {
         setUsersError('Data pengguna gagal dimuat.')
@@ -1459,56 +1548,6 @@ function AdminHome(props: {
         setUsersError(null)
       }
       const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
-      const { count: filmCount } = await safe(
-        async () =>
-          supabase.from('films').select('id', { count: 'exact', head: true }),
-        { count: 0 } as { count: number | null },
-      )
-      const { count: enrCount } = await safe(
-        async () =>
-          supabase.from('enrollments').select('id', { count: 'exact', head: true }),
-        { count: 0 } as { count: number | null },
-      )
-      const appData = await safe(
-        async () => {
-          const { data } = await supabase
-            .from('mentor_applications')
-            .select('*')
-            .eq('status', 'pending')
-            .order('created_at')
-          return (data ?? []) as MentorApplication[]
-        },
-        [] as MentorApplication[],
-      )
-      const schoolData = await safe(
-        async () => {
-          const { data } = await supabase.from('schools').select('*').order('name')
-          return (data ?? []) as School[]
-        },
-        [] as School[],
-      )
-      const dData = await safe(
-        async () => {
-          const { data } = await supabase
-            .from('discussion_reports')
-            .select('*')
-            .eq('status', 'open')
-            .order('created_at', { ascending: false })
-          return (data ?? []) as DiscussionReport[]
-        },
-        [] as DiscussionReport[],
-      )
-      const mData = await safe(
-        async () => {
-          const { data } = await supabase
-            .from('moderation_reports')
-            .select('*')
-            .eq('status', 'open')
-            .order('created_at', { ascending: false })
-          return (data ?? []) as ModerationReport[]
-        },
-        [] as ModerationReport[],
-      )
       setNames(await fetchProfileNames(profs.map((p) => p.id)))
       setCounts({
         users: profs.length,
