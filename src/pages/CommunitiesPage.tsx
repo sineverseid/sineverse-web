@@ -21,7 +21,7 @@ import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import { fetchCommunities, fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
 import type {
   Community,
   CommunityProposal,
@@ -85,16 +85,22 @@ export default function CommunitiesPage() {
 
   async function load() {
     try {
-      const q = supabase.from('communities').select('*')
-      const { data, error: qErr } = isAdmin
-        ? await q.order('name')
-        : await q.eq('is_approved', true).order('name')
-      if (qErr) {
-        if (isMissingTableError(qErr)) setItems(null)
-        else throw qErr
-        return
+      // Daftar community (katalog, di-cache). Admin melihat semua, yang lain
+      // hanya yang disetujui — filter diterapkan di JS supaya hasil cache
+      // yang sama bisa dipakai kedua peran.
+      let all: Community[]
+      try {
+        all = await fetchCommunities()
+      } catch (err) {
+        if (isMissingTableError(err)) {
+          setItems(null)
+          return
+        }
+        throw err
       }
-      setItems((data ?? []) as Community[])
+      const visible = isAdmin ? all : all.filter((c) => c.is_approved)
+      visible.sort((a, b) => a.name.localeCompare(b.name, 'id'))
+      setItems(visible)
       // Semua fetch independen di bawah ini dijalankan paralel dalam satu
       // batch; yang bergantung pada hasilnya (seeking butuh mineSet, nama
       // butuh usulan/laporan) menyusul di batch kedua.
@@ -363,6 +369,7 @@ export default function CommunitiesPage() {
         role: 'member',
       })
       await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
+      invalidateCatalogCache()
       setNotice(`Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`)
     } else {
       setNotice('Usulan komunitas ditolak.')
@@ -376,6 +383,7 @@ export default function CommunitiesPage() {
     if (delErr) setNotice(friendlyDbError())
     else {
       await logAudit('community.deleted', 'communities', id, { name: communityName })
+      invalidateCatalogCache()
       setNotice(`Komunitas "${communityName}" dihapus.`)
       await load()
     }

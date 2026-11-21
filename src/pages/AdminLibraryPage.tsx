@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { invalidateCatalogCache, supabase } from '../lib/supabase'
 import type { LibraryItem } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -68,6 +68,7 @@ export default function AdminLibraryPage() {
       setNotice(insErr.message)
       return
     }
+    invalidateCatalogCache()
     setNotice('Item Pustaka ditambahkan.')
     setTitle('')
     setCategory('')
@@ -87,6 +88,7 @@ export default function AdminLibraryPage() {
       setNotice(delErr.message)
       return
     }
+    invalidateCatalogCache()
     setNotice(`"${itemTitle}" dihapus dari Pustaka.`)
     await load()
   }

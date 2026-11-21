@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { supabase } from '../lib/supabase'
+import { fetchLibraryItems, invalidateCatalogCache, supabase } from '../lib/supabase'
 import type { LibraryItem } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -53,9 +53,13 @@ export function LibraryPage() {
     let cancelled = false
     async function load() {
       try {
-        // Daftar item dan bookmark independen — dimuat paralel.
+        // Daftar item (katalog, di-cache) dan bookmark (milik pengguna,
+        // selalu segar) independen — dimuat paralel.
         const [{ data, error: qErr }, { data: bm }] = await Promise.all([
-          supabase.from('library_items').select('*').order('title'),
+          fetchLibraryItems().then(
+            (rows) => ({ data: rows as LibraryItem[], error: null }),
+            (err: unknown) => ({ data: null as LibraryItem[] | null, error: err }),
+          ),
           user
             ? supabase.from('library_bookmarks').select('library_item_id').eq('user_id', user.id)
             : Promise.resolve({ data: null } as { data: null }),
@@ -249,6 +253,7 @@ export function LibraryDetailPage() {
     }).eq('id', currentItem.id)
     if (updErr) setNotice(updErr.message)
     else {
+      invalidateCatalogCache()
       setItem({ ...currentItem, title: editTitle.trim(), body: editBody, legal_basis: editLegal.trim() || null, attribution: editAttr.trim() || null, usage_limits: editLimits.trim() || null })
       setEditing(false)
       setNotice('Item Pustaka diperbarui.')
@@ -260,6 +265,7 @@ export function LibraryDetailPage() {
     const { error: delErr } = await supabase.from('library_items').delete().eq('id', currentItem.id)
     if (delErr) setNotice(delErr.message)
     else {
+      invalidateCatalogCache()
       setNotice('Item dihapus. Kembali ke daftar Pustaka…')
       window.location.hash = '#/pustaka'
     }

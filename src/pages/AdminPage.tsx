@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import { fetchCourses, fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -250,6 +250,7 @@ export default function AdminPage() {
     if (updErr) setNotice(updErr.message)
     else {
       await logAudit('course.mentor_assigned', 'courses', assignCourse, { mentor_id: assignMentor || null })
+      invalidateCatalogCache()
       setNotice(assignMentor ? 'Mentor ditetapkan untuk course ini.' : 'Mentor dilepas — course kembali tanpa mentor.')
       setAssignCourse('')
       setAssignMentor('')
@@ -268,6 +269,7 @@ export default function AdminPage() {
     })
     if (insErr) setNotice(insErr.message)
     else {
+      invalidateCatalogCache()
       setNotice('Course baru dibuat (tanpa mentor — mentor bisa mengajukan lewat "Ajukan untuk Mengampu").')
       setNewCourseTitle('')
       setNewCourseDesc('')
@@ -325,6 +327,7 @@ export default function AdminPage() {
     if (delErr) setNotice(delErr.message)
     else {
       await logAudit('community.deleted', 'communities', id, { name })
+      invalidateCatalogCache()
       setNotice(`Komunitas "${name}" dihapus.`)
       await load()
     }

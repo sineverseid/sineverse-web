@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourse, fetchModules, supabase } from '../lib/supabase'
+import { fetchCourse, fetchModules, invalidateCatalogCache, supabase } from '../lib/supabase'
 import type { Assignment, CompetencyExam, Lesson, LessonResource, Module, Quiz } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -157,6 +157,7 @@ export default function CourseBuilderPage() {
     })
     if (insErr) fail(insErr)
     else {
+      invalidateCatalogCache()
       setModuleTitle('')
       ok('Modul ditambahkan.')
       await refresh(currentCourse.id)
@@ -178,6 +179,7 @@ export default function CourseBuilderPage() {
     })
     if (insErr) fail(insErr)
     else {
+      invalidateCatalogCache()
       setLessonTitle('')
       setLessonVideo('')
       setLessonContent('')
