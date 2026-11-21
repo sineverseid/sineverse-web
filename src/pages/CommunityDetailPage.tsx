@@ -1,13 +1,14 @@
 // SINEVERSE — Feed komunitas: postingan + balasan + sematkan (004).
 // Hanya anggota komunitas yang bisa membaca/menulis feed (RLS); pin oleh
-// pembuat komunitas atau admin.
+// pembuat komunitas atau admin. Pembuat/admin juga bisa menghidupkan/
+// mematikan penanda "Mencari pembimbing" (011).
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { supabase } from '../lib/supabase'
+import { logAudit, supabase } from '../lib/supabase'
 import type { Community, CommunityPost, CommunityPostReply } from '../lib/types'
 
 export default function CommunityDetailPage() {
@@ -106,6 +107,29 @@ export default function CommunityDetailPage() {
   if (!community) return <div className="page"><p className="empty">Komunitas tidak ditemukan.</p><Link to="/komunitas">Kembali</Link></div>
 
   const canPin = profile?.role === 'admin' || community.created_by === user?.id
+  // Pembuat community (atau admin) boleh menghidupkan/mematikan penanda
+  // "Mencari pembimbing" (011).
+  const canManageSeeking = canPin
+
+  async function handleToggleSeeking() {
+    if (!community || !canManageSeeking) return
+    const next = !(community.seeking_mentor ?? false)
+    const { error: updErr } = await supabase
+      .from('communities')
+      .update({ seeking_mentor: next })
+      .eq('id', community.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    setCommunity({ ...community, seeking_mentor: next })
+    await logAudit('community.seeking_mentor', 'communities', community.id, { seeking_mentor: next })
+    setNotice(
+      next
+        ? 'Community ini sekarang ditandai sedang mencari pembimbing — mentor akan melihatnya di halaman Community.'
+        : 'Penanda "Mencari pembimbing" dimatikan untuk community ini.',
+    )
+  }
 
   async function handlePost(e: FormEvent) {
     e.preventDefault()
@@ -156,6 +180,21 @@ export default function CommunityDetailPage() {
       <Link to="/komunitas" className="back-link">← Semua Komunitas</Link>
       <h1>{community.name}</h1>
       <p className="muted">{community.description ?? ''}</p>
+      {canManageSeeking && (
+        <p>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={community.seeking_mentor ?? false}
+              onChange={() => void handleToggleSeeking()}
+            />
+            Mencari pembimbing
+          </label>
+          <span className="muted">
+            {' '}— bila aktif, community ini tampil di "Community Mencari Pembimbing" untuk mentor.
+          </span>
+        </p>
+      )}
       {notice && <p className="notice-box">{notice}</p>}
       {!isMember && (
         <p className="empty">

@@ -5,10 +5,12 @@
 //
 // Per peran:
 // - Siswa: seperti semula — semua community yang disetujui + tombol Gabung.
-// - Mentor: community yang diikuti (status Anggota + tombol Buka) dan
-//   community lain yang bisa diikuti (tombol Gabung); bisa mengusulkan
-//   community baru. TIDAK ada data "community mencari pembimbing" di
-//   database — bagian itu tidak ditampilkan (bukan dikarang).
+// - Mentor: community yang diikuti (status Anggota/Pembimbing + tombol
+//   Buka), "Community Mencari Pembimbing" (011: community yang disetujui
+//   dan menandai seeking_mentor — tombol "Jadi Pembimbing"), community
+//   lain yang bisa diikuti (tombol Gabung); bisa mengusulkan community
+//   baru. Pembuat community (atau admin, di halaman detail) bisa
+//   menghidupkan/mematikan penanda "Mencari pembimbing".
 // - Admin: TIDAK bergabung ke community. Tampilan moderasi: usulan
 //   menunggu persetujuan (Setujui & Buat / Tolak), laporan community
 //   (moderation_reports target community), semua community dengan status
@@ -31,6 +33,7 @@ import EmptyState from '../components/EmptyState'
 function memberRoleLabel(role: string | null): string {
   if (!role) return 'Anggota'
   if (role === 'member') return 'Anggota'
+  if (role === 'mentor') return 'Pembimbing'
   return role
 }
 
@@ -39,6 +42,8 @@ export default function CommunitiesPage() {
   const [items, setItems] = useState<Community[] | null>(null)
   const [mine, setMine] = useState<Set<string>>(new Set())
   const [myRoles, setMyRoles] = useState<Map<string, string>>(new Map())
+  // Mentor: community yang sedang mencari pembimbing (011).
+  const [seeking, setSeeking] = useState<Community[]>([])
   const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map())
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
   const [proposalNames, setProposalNames] = useState<Map<string, string>>(new Map())
@@ -64,14 +69,32 @@ export default function CommunitiesPage() {
         return
       }
       setItems((data ?? []) as Community[])
+      let mineSet = new Set<string>()
       if (user) {
         const { data: mem } = await supabase
           .from('community_members')
           .select('community_id,role')
           .eq('user_id', user.id)
         const memRows = (mem ?? []) as { community_id: string; role: string | null }[]
-        setMine(new Set(memRows.map((m) => m.community_id)))
+        mineSet = new Set(memRows.map((m) => m.community_id))
+        setMine(mineSet)
         setMyRoles(new Map(memRows.map((m) => [m.community_id, m.role ?? 'member'])))
+      }
+      // Mentor: community yang sedang mencari pembimbing (011) dan belum
+      // diikuti mentor ini. Bila kolom seeking_mentor belum ada (migrasi
+      // 011 belum diterapkan), query gagal — tampilkan daftar kosong,
+      // bukan crash.
+      if (isMentor) {
+        const { data: seekData, error: seekErr } = await supabase
+          .from('communities')
+          .select('*')
+          .eq('is_approved', true)
+          .eq('seeking_mentor', true)
+          .order('name')
+        if (seekErr) setSeeking([])
+        else setSeeking(((seekData ?? []) as Community[]).filter((c) => !mineSet.has(c.id)))
+      } else {
+        setSeeking([])
       }
       // Jumlah anggota per community (mentor + admin).
       if (isAdmin || isMentor) {
@@ -157,6 +180,45 @@ export default function CommunitiesPage() {
         setMyRoles((m) => new Map(m).set(id, 'member'))
       }
     }
+  }
+
+  // Mentor menjadi pembimbing community yang sedang mencari pembimbing
+  // (011): gabung dengan role 'mentor' (atau naikkan role bila sudah
+  // jadi anggota biasa) + matikan penanda seeking_mentor community itu.
+  async function handleBecomeMentor(id: string, communityName: string) {
+    if (!user) return
+    const alreadyMember = mine.has(id)
+    const { error: memErr } = alreadyMember
+      ? await supabase
+          .from('community_members')
+          .update({ role: 'mentor' })
+          .eq('community_id', id)
+          .eq('user_id', user.id)
+      : await supabase.from('community_members').insert({
+          community_id: id,
+          user_id: user.id,
+          role: 'mentor',
+        })
+    if (memErr) {
+      setNotice(memErr.message)
+      return
+    }
+    const { error: updErr } = await supabase
+      .from('communities')
+      .update({ seeking_mentor: false })
+      .eq('id', id)
+    if (updErr) {
+      // Keanggotaan pembimbing sudah tersimpan; penanda seeking gagal
+      // dimatikan (mis. migrasi 011 belum diterapkan) — beri tahu,
+      // jangan diam.
+      setNotice(
+        `Kamu kini menjadi pembimbing "${communityName}", tetapi penanda "Mencari pembimbing" gagal dimatikan: ${updErr.message}`,
+      )
+    } else {
+      setNotice(`Kamu kini menjadi pembimbing komunitas "${communityName}".`)
+    }
+    await logAudit('community.mentor_joined', 'communities', id, { name: communityName })
+    await load()
   }
 
   async function handlePropose(e: FormEvent) {
@@ -345,6 +407,7 @@ export default function CommunitiesPage() {
                   <p className="discussion-meta">
                     {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
                     {memberCounts.get(c.id) ?? 0} anggota
+                    {c.seeking_mentor ? ' · Mencari pembimbing' : ''}
                   </p>
                   <h3>
                     <Link to={`/komunitas/${c.id}`}>{c.name}</Link>
@@ -382,6 +445,40 @@ export default function CommunitiesPage() {
         {notice && <p className="notice-box">{notice}</p>}
 
         <section className="section">
+          <h2>Community Mencari Pembimbing ({seeking.length})</h2>
+          <p className="muted">
+            Community yang sedang membutuhkan pembimbing. Jadi pembimbing berarti kamu membimbing
+            diskusi dan karya anggota community itu.
+          </p>
+          {seeking.length === 0 ? (
+            <p className="empty">Tidak ada community yang sedang mencari pembimbing saat ini.</p>
+          ) : (
+            <ul className="course-list">
+              {seeking.map((c) => (
+                <li key={c.id} className="course-card">
+                  <Link to={`/komunitas/${c.id}`}>
+                    <h3>{c.name}</h3>
+                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                    <p className="muted">
+                      Mencari pembimbing · {memberCounts.get(c.id) ?? 0} anggota
+                    </p>
+                  </Link>
+                  <div style={{ padding: '0 1.25rem 1rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void handleBecomeMentor(c.id, c.name)}
+                    >
+                      Jadi Pembimbing
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="section">
           <h2>Community yang Kamu Ikuti ({joined.length})</h2>
           {joined.length === 0 ? (
             <p className="empty">Kamu belum mengikuti community apa pun.</p>
@@ -397,10 +494,19 @@ export default function CommunitiesPage() {
                       {memberCounts.get(c.id) ?? 0} anggota
                     </p>
                   </Link>
-                  <div style={{ padding: '0 1.25rem 1rem', display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ padding: '0 1.25rem 1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <Link to={`/komunitas/${c.id}`} className="btn btn-primary btn-small">
                       Buka
                     </Link>
+                    {myRoles.get(c.id) === 'member' && c.seeking_mentor ? (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        onClick={() => void handleBecomeMentor(c.id, c.name)}
+                      >
+                        Jadi Pembimbing
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"

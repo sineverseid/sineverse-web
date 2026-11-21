@@ -17,6 +17,8 @@ export default function FilmDetailPage() {
   const [missing, setMissing] = useState(false)
   const [reviews, setReviews] = useState<FilmReview[]>([])
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  // Nama penilai bila film ini ditolak admin (011).
+  const [reviewerName, setReviewerName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -46,7 +48,16 @@ export default function FilmDetailPage() {
         }
         if (cancelled) return
         setFilm(data as Film | null)
-        if (data) await loadReviews(filmId)
+        if (data) {
+          const f = data as Film
+          if (f.reviewed_by) {
+            const reviewerNames = await fetchProfileNames([f.reviewed_by]).catch(
+              () => new Map<string, string>(),
+            )
+            if (!cancelled) setReviewerName(reviewerNames.get(f.reviewed_by) ?? null)
+          }
+          await loadReviews(filmId)
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat film.')
       } finally {
@@ -106,6 +117,20 @@ export default function FilmDetailPage() {
         {currentFilm.description ?? ''} · {currentFilm.status} · {currentFilm.visibility}
         {avg !== null ? ` · Rata-rata ulasan: ${avg.toFixed(1)} / 5 (${reviews.length} ulasan)` : ' · Belum ada ulasan'}
       </p>
+      {currentFilm.status === 'rejected' && (isOwner || isAdmin) ? (
+        <p className="error-box">
+          Film ini dinilai tidak layak tampil di Showcase.
+          {currentFilm.review_note ? (
+            <>
+              <br />
+              Alasan: {currentFilm.review_note}
+            </>
+          ) : null}
+          <br />
+          Dinilai oleh {reviewerName ?? 'admin'}
+          {currentFilm.reviewed_at ? ` · ${fmtDate(currentFilm.reviewed_at)}` : ''}
+        </p>
+      ) : null}
       {currentFilm.poster_url ? (
         <img src={currentFilm.poster_url} alt={`Poster ${currentFilm.title}`} style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} />
       ) : (

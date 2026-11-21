@@ -4,12 +4,11 @@
 //
 // Kurasi admin: film baru masuk sebagai 'draft' (menunggu dinilai admin),
 // BUKAN langsung published. Admin melihat bagian "Perlu Dinilai" di atas
-// galeri — "Layak Ditampilkan" mengubah status menjadi 'published',
-// "Tidak Layak" mengembalikan film sebagai draft privat pemilik + alasan
-// dicatat di audit log. Tabel films TIDAK punya kolom penilai/alasan
-// (reviewed_by/review_note) — keputusan dicatat lewat logAudit, bukan
-// di baris film. Film 'draft' + visibility 'private' (ditolak atau
-// dipilih privat oleh pemilik) tidak masuk antrean penilaian.
+// galeri — "Layak Ditampilkan" mengubah status menjadi 'published'.
+// "Tidak Layak" mengubah status menjadi 'rejected' (011) beserta
+// reviewed_by / review_note / reviewed_at — pemilik melihat alasan
+// penolakan di "Film Saya" dan di halaman detail film. Film 'rejected'
+// tidak pernah tampil di galeri publik.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -22,10 +21,19 @@ import type { Film } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
+function filmStatusLabel(status: string): string {
+  if (status === 'draft') return 'Draft'
+  if (status === 'published') return 'Dipublikasikan'
+  if (status === 'rejected') return 'Ditolak'
+  return status
+}
+
 export default function ShowcasePage() {
   const { user, profile, loading: authLoading } = useAuth()
   const [films, setFilms] = useState<Film[] | null>(null)
   const [myFilms, setMyFilms] = useState<Film[]>([])
+  // Nama penilai untuk film-film saya yang ditolak (011).
+  const [reviewerNames, setReviewerNames] = useState<Map<string, string>>(new Map())
   // Antrean kurasi admin: film draft + publik yang menunggu dinilai.
   const [pending, setPending] = useState<Film[]>([])
   const [ownerNames, setOwnerNames] = useState<Map<string, string>>(new Map())
@@ -58,7 +66,16 @@ export default function ShowcasePage() {
       setFilms((data ?? []) as Film[])
       if (user) {
         const { data: mine } = await supabase.from('films').select('*').eq('owner_id', user.id).order('created_at', { ascending: false })
-        setMyFilms((mine ?? []) as Film[])
+        const mineRows = (mine ?? []) as Film[]
+        setMyFilms(mineRows)
+        const reviewerIds = [...new Set(mineRows.map((f) => f.reviewed_by).filter((v): v is string => !!v))]
+        if (reviewerIds.length > 0) {
+          setReviewerNames(
+            await fetchProfileNames(reviewerIds).catch(() => new Map<string, string>()),
+          )
+        } else {
+          setReviewerNames(new Map())
+        }
       }
       if (isAdmin) {
         const { data: pend } = await supabase
@@ -113,9 +130,10 @@ export default function ShowcasePage() {
     }
   }
 
-  // Kurasi admin: setujui (published) atau tolak (kembali jadi draft
-  // privat pemilik — status 'draft' tidak punya nilai 'rejected', jadi
-  // penolakan dicatat di audit log beserta alasannya).
+  // Kurasi admin: setujui (published) atau tolak (status 'rejected'
+  // beserta penilai, alasan, dan tanggal penilaian — 011). Film yang
+  // ditolak keluar dari antrean dan tidak tampil di galeri publik;
+  // pemilik melihat alasannya di "Film Saya".
   async function decideFilm(film: Film, approve: boolean) {
     if (approve) {
       const { error: updErr } = await supabase
@@ -132,7 +150,12 @@ export default function ShowcasePage() {
       const reason = rejectReason.trim() || null
       const { error: updErr } = await supabase
         .from('films')
-        .update({ visibility: 'private' })
+        .update({
+          status: 'rejected',
+          review_note: reason,
+          reviewed_by: user?.id ?? null,
+          reviewed_at: new Date().toISOString(),
+        })
         .eq('id', film.id)
       if (updErr) {
         setNotice(updErr.message)
@@ -140,7 +163,7 @@ export default function ShowcasePage() {
       }
       await logAudit('film.rejected', 'films', film.id, { title: film.title, reason })
       setNotice(
-        `Film "${film.title}" tidak layak tampil — dikembalikan sebagai draft privat pemilik.`,
+        `Film "${film.title}" dinilai tidak layak tampil — pemilik dapat melihat alasannya di Film Saya.`,
       )
       setRejectingId(null)
       setRejectReason('')
@@ -197,7 +220,7 @@ export default function ShowcasePage() {
                       }}
                     >
                       <label>
-                        Alasan penolakan (opsional — dicatat di audit log)
+                        Alasan penolakan (opsional — akan dilihat oleh pemilik film)
                         <input
                           value={rejectReason}
                           onChange={(e) => setRejectReason(e.target.value)}
@@ -307,10 +330,25 @@ export default function ShowcasePage() {
               <ul>
                 {myFilms.map((f) => (
                   <li key={f.id}>
-                    <Link to={`/showcase/${f.id}`}>{f.title}</Link> — {f.status} · {f.visibility}
+                    <Link to={`/showcase/${f.id}`}>{f.title}</Link> — {filmStatusLabel(f.status)} · {f.visibility}
                     {f.status === 'draft' && f.visibility === 'public'
                       ? ' · Menunggu penilaian admin'
                       : ''}
+                    {f.status === 'rejected' ? (
+                      <p className="error-box" style={{ marginTop: '0.5rem' }}>
+                        Film ini dinilai tidak layak tampil di Showcase.
+                        {f.review_note ? (
+                          <>
+                            <br />
+                            Alasan: {f.review_note}
+                          </>
+                        ) : null}
+                        <br />
+                        Dinilai oleh{' '}
+                        {f.reviewed_by ? reviewerNames.get(f.reviewed_by) ?? 'admin' : 'admin'}
+                        {f.reviewed_at ? ` · ${fmtDate(f.reviewed_at)}` : ''}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
