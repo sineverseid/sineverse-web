@@ -8,12 +8,12 @@
 // langsung menjadi mentor).
 //
 // Verifikasi email (Supabase "Confirm email" AKTIF): setelah daftar, email
-// konfirmasi dikirim oleh Supabase. Ada dua cara mengaktifkan akun, dan
-// keduanya dijelaskan jujur di layar — kode TIDAK PERNAH ditampilkan oleh
-// aplikasi ini (tidak ada layanan email tiruan):
+// konfirmasi dikirim oleh Supabase (lewat SMTP Gmail kustom). Ada dua cara
+// mengaktifkan akun, dan keduanya dijelaskan jujur di layar — kode TIDAK
+// PERNAH ditampilkan oleh aplikasi ini (tidak ada layanan email tiruan):
 //   1. Klik tautan konfirmasi di email (selalu tersedia).
-//   2. Masukkan kode 6 digit dari email yang sama, bila email itu
-//      menyertakan kode (tergantung template email proyek Supabase).
+//   2. Masukkan kode 8 digit dari email yang sama (template email memuat
+//      tautan dan kode; panjang kode mengikuti setelan Supabase).
 // Foto file dititipkan di localStorage sampai pengguna masuk, baru diunggah
 // ke bucket profile-photos (kebijakan bucket menuntut sesi terautentikasi).
 // Lihat src/lib/registration.ts.
@@ -236,8 +236,8 @@ export default function RegisterPage() {
     e.preventDefault()
     setVerifyError(null)
     if (!registeredEmail) return
-    if (!/^\d{6}$/.test(code.trim())) {
-      setVerifyError('Masukkan kode 6 digit dari email kamu.')
+    if (!/^\d{8}$/.test(code.trim())) {
+      setVerifyError('Masukkan kode 8 digit dari email kamu.')
       return
     }
     setVerifyBusy(true)
@@ -299,19 +299,19 @@ export default function RegisterPage() {
                 </p>
                 <p className="muted">
                   Buka email itu dan klik tautan konfirmasi — akunmu langsung aktif dan kamu
-                  akan kembali ke aplikasi. Kalau email kamu juga berisi kode 6 digit,
-                  kamu bisa memasukkannya di bawah ini.
+                  akan kembali ke aplikasi. Kalau tidak sempat klik tautan, masukkan kode
+                  8 digit dari email yang sama di bawah ini.
                 </p>
                 <form onSubmit={handleVerifyCode}>
                   <label>
-                    Kode 6 digit dari email (bila ada)
+                    Kode 8 digit dari email
                     <input
                       type="text"
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       value={code}
-                      onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-                      placeholder="123456"
+                      onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
+                      placeholder="12345678"
                       className="otp-input"
                     />
                   </label>
@@ -322,8 +322,8 @@ export default function RegisterPage() {
                   </button>
                 </form>
                 <p className="muted">
-                  Tidak ada kode di email kamu? Itu wajar — email konfirmasi Supabase berisi
-                  tautan, bukan kode. Klik tautan di email tersebut.
+                  Email kamu berisi tautan konfirmasi dan kode 8 digit — dua-duanya bisa
+                  dipakai. Klik tautan, atau masukkan kodenya di atas.
                 </p>
                 <button
                   type="button"
