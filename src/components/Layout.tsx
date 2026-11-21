@@ -1,0 +1,107 @@
+// SINEVERSE — shared layout: top nav, bottom mobile nav, footer.
+// Bell notifikasi menampilkan jumlah belum dibaca (tabel notifications,
+// migrasi 008); bila tabel belum ada, lonceng tampil tanpa angka.
+import { useEffect, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { fetchUnreadCount } from '../lib/supabase'
+import InstallPrompt from './InstallPrompt'
+
+export default function Layout() {
+  const { user, profile, signOut } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [unread, setUnread] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!user) {
+      setUnread(null)
+      return
+    }
+    let cancelled = false
+    fetchUnreadCount(user.id)
+      .then((n) => {
+        if (!cancelled) setUnread(n)
+      })
+      .catch(() => {
+        if (!cancelled) setUnread(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user, location.pathname])
+
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/login')
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <Link to="/" className="brand">
+          <img src="./pwa-192x192.png" alt="Logo SINEVERSE" className="brand-logo" />
+          <span className="brand-name">SINEVERSE</span>
+        </Link>
+        <nav className="topnav" aria-label="Navigasi utama">
+          <NavLink to="/" end>
+            Beranda
+          </NavLink>
+          <NavLink to="/akademi">Akademi</NavLink>
+          <NavLink to="/rps">RPS</NavLink>
+          <NavLink to="/komunitas">Komunitas</NavLink>
+          <NavLink to="/sekolah">Sekolah & Klub</NavLink>
+          <NavLink to="/proyek">Proyek</NavLink>
+          <NavLink to="/showcase">Showcase</NavLink>
+          <NavLink to="/pustaka">Pustaka</NavLink>
+          <NavLink to="/acara">Acara</NavLink>
+          <NavLink to="/kompetisi">Kompetisi</NavLink>
+          <NavLink to="/pengumuman">Pengumuman</NavLink>
+          {user && <NavLink to="/nilai">Nilai Saya</NavLink>}
+          {user && <NavLink to="/ujian">Ujian</NavLink>}
+          {user && <NavLink to="/sertifikat">Sertifikat</NavLink>}
+          {user && (
+            <NavLink to="/notifikasi">
+              Notifikasi{unread !== null && unread > 0 ? ` (${unread})` : ''}
+            </NavLink>
+          )}
+          {user && (profile?.role === 'mentor' || profile?.role === 'admin') && (
+            <NavLink to="/mentor">Mentor</NavLink>
+          )}
+          {user && profile?.role === 'admin' && <NavLink to="/admin">Admin</NavLink>}
+          {user ? (
+            <NavLink to="/profil">Profil</NavLink>
+          ) : (
+            <NavLink to="/login" className="nav-cta">
+              Masuk
+            </NavLink>
+          )}
+        </nav>
+      </header>
+
+      <main className="main">
+        <Outlet />
+      </main>
+
+      <InstallPrompt />
+
+      <footer className="footer">
+        <p>
+          <strong>SINEVERSE</strong> — Your World of Filmmaking
+        </p>
+        <p className="footer-sub">
+          Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
+        </p>
+        {user && profile && (
+          <p className="footer-sub">
+            Masuk sebagai {profile.name ?? profile.email} ({profile.role})
+            {' · '}
+            <button type="button" className="link-button" onClick={handleSignOut}>
+              Keluar
+            </button>
+          </p>
+        )}
+      </footer>
+    </div>
+  )
+}
