@@ -39,6 +39,7 @@ import type {
   LessonProgressStatus,
   LessonResource,
   Quiz,
+  QuizAttempt,
 } from '../lib/types'
 
 function videoEmbed(url: string): { kind: 'youtube' | 'vimeo' | 'link'; embedUrl?: string } {
@@ -60,6 +61,7 @@ export default function LessonDetailPage() {
   const [status, setStatus] = useState<LessonProgressStatus>('not_started')
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
+  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([])
   const [discussions, setDiscussions] = useState<Discussion[]>([])
   const [resources, setResources] = useState<LessonResource[]>([])
   const [resourcesError, setResourcesError] = useState<string | null>(null)
@@ -140,6 +142,7 @@ export default function LessonDetailPage() {
       setStatus('not_started')
       setAssignments([])
       setQuizzes([])
+      setQuizAttempts([])
       setDiscussions([])
       setSiblings([])
       setNotice(null)
@@ -336,6 +339,7 @@ export default function LessonDetailPage() {
             try {
               const attempts = await fetchQuizAttempts(user.id)
               if (!cancelled) {
+                setQuizAttempts(attempts)
                 setPassedQuiz(
                   attempts.some((a) =>
                     qs.some((q) => q.id === a.quiz_id && a.score != null && a.score >= q.passing_score),
@@ -449,6 +453,35 @@ export default function LessonDetailPage() {
   const readDone = watchDone
   const checkDone = passedQuiz
   const doDone = submittedAssignment
+
+  // Kuis dipisah menurut jenisnya (migrasi 015): kuis lama tanpa kind
+  // dibaca sebagai 'quiz'. Satu kuis hanya muncul di satu seksi.
+  const pretests = quizzes.filter((q) => (q.kind ?? 'quiz') === 'pretest')
+  const posttests = quizzes.filter((q) => (q.kind ?? 'quiz') === 'posttest')
+  const plainQuizzes = quizzes.filter((q) => (q.kind ?? 'quiz') === 'quiz')
+
+  const bestAttemptScore = (quizId: string): number | null => {
+    let best: number | null = null
+    for (const a of quizAttempts) {
+      if (a.quiz_id !== quizId || a.score === null) continue
+      best = best === null ? a.score : Math.max(best, a.score)
+    }
+    return best
+  }
+
+  const quizItems = (list: Quiz[]) => (
+    <ul>
+      {list.map((q) => {
+        const best = bestAttemptScore(q.id)
+        return (
+          <li key={q.id}>
+            <Link to={`/kuis/${q.id}`}>{q.title}</Link> (nilai lulus: {q.passing_score}
+            {best !== null ? ` · nilai terbaikmu: ${best}` : ''})
+          </li>
+        )
+      })}
+    </ul>
+  )
 
   async function handleComplete() {
     if (!user || !lesson) return
@@ -647,6 +680,18 @@ export default function LessonDetailPage() {
         <li className={doDone ? 'flow-done' : ''} title="Kerjakan">DO</li>
       </ol>
 
+      <section className="section" aria-label="Pretest">
+        <h2>Pretest</h2>
+        <p className="muted">Kerjakan pretest sebelum mulai belajar untuk mengukur pengetahuan awalmu.</p>
+        {quizError ? (
+          <p className="error-box">{quizError}</p>
+        ) : pretests.length === 0 ? (
+          <p className="empty">Belum tersedia.</p>
+        ) : (
+          quizItems(pretests)
+        )}
+      </section>
+
       <section className="section" aria-label="Video">
         <h2>WATCH</h2>
         {!lesson.video_url ? (
@@ -747,20 +792,26 @@ export default function LessonDetailPage() {
         </section>
       )}
 
+      <section className="section" aria-label="Posttest">
+        <h2>Posttest</h2>
+        <p className="muted">Kerjakan posttest setelah selesai mempelajari materi untuk mengukur pemahamanmu.</p>
+        {quizError ? (
+          <p className="error-box">{quizError}</p>
+        ) : posttests.length === 0 ? (
+          <p className="empty">Belum tersedia.</p>
+        ) : (
+          quizItems(posttests)
+        )}
+      </section>
+
       <section className="section" aria-label="Cek pemahaman">
         <h2>CHECK, Kuis</h2>
         {quizError ? (
           <p className="error-box">{quizError}</p>
-        ) : quizzes.length === 0 ? (
+        ) : plainQuizzes.length === 0 ? (
           <p className="empty">Belum ada kuis untuk lesson ini.</p>
         ) : (
-          <ul>
-            {quizzes.map((q) => (
-              <li key={q.id}>
-                <Link to={`/kuis/${q.id}`}>{q.title}</Link> (nilai lulus: {q.passing_score})
-              </li>
-            ))}
-          </ul>
+          quizItems(plainQuizzes)
         )}
       </section>
 

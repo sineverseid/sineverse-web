@@ -1,4 +1,5 @@
-// SINEVERSE — Editor RPS (admin only, 003): bobot kuis/tugas/ujian,
+// SINEVERSE — Editor RPS (admin only, 003): bobot pretest/posttest/
+// tugas mingguan/tugas praktik akhir/diskusi (Tahap 3, migrasi 015),
 // passing grade, judul, deskripsi. Daftar minggu (20 minggu) ditampilkan
 // read-only — pengeditan minggu per minggu belum disediakan agar JSON
 // minggu tidak rusak dari form.
@@ -23,9 +24,11 @@ export default function RpsEditorPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
-  const [wKuis, setWKuis] = useState(20)
-  const [wTugas, setWTugas] = useState(50)
-  const [wUjian, setWUjian] = useState(30)
+  const [wPretest, setWPretest] = useState(5)
+  const [wPosttest, setWPosttest] = useState(15)
+  const [wTugasMingguan, setWTugasMingguan] = useState(30)
+  const [wTugasAkhir, setWTugasAkhir] = useState(40)
+  const [wDiskusi, setWDiskusi] = useState(10)
   const [passing, setPassing] = useState(70)
 
   useEffect(() => {
@@ -46,13 +49,19 @@ export default function RpsEditorPage() {
         }
         if (cancelled) return
         if (data) {
-          const row = data as unknown as Rps & { weights: { kuis: number; tugas: number; ujian: number } }
+          const row = data as unknown as Rps & { weights: Rps['weights'] }
           setRps(row)
           setTitle(row.title)
           setDesc(row.description ?? '')
-          setWKuis(row.weights?.kuis ?? GRADEBOOK_WEIGHTS.kuis * 100)
-          setWTugas(row.weights?.tugas ?? GRADEBOOK_WEIGHTS.tugas * 100)
-          setWUjian(row.weights?.ujian ?? GRADEBOOK_WEIGHTS.ujian * 100)
+          // Baris lama (sebelum migrasi 015) masih memakai kunci kuis/
+          // tugas/ujian — tampilkan apa adanya bila kunci baru belum ada.
+          setWPretest(row.weights?.pretest ?? GRADEBOOK_WEIGHTS.pretest * 100)
+          setWPosttest(row.weights?.posttest ?? GRADEBOOK_WEIGHTS.posttest * 100)
+          setWTugasMingguan(
+            row.weights?.tugas_mingguan ?? GRADEBOOK_WEIGHTS.tugasMingguan * 100,
+          )
+          setWTugasAkhir(row.weights?.tugas_akhir ?? GRADEBOOK_WEIGHTS.tugasAkhir * 100)
+          setWDiskusi(row.weights?.diskusi ?? GRADEBOOK_WEIGHTS.diskusi * 100)
           setPassing(row.passing_grade ?? PASSING_GRADE)
         }
       } catch (err) {
@@ -89,23 +98,30 @@ export default function RpsEditorPage() {
 
   async function handleSave(e: FormEvent) {
     e.preventDefault()
-    if (wKuis + wTugas + wUjian !== 100) {
-      setNotice('Total bobot kuis + tugas + ujian harus 100%.')
+    if (wPretest + wPosttest + wTugasMingguan + wTugasAkhir + wDiskusi !== 100) {
+      setNotice('Total bobot pretest + posttest + tugas mingguan + tugas praktik akhir + diskusi harus 100%.')
       return
+    }
+    const newWeights = {
+      pretest: wPretest,
+      posttest: wPosttest,
+      tugas_mingguan: wTugasMingguan,
+      tugas_akhir: wTugasAkhir,
+      diskusi: wDiskusi,
     }
     const { error: updErr } = await supabase
       .from('rps')
       .update({
         title: title.trim(),
         description: desc.trim() || null,
-        weights: { kuis: wKuis, tugas: wTugas, ujian: wUjian },
+        weights: newWeights,
         passing_grade: passing,
         updated_by: user?.id ?? null,
       })
       .eq('code', BRAND.rpsCode)
     if (updErr) setNotice(updErr.message)
     else {
-      await logAudit('rps.updated', 'rps', BRAND.rpsCode, { weights: { kuis: wKuis, tugas: wTugas, ujian: wUjian }, passing_grade: passing })
+      await logAudit('rps.updated', 'rps', BRAND.rpsCode, { weights: newWeights, passing_grade: passing })
       setNotice('RPS diperbarui.')
     }
   }
@@ -119,10 +135,12 @@ export default function RpsEditorPage() {
       <form className="form" onSubmit={handleSave}>
         <label>Judul<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
         <label>Deskripsi<textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} /></label>
-        <label>Bobot kuis (%)<input type="number" min={0} max={100} value={wKuis} onChange={(e) => setWKuis(Number(e.target.value))} required /></label>
-        <label>Bobot tugas (%)<input type="number" min={0} max={100} value={wTugas} onChange={(e) => setWTugas(Number(e.target.value))} required /></label>
-        <label>Bobot ujian (%)<input type="number" min={0} max={100} value={wUjian} onChange={(e) => setWUjian(Number(e.target.value))} required /></label>
-        <p className="muted">Total bobot saat ini: {wKuis + wTugas + wUjian}% (harus 100%).</p>
+        <label>Bobot pretest (%)<input type="number" min={0} max={100} value={wPretest} onChange={(e) => setWPretest(Number(e.target.value))} required /></label>
+        <label>Bobot posttest (%)<input type="number" min={0} max={100} value={wPosttest} onChange={(e) => setWPosttest(Number(e.target.value))} required /></label>
+        <label>Bobot tugas mingguan (%)<input type="number" min={0} max={100} value={wTugasMingguan} onChange={(e) => setWTugasMingguan(Number(e.target.value))} required /></label>
+        <label>Bobot tugas praktik akhir (%)<input type="number" min={0} max={100} value={wTugasAkhir} onChange={(e) => setWTugasAkhir(Number(e.target.value))} required /></label>
+        <label>Bobot partisipasi diskusi (%)<input type="number" min={0} max={100} value={wDiskusi} onChange={(e) => setWDiskusi(Number(e.target.value))} required /></label>
+        <p className="muted">Total bobot saat ini: {wPretest + wPosttest + wTugasMingguan + wTugasAkhir + wDiskusi}% (harus 100%).</p>
         <label>Nilai lulus<input type="number" min={0} max={100} value={passing} onChange={(e) => setPassing(Number(e.target.value))} required /></label>
         <button type="submit" className="btn btn-primary">Simpan RPS</button>
       </form>

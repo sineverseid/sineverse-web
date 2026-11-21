@@ -6,8 +6,8 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourse, fetchModules, fetchRubricForAssignment, invalidateCatalogCache, saveRubric, supabase, updateCourseAccessMode } from '../lib/supabase'
-import type { Assignment, CompetencyExam, Course, Lesson, LessonResource, Module, Quiz } from '../lib/types'
+import { createLiveClass, deleteLiveClass, fetchCourse, fetchLiveClasses, fetchModules, fetchRubricForAssignment, invalidateCatalogCache, saveRubric, supabase, updateCourseAccessMode } from '../lib/supabase'
+import type { Assignment, AssignmentKind, CompetencyExam, Course, Lesson, LessonResource, LiveClass, Module, Quiz, QuizKind } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 
@@ -46,8 +46,10 @@ export default function CourseBuilderPage() {
   const [asgDesc, setAsgDesc] = useState('')
   const [asgMax, setAsgMax] = useState(100)
   const [asgDue, setAsgDue] = useState('')
+  const [asgKind, setAsgKind] = useState<AssignmentKind>('weekly')
   const [quizLesson, setQuizLesson] = useState('')
   const [quizTitle, setQuizTitle] = useState('')
+  const [quizKind, setQuizKind] = useState<QuizKind>('quiz')
   const [quizPass, setQuizPass] = useState(70)
   const [quizMax, setQuizMax] = useState('')
   const [qqQuiz, setQqQuiz] = useState('')
@@ -69,6 +71,11 @@ export default function CourseBuilderPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [exams, setExams] = useState<CompetencyExam[]>([])
+  const [liveClasses, setLiveClasses] = useState<LiveClass[]>([])
+  const [lcTitle, setLcTitle] = useState('')
+  const [lcScheduled, setLcScheduled] = useState('')
+  const [lcMeetUrl, setLcMeetUrl] = useState('')
+  const [lcSaving, setLcSaving] = useState(false)
   const [rubAsg, setRubAsg] = useState('')
   const [rubTitle, setRubTitle] = useState('Rubrik Penilaian')
   const [rubCriteria, setRubCriteria] = useState<RubricDraftCriterion[]>([])
@@ -107,7 +114,7 @@ export default function CourseBuilderPage() {
     const allLessonIds = allLessons.map((l) => l.id)
     // Kuis + tugas + ujian dimuat paralel. Bila tidak ada lesson,
     // kuis/tugas tetap seperti semula (tidak diubah), ujian tetap dimuat.
-    const [qData, aData, eData] = await Promise.all([
+    const [qData, aData, eData, lcData] = await Promise.all([
       allLessonIds.length > 0
         ? supabase.from('quizzes').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
         : Promise.resolve(null),
@@ -115,10 +122,12 @@ export default function CourseBuilderPage() {
         ? supabase.from('assignments').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
         : Promise.resolve(null),
       supabase.from('competency_exams').select('*').eq('course_id', courseId).then((r) => r.data),
+      fetchLiveClasses(courseId),
     ])
     if (qData !== null) setQuizzes((qData ?? []) as Quiz[])
     if (aData !== null) setAssignments((aData ?? []) as Assignment[])
     setExams((eData ?? []) as CompetencyExam[])
+    setLiveClasses(lcData)
   }
 
   useEffect(() => {
@@ -282,12 +291,14 @@ export default function CourseBuilderPage() {
       max_score: asgMax,
       due_date: asgDue ? new Date(asgDue).toISOString() : null,
       rubric: asgDesc.trim() || null,
+      kind: asgKind,
     })
     if (insErr) fail(insErr)
     else {
       setAsgTitle('')
       setAsgDesc('')
       setAsgDue('')
+      setAsgKind('weekly')
       ok('Tugas dibuat.')
       await refresh(currentCourse.id)
     }
@@ -372,11 +383,13 @@ export default function CourseBuilderPage() {
       title: quizTitle.trim(),
       passing_score: quizPass,
       max_attempts: quizMax ? Number(quizMax) : null,
+      kind: quizKind,
     })
     if (insErr) fail(insErr)
     else {
       setQuizTitle('')
       setQuizMax('')
+      setQuizKind('quiz')
       ok('Kuis dibuat. Tambahkan soal di bawah.')
       await refresh(currentCourse.id)
     }
@@ -459,6 +472,43 @@ export default function CourseBuilderPage() {
       setEqAnswer('')
       setEqExpl('')
       ok('Soal ujian ditambahkan.')
+    }
+  }
+
+  async function addLiveClass(e: FormEvent) {
+    e.preventDefault()
+    if (!lcTitle.trim()) {
+      setNotice('Isi judul kelas live dulu.')
+      return
+    }
+    setLcSaving(true)
+    try {
+      await createLiveClass({
+        courseId: currentCourse.id,
+        title: lcTitle.trim(),
+        scheduledAt: lcScheduled ? new Date(lcScheduled).toISOString() : null,
+        meetUrl: lcMeetUrl.trim() || null,
+        createdBy: user?.id ?? '',
+      })
+      setLcTitle('')
+      setLcScheduled('')
+      setLcMeetUrl('')
+      ok('Kelas live dijadwalkan.')
+      await refresh(currentCourse.id)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setLcSaving(false)
+    }
+  }
+
+  async function cancelLiveClass(liveClassId: string) {
+    try {
+      await deleteLiveClass(liveClassId)
+      ok('Kelas live dibatalkan.')
+      await refresh(currentCourse.id)
+    } catch (err) {
+      fail(err)
     }
   }
 
@@ -619,6 +669,16 @@ export default function CourseBuilderPage() {
             </select>
           </label>
           <label>Judul tugas<input value={asgTitle} onChange={(e) => setAsgTitle(e.target.value)} required /></label>
+          <label>
+            Jenis tugas
+            <select value={asgKind} onChange={(e) => setAsgKind(e.target.value as AssignmentKind)} style={selectStyle}>
+              <option value="weekly">Tugas mingguan</option>
+              <option value="final_practice">Tugas praktik akhir</option>
+            </select>
+          </label>
+          <p className="muted">
+            Tugas praktik akhir berbobot 40% di nilai akhir, tugas mingguan 30%.
+          </p>
           <label>Deskripsi &amp; rubrik<textarea value={asgDesc} onChange={(e) => setAsgDesc(e.target.value)} rows={3} /></label>
           <label>Nilai maks.<input type="number" min={1} value={asgMax} onChange={(e) => setAsgMax(Number(e.target.value))} required /></label>
           <label>Tenggat (opsional)<input type="datetime-local" value={asgDue} onChange={(e) => setAsgDue(e.target.value)} /></label>
@@ -712,6 +772,14 @@ export default function CourseBuilderPage() {
             </select>
           </label>
           <label>Judul kuis<input value={quizTitle} onChange={(e) => setQuizTitle(e.target.value)} required /></label>
+          <label>
+            Jenis kuis
+            <select value={quizKind} onChange={(e) => setQuizKind(e.target.value as QuizKind)} style={selectStyle}>
+              <option value="quiz">Kuis</option>
+              <option value="pretest">Pretest</option>
+              <option value="posttest">Posttest</option>
+            </select>
+          </label>
           <label>Nilai lulus<input type="number" min={0} max={100} value={quizPass} onChange={(e) => setQuizPass(Number(e.target.value))} required /></label>
           <label>Maks. percobaan (kosong = tanpa batas)<input type="number" min={1} value={quizMax} onChange={(e) => setQuizMax(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Buat Kuis</button>
@@ -775,6 +843,54 @@ export default function CourseBuilderPage() {
           <label>Penjelasan<input value={eqExpl} onChange={(e) => setEqExpl(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Tambah Soal Ujian</button>
         </form>
+      </section>
+
+      <section className="section">
+        <h2>Kelas Live</h2>
+        <p className="muted">
+          Jadwalkan sesi tatap muka daring untuk course ini. Siswa yang terdaftar
+          bisa melihat jadwal dan tautan meet-nya.
+        </p>
+        <form className="form" onSubmit={addLiveClass}>
+          <label>Judul kelas live<input value={lcTitle} onChange={(e) => setLcTitle(e.target.value)} required placeholder="Contoh: Bedah Naskah Bareng Mentor" /></label>
+          <label>Jadwal (opsional)<input type="datetime-local" value={lcScheduled} onChange={(e) => setLcScheduled(e.target.value)} /></label>
+          <label>Tautan meet (opsional)<input type="url" value={lcMeetUrl} onChange={(e) => setLcMeetUrl(e.target.value)} placeholder="https://…" /></label>
+          <button type="submit" className="btn btn-primary" disabled={lcSaving}>
+            {lcSaving ? 'Menyimpan…' : 'Jadwalkan Kelas Live'}
+          </button>
+        </form>
+        {liveClasses.length === 0 ? (
+          <p className="empty">Belum ada kelas live terjadwal.</p>
+        ) : (
+          <ul>
+            {liveClasses.map((lc) => (
+              <li key={lc.id}>
+                <strong>{lc.title}</strong>
+                {' — '}
+                {lc.scheduled_at
+                  ? new Date(lc.scheduled_at).toLocaleString('id-ID', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : 'Jadwal belum ditentukan'}
+                {lc.meet_url && (
+                  <>
+                    {' · '}
+                    <a href={lc.meet_url} target="_blank" rel="noreferrer">Buka tautan meet</a>
+                  </>
+                )}
+                {' '}
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => void cancelLiveClass(lc.id)}>
+                  Batalkan
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   )

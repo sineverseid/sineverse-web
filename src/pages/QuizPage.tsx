@@ -9,7 +9,14 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { fetchQuizAttempts, fetchQuizQuestions, supabase } from '../lib/supabase'
-import type { Quiz, QuizAttempt, QuizQuestion } from '../lib/types'
+import type { Quiz, QuizAttempt, QuizKind, QuizQuestion } from '../lib/types'
+
+/** Label jenis kuis (migrasi 015): kuis lama tanpa kind dibaca sebagai 'Kuis'. */
+function quizKindLabel(kind?: QuizKind): string {
+  if (kind === 'pretest') return 'Pretest'
+  if (kind === 'posttest') return 'Posttest'
+  return 'Kuis'
+}
 
 export default function QuizPage() {
   const { id } = useParams<{ id: string }>()
@@ -71,7 +78,7 @@ export default function QuizPage() {
   if (loading) return <div className="page"><p className="muted">Memuat kuis…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (!quiz) return <div className="page"><p className="empty">Kuis tidak ditemukan.</p><Link to="/akademi">Kembali ke Akademi</Link></div>
-  if (missing) return <div className="page"><h1>{quiz.title}</h1><MigrationNotice migration="003" /></div>
+  if (missing) return <div className="page"><h1>{quiz.title}</h1><p className="muted">{quizKindLabel(quiz.kind)}</p><MigrationNotice migration="003" /></div>
 
   const maxAttempts = (quiz as Quiz & { max_attempts?: number | null }).max_attempts ?? null
   const blocked = maxAttempts !== null && attempts.length >= maxAttempts
@@ -129,7 +136,7 @@ export default function QuizPage() {
       <Link to="/akademi" className="back-link">← Akademi</Link>
       <h1>{quiz.title}</h1>
       <p className="muted">
-        Nilai lulus: {quiz.passing_score}
+        {quizKindLabel(quiz.kind)} · Nilai lulus: {quiz.passing_score}
         {maxAttempts !== null ? ` · Maks. percobaan: ${maxAttempts}` : ' · Tanpa batas percobaan di skema'}
         {best !== null ? ` · Nilai terbaikmu: ${best}` : ''}
       </p>

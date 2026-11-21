@@ -32,7 +32,7 @@ export default function RpsPage() {
             code: string
             title: string
             description: string | null
-            weights: { kuis: number; tugas: number; ujian: number }
+            weights: Rps['weights']
             passing_grade: number
             weeks: RpsWeek[]
           }
@@ -41,9 +41,11 @@ export default function RpsPage() {
             title: row.title,
             description: row.description,
             weights: row.weights ?? {
-              kuis: GRADEBOOK_WEIGHTS.kuis * 100,
-              tugas: GRADEBOOK_WEIGHTS.tugas * 100,
-              ujian: GRADEBOOK_WEIGHTS.ujian * 100,
+              pretest: GRADEBOOK_WEIGHTS.pretest * 100,
+              posttest: GRADEBOOK_WEIGHTS.posttest * 100,
+              tugas_mingguan: GRADEBOOK_WEIGHTS.tugasMingguan * 100,
+              tugas_akhir: GRADEBOOK_WEIGHTS.tugasAkhir * 100,
+              diskusi: GRADEBOOK_WEIGHTS.diskusi * 100,
             },
             passing_grade: row.passing_grade ?? PASSING_GRADE,
             weeks: Array.isArray(row.weeks) ? row.weeks : [],
@@ -89,10 +91,15 @@ export default function RpsPage() {
 
   const weeks = rps?.weeks ?? fallbackWeeks ?? []
   const weights = rps?.weights ?? {
-    kuis: GRADEBOOK_WEIGHTS.kuis * 100,
-    tugas: GRADEBOOK_WEIGHTS.tugas * 100,
-    ujian: GRADEBOOK_WEIGHTS.ujian * 100,
+    pretest: GRADEBOOK_WEIGHTS.pretest * 100,
+    posttest: GRADEBOOK_WEIGHTS.posttest * 100,
+    tugas_mingguan: GRADEBOOK_WEIGHTS.tugasMingguan * 100,
+    tugas_akhir: GRADEBOOK_WEIGHTS.tugasAkhir * 100,
+    diskusi: GRADEBOOK_WEIGHTS.diskusi * 100,
   }
+  // Baris RPS lama (sebelum migrasi 015) masih memakai kunci kuis/tugas/
+  // ujian — tampilkan bentuk lama itu bila kunci baru belum ada.
+  const isNewWeights = weights.pretest !== undefined
 
   return (
     <div className="page">
@@ -116,9 +123,21 @@ export default function RpsPage() {
       <section className="section">
         <h2>Bobot Penilaian</h2>
         <ul>
-          <li>Kuis: {weights.kuis}%</li>
-          <li>Tugas: {weights.tugas}%</li>
-          <li>Ujian: {weights.ujian}%</li>
+          {isNewWeights ? (
+            <>
+              <li>Pretest: {weights.pretest}%</li>
+              <li>Posttest: {weights.posttest}%</li>
+              <li>Tugas mingguan: {weights.tugas_mingguan}%</li>
+              <li>Tugas praktik akhir: {weights.tugas_akhir}%</li>
+              <li>Partisipasi diskusi: {weights.diskusi}%</li>
+            </>
+          ) : (
+            <>
+              <li>Kuis: {weights.kuis}%</li>
+              <li>Tugas: {weights.tugas}%</li>
+              <li>Ujian: {weights.ujian}%</li>
+            </>
+          )}
           <li>Nilai lulus: {rps?.passing_grade ?? PASSING_GRADE}</li>
         </ul>
       </section>

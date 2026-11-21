@@ -1,37 +1,102 @@
 // SINEVERSE — Gradebook pribadi: hanya baris pengguna yang sedang masuk.
-// Nilai akhir = 20% kuis + 50% tugas + 30% ujian, dinormalisasi ulang bila
-// ada komponen yang masih kosong. Lulus bila >= 70.
-// Sumber: quiz_attempts, submissions (tugas yang sudah dinilai), exam_attempts.
-// Komponen yang belum ada datanya dihitung 0 dan ditandai "belum ada data".
+// Nilai akhir (formula master prompt, keputusan Arif 21 Nov 23:18, opsi 1):
+//   Pretest 5% + Posttest 15% + Tugas mingguan 30%
+//   + Tugas praktik akhir 40% + Partisipasi diskusi 10%,
+//   dinormalisasi ulang atas komponen yang sudah ada nilainya.
+//   Lulus bila >= 70. Ujian kompetensi TIDAK masuk gradebook
+//   (tetap terpisah di ExamsPage).
+// Sumber: quiz_attempts (pretest/posttest, skor terbaik per kuis),
+// submissions (tugas yang sudah dinilai), discussions (partisipasi).
+// Kuis biasa (kind='quiz') tidak lagi masuk nilai. Komponen yang belum
+// ada datanya bernilai null dan ditampilkan "—".
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { GRADEBOOK_WEIGHTS, PASSING_GRADE } from '../lib/brand'
 import {
+  avgOrNull,
+  bestScoresByQuiz,
+  buildGradeComponents,
+  discussionParticipationScore,
+} from '../lib/grading'
+import {
   fetchAssignmentsForLessons,
   fetchCourseLessons,
   fetchCourses,
+  fetchDiscussionsForLessons,
   fetchEnrollments,
-  fetchExamAttempts,
   fetchQuizAttempts,
   fetchQuizzesForLessons,
   fetchSubmissions,
 } from '../lib/supabase'
-import type { Course } from '../lib/types'
+import type {
+  Assignment,
+  Course,
+  Discussion,
+  GradeComponents,
+  Quiz,
+  QuizAttempt,
+  Submission,
+} from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
 interface CourseGrade {
   course: Course
-  quizAvg: number | null
-  assignmentAvg: number | null
-  examAvg: number | null
-  final: number
-  passed: boolean
+  components: GradeComponents
 }
 
-function avg(values: number[]): number | null {
-  if (values.length === 0) return null
-  return values.reduce((a, b) => a + b, 0) / values.length
+/** Lima komponen nilai satu course untuk satu pengguna, dari data mentah
+ *  course itu (kuis + tugas + percobaan + pengumpulan + postingan diskusi
+ *  pengguna). Kuis biasa (kind='quiz') tidak masuk komponen mana pun;
+ *  tugas lama tanpa kind dibaca sebagai tugas mingguan. */
+function computeGradeComponents(
+  quizzes: Quiz[],
+  assignments: Assignment[],
+  quizAttempts: QuizAttempt[],
+  submissions: Submission[],
+  userPosts: Discussion[],
+): GradeComponents {
+  const best = bestScoresByQuiz(quizAttempts)
+  const pretestIds = new Set(
+    quizzes.filter((q) => q.kind === 'pretest').map((q) => q.id),
+  )
+  const posttestIds = new Set(
+    quizzes.filter((q) => q.kind === 'posttest').map((q) => q.id),
+  )
+  const pretest = avgOrNull(
+    [...best.entries()]
+      .filter(([id]) => pretestIds.has(id))
+      .map(([, score]) => score),
+  )
+  const posttest = avgOrNull(
+    [...best.entries()]
+      .filter(([id]) => posttestIds.has(id))
+      .map(([, score]) => score),
+  )
+  const weeklyIds = new Set(
+    assignments
+      .filter((a) => (a.kind ?? 'weekly') === 'weekly')
+      .map((a) => a.id),
+  )
+  const finalIds = new Set(
+    assignments.filter((a) => a.kind === 'final_practice').map((a) => a.id),
+  )
+  const weeklyAssignments = avgOrNull(
+    submissions
+      .filter((s) => weeklyIds.has(s.assignment_id) && s.score !== null)
+      .map((s) => s.score as number),
+  )
+  const finalPractice = avgOrNull(
+    submissions
+      .filter((s) => finalIds.has(s.assignment_id) && s.score !== null)
+      .map((s) => s.score as number),
+  )
+  const discussion = discussionParticipationScore(userPosts)
+  return buildGradeComponents(
+    { pretest, posttest, weeklyAssignments, finalPractice, discussion },
+    GRADEBOOK_WEIGHTS,
+    PASSING_GRADE,
+  )
 }
 
 export default function GradebookPage() {
@@ -46,11 +111,10 @@ export default function GradebookPage() {
     let cancelled = false
     async function load() {
       try {
-        const [enrollments, quizAttempts, submissions, examAttempts] = await Promise.all([
+        const [enrollments, quizAttempts, submissions] = await Promise.all([
           fetchEnrollments(currentUser.id),
           fetchQuizAttempts(currentUser.id),
           fetchSubmissions(currentUser.id),
-          fetchExamAttempts(currentUser.id),
         ])
         if (cancelled) return
         const courses = await fetchCourses()
@@ -64,12 +128,13 @@ export default function GradebookPage() {
           })),
         )
         const lessonIds = lessonsPerCourse.flatMap((x) => x.lessons.map((l) => l.id))
-        const [quizzes, assignments] = await Promise.all([
+        const [quizzes, assignments, discussions] = await Promise.all([
           fetchQuizzesForLessons(lessonIds),
           fetchAssignmentsForLessons(lessonIds),
+          fetchDiscussionsForLessons(lessonIds),
         ])
-        const quizByLesson = new Map<string, typeof quizzes>()
-        const assignByLesson = new Map<string, typeof assignments>()
+        const quizByLesson = new Map<string, Quiz[]>()
+        const assignByLesson = new Map<string, Assignment[]>()
         for (const q of quizzes) {
           const arr = quizByLesson.get(q.lesson_id) ?? []
           arr.push(q)
@@ -86,49 +151,30 @@ export default function GradebookPage() {
           if (!course) continue
           const entry = lessonsPerCourse.find((x) => x.courseId === enr.course_id)
           const lessons = entry?.lessons ?? []
-          const lessonIds = lessons.map((l) => l.id)
-          const courseQuizzes = lessonIds.flatMap((id) => quizByLesson.get(id) ?? [])
-          const courseAssignments = lessonIds.flatMap((id) => assignByLesson.get(id) ?? [])
+          const courseLessonIds = lessons.map((l) => l.id)
+          const lessonIdSet = new Set(courseLessonIds)
+          const courseQuizzes = courseLessonIds.flatMap((id) => quizByLesson.get(id) ?? [])
+          const courseAssignments = courseLessonIds.flatMap(
+            (id) => assignByLesson.get(id) ?? [],
+          )
           const quizIds = new Set(courseQuizzes.map((q) => q.id))
           const assignmentIds = new Set(courseAssignments.map((a) => a.id))
-          // Best attempt per quiz (latest best score counts once per quiz).
-          const bestQuiz = new Map<string, number>()
-          for (const att of quizAttempts) {
-            if (!quizIds.has(att.quiz_id) || att.score === null) continue
-            const prev = bestQuiz.get(att.quiz_id)
-            if (prev === undefined || att.score > prev) bestQuiz.set(att.quiz_id, att.score)
-          }
-          const quizAvg = avg([...bestQuiz.values()])
-          const graded = submissions.filter(
-            (s) => assignmentIds.has(s.assignment_id) && s.score !== null,
+          const courseAttempts = quizAttempts.filter((att) => quizIds.has(att.quiz_id))
+          const courseSubmissions = submissions.filter((s) =>
+            assignmentIds.has(s.assignment_id),
           )
-          const assignmentAvg = avg(graded.map((s) => s.score as number))
-          // Exam attempts are per course only when linked via exam; the
-          // table has no course_id, so the exam component stays empty until
-          // competency exams are wired to courses (Fase B).
-          const examAvg = avg(
-            examAttempts.filter((e) => e.score !== null).map((e) => e.score as number),
+          const coursePosts = discussions.filter(
+            (d) => lessonIdSet.has(d.lesson_id) && d.user_id === currentUser.id,
           )
-          const examComponent = examAttempts.length > 0 ? examAvg : null
-
-          const parts: { value: number | null; weight: number }[] = [
-            { value: quizAvg, weight: GRADEBOOK_WEIGHTS.kuis },
-            { value: assignmentAvg, weight: GRADEBOOK_WEIGHTS.tugas },
-            { value: examComponent, weight: GRADEBOOK_WEIGHTS.ujian },
-          ]
-          const present = parts.filter((p) => p.value !== null)
-          const totalWeight = present.reduce((a, p) => a + p.weight, 0)
-          const final =
-            totalWeight > 0
-              ? present.reduce((a, p) => a + (p.value as number) * p.weight, 0) / totalWeight
-              : 0
           rows.push({
             course,
-            quizAvg,
-            assignmentAvg,
-            examAvg: examComponent,
-            final: Math.round(final * 10) / 10,
-            passed: final >= PASSING_GRADE,
+            components: computeGradeComponents(
+              courseQuizzes,
+              courseAssignments,
+              courseAttempts,
+              courseSubmissions,
+              coursePosts,
+            ),
           })
         }
         if (!cancelled) setGrades(rows)
@@ -165,7 +211,7 @@ export default function GradebookPage() {
       <PageHeader
         icon="grade"
         title="Nilai Saya"
-        subtitle={`Bobot: Kuis 20% · Tugas 50% · Ujian 30% · Nilai lulus: ${PASSING_GRADE}. Hanya nilai kamu sendiri yang ditampilkan di sini.`}
+        subtitle={`Bobot: Pretest 5% · Posttest 15% · Tugas mingguan 30% · Tugas praktik akhir 40% · Diskusi 10% · Nilai lulus: ${PASSING_GRADE}. Hanya nilai kamu sendiri yang ditampilkan di sini.`}
       />
       {grades.length === 0 ? (
         <p className="empty">
@@ -178,9 +224,11 @@ export default function GradebookPage() {
             <thead>
               <tr>
                 <th>Course</th>
-                <th>Kuis (20%)</th>
-                <th>Tugas (50%)</th>
-                <th>Ujian (30%)</th>
+                <th>Pretest (5%)</th>
+                <th>Posttest (15%)</th>
+                <th>Tugas Mingguan (30%)</th>
+                <th>Tugas Akhir (40%)</th>
+                <th>Diskusi (10%)</th>
                 <th>Nilai Akhir</th>
                 <th>Status</th>
               </tr>
@@ -191,15 +239,35 @@ export default function GradebookPage() {
                   <td>
                     <Link to={`/course/${g.course.id}`}>{g.course.title}</Link>
                   </td>
-                  <td>{g.quizAvg === null ? '—' : g.quizAvg.toFixed(1)}</td>
-                  <td>{g.assignmentAvg === null ? '—' : g.assignmentAvg.toFixed(1)}</td>
-                  <td>{g.examAvg === null ? '—' : g.examAvg.toFixed(1)}</td>
                   <td>
-                    <strong>{g.final.toFixed(1)}</strong>
+                    {g.components.pretest === null ? '—' : g.components.pretest.toFixed(1)}
                   </td>
                   <td>
-                    <span className={g.passed ? 'badge-pass' : 'badge-fail'}>
-                      {g.passed ? 'Lulus' : 'Belum lulus'}
+                    {g.components.posttest === null
+                      ? '—'
+                      : g.components.posttest.toFixed(1)}
+                  </td>
+                  <td>
+                    {g.components.weeklyAssignments === null
+                      ? '—'
+                      : g.components.weeklyAssignments.toFixed(1)}
+                  </td>
+                  <td>
+                    {g.components.finalPractice === null
+                      ? '—'
+                      : g.components.finalPractice.toFixed(1)}
+                  </td>
+                  <td>
+                    {g.components.discussion === null
+                      ? '—'
+                      : g.components.discussion.toFixed(1)}
+                  </td>
+                  <td>
+                    <strong>{g.components.final.toFixed(1)}</strong>
+                  </td>
+                  <td>
+                    <span className={g.components.passed ? 'badge-pass' : 'badge-fail'}>
+                      {g.components.passed ? 'Lulus' : 'Belum lulus'}
                     </span>
                   </td>
                 </tr>
@@ -209,8 +277,10 @@ export default function GradebookPage() {
         </div>
       )}
       <p className="muted">
-        Tanda &ldquo;—&rdquo; berarti komponen itu belum ada datanya (belum ada kuis, tugas yang
-        dinilai, atau ujian). Nilai akhir dihitung ulang dari komponen yang sudah ada.
+        Tanda &ldquo;—&rdquo; berarti komponen itu belum ada nilainya (belum ada pretest,
+        posttest, tugas yang dinilai, atau aktivitas diskusi). Nilai akhir dihitung ulang
+        dari komponen yang sudah ada nilainya saja. Ujian kompetensi tidak masuk nilai
+        akhir course.
       </p>
     </div>
   )
