@@ -294,10 +294,18 @@ export default function CourseDetailPage() {
       <Link to="/akademi" className="back-link">
         ← Akademi
       </Link>
-      <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
-        {week && <span className="course-cover-week">{week}</span>}
-        <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
-      </div>
+      {course.cover_url ? (
+        <div className="course-cover course-cover-img" aria-hidden="true">
+          <img src={course.cover_url} alt="" />
+          {week && <span className="course-cover-week">{week}</span>}
+          <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+        </div>
+      ) : (
+        <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
+          {week && <span className="course-cover-week">{week}</span>}
+          <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+        </div>
+      )}
       <h1>{course.title}</h1>
       <p className="muted">
         {course.category ?? 'Lainnya'} · {course.level ?? 'Semua level'}
