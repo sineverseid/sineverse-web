@@ -16,6 +16,7 @@ import type {
   ExamAttempt,
   Lesson,
   LessonProgress,
+  LessonResource,
   LibraryItem,
   Module,
   Profile,
@@ -198,6 +199,34 @@ export async function fetchLesson(id: string): Promise<Lesson | null> {
     .maybeSingle()
   if (error) throw error
   return data as Lesson | null
+}
+
+/** Materi tambahan sebuah lesson (tabel lesson_resources, migrasi 003).
+ *  Diurutkan berdasarkan waktu dibuat. Dipakai LessonDetailPage. */
+export async function fetchLessonResources(lessonId: string): Promise<LessonResource[]> {
+  const { data, error } = await supabase
+    .from('lesson_resources')
+    .select('*')
+    .eq('lesson_id', lessonId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as LessonResource[]
+}
+
+/** Mode akses course (migrasi 013): 'direct' atau 'sequential'.
+ *  Mengembalikan course yang sudah diperbarui. */
+export async function updateCourseAccessMode(
+  courseId: string,
+  mode: 'direct' | 'sequential',
+): Promise<Course> {
+  const { data, error } = await supabase
+    .from('courses')
+    .update({ access_mode: mode })
+    .eq('id', courseId)
+    .select()
+    .single()
+  if (error) throw error
+  return data as Course
 }
 
 // All lessons of a course, in module/lesson order — used for prev/next nav.

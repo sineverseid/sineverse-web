@@ -40,6 +40,11 @@ export interface Course {
   created_at: string
   enrollment_key?: string | null
   passing_grade?: number | null
+  /** 013: mode akses section — 'direct' (bawaan, semua section terbuka)
+   *  atau 'sequential' (Section 2 terkunci sampai Section 1 selesai).
+   *  Opsional karena baris yang diambil sebelum migrasi 013 diterapkan
+   *  belum punya kolom ini. */
+  access_mode?: 'direct' | 'sequential' | null
 }
 
 export interface Module {
