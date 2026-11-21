@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } from '../lib/supabase'
+import { checkDueReminders } from '../lib/reminders'
 import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
 
@@ -28,6 +29,7 @@ const NAV_ITEMS: NavEntry[] = [
   { to: '/', label: 'Beranda', icon: 'home', end: true },
   { to: '/akademi', label: 'Academy', icon: 'academy' },
   { to: '/proyek', label: 'Projects', icon: 'project' },
+  { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/kru', label: 'Crew Finder', icon: 'crew' },
   { to: '/sekolah', label: 'Sekolah', icon: 'school' },
   { to: '/komunitas', label: 'Community', icon: 'community' },
@@ -50,6 +52,10 @@ const BOTTOM_NAV: Record<Role, string[]> = {
   mentor: ['/', '/akademi', '/mentor/penilaian', '/mentor'],
   admin: ['/', '/akademi', '/admin', '/komunitas'],
 }
+
+// Pengingat H-1 (Tahap 6): sekali per sesi per pengguna, supaya sign-in
+// berikutnya tidak membuat duplikat dan tidak mengulang query.
+const remindersCheckedFor = new Set<string>()
 
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
@@ -78,6 +84,17 @@ export default function Layout() {
         })
     }
     refresh()
+    // Pengingat H-1 (Tahap 6): sekali per sesi, fire-and-forget — gagal
+    // kirim tidak pernah memblokir sign-in. Setelah selesai, hitung ulang
+    // lonceng supaya pengingat baru ikut tampil di badge.
+    if (!remindersCheckedFor.has(user.id)) {
+      remindersCheckedFor.add(user.id)
+      void checkDueReminders(user.id)
+        .then(() => {
+          if (!cancelled) refresh()
+        })
+        .catch(() => undefined)
+    }
     const onVisible = () => {
       if (!document.hidden) refresh()
     }
