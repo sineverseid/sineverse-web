@@ -231,15 +231,15 @@ export default function Layout() {
             <strong className="more-sheet-section-title">Tentang &amp; Ketentuan</strong>
             <div className="more-sheet-grid">
               <NavLink to="/tentang" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
-                <Icon name="book" size={20} />
+                <Icon name="info" size={20} />
                 <span>Tentang</span>
               </NavLink>
               <NavLink to="/privasi" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
-                <Icon name="book" size={20} />
+                <Icon name="shield" size={20} />
                 <span>Privasi</span>
               </NavLink>
               <NavLink to="/syarat" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
-                <Icon name="book" size={20} />
+                <Icon name="fileText" size={20} />
                 <span>Syarat</span>
               </NavLink>
             </div>
