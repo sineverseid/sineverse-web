@@ -7,7 +7,7 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchCourseLessons, fetchCourses, sendNotification, supabase } from '../lib/supabase'
+import { fetchCourses, sendNotification, supabase } from '../lib/supabase'
 import type { Assignment, Course, Submission } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -40,38 +40,75 @@ export default function GradingQueuePage() {
     }
     const currentUser = user
     try {
+      // Semua data diambil dalam 6 query saja (bukan puluhan query berurutan
+      // per course). Sebelumnya halaman ini memuat ~60 query satu per satu,
+      // sehingga di HP lama sekali dan tampak macet di "Memuat antrean…".
       const courses = await fetchCourses()
       const mine = isAdmin ? courses : courses.filter((c) => c.mentor_id === currentUser.id)
+      const courseById = new Map(mine.map((c) => [c.id, c]))
+      const courseIds = mine.map((c) => c.id)
+      if (courseIds.length === 0) {
+        setRows([])
+        return
+      }
+      const { data: modules } = await supabase
+        .from('modules')
+        .select('id,course_id')
+        .in('course_id', courseIds)
+      const moduleIds = ((modules ?? []) as { id: string; course_id: string }[]).map((m) => m.id)
+      const courseByModule = new Map(
+        ((modules ?? []) as { id: string; course_id: string }[]).map((m) => [m.id, m.course_id]),
+      )
+      if (moduleIds.length === 0) {
+        setRows([])
+        return
+      }
+      const { data: lessons } = await supabase
+        .from('lessons')
+        .select('id,module_id')
+        .in('module_id', moduleIds)
+      const lessonIds = ((lessons ?? []) as { id: string; module_id: string }[]).map((l) => l.id)
+      const courseByLesson = new Map(
+        ((lessons ?? []) as { id: string; module_id: string }[]).map((l) => [
+          l.id,
+          courseByModule.get(l.module_id) ?? '',
+        ]),
+      )
+      if (lessonIds.length === 0) {
+        setRows([])
+        return
+      }
+      const { data: assigns } = await supabase
+        .from('assignments')
+        .select('*')
+        .in('lesson_id', lessonIds)
+      const assignments = (assigns ?? []) as Assignment[]
+      if (assignments.length === 0) {
+        setRows([])
+        return
+      }
+      const { data: subs } = await supabase
+        .from('submissions')
+        .select('*')
+        .in('assignment_id', assignments.map((a) => a.id))
+        .is('score', null)
+        .order('submitted_at', { ascending: true })
+      const submissions = (subs ?? []) as Submission[]
+      const byAssignment = new Map(assignments.map((a) => [a.id, a]))
+      const studentIds = [...new Set(submissions.map((s) => s.user_id))]
+      const { data: profiles } = studentIds.length
+        ? await supabase.from('profiles').select('id,name').in('id', studentIds)
+        : { data: [] as { id: string; name: string | null }[] }
+      const names = new Map(
+        ((profiles ?? []) as { id: string; name: string | null }[]).map((p) => [p.id, p.name ?? 'Siswa']),
+      )
       const queue: QueueRow[] = []
-      for (const course of mine) {
-        const lessons = await fetchCourseLessons(course.id)
-        const lessonIds = lessons.map((l) => l.id)
-        if (lessonIds.length === 0) continue
-        const { data: assigns } = await supabase
-          .from('assignments')
-          .select('*')
-          .in('lesson_id', lessonIds)
-        const assignments = (assigns ?? []) as Assignment[]
-        if (assignments.length === 0) continue
-        const { data: subs } = await supabase
-          .from('submissions')
-          .select('*')
-          .in('assignment_id', assignments.map((a) => a.id))
-          .is('score', null)
-          .order('submitted_at', { ascending: true })
-        const byAssignment = new Map(assignments.map((a) => [a.id, a]))
-        const studentIds = [...new Set(((subs ?? []) as Submission[]).map((s) => s.user_id))]
-        const { data: profiles } = studentIds.length
-          ? await supabase.from('profiles').select('id,name').in('id', studentIds)
-          : { data: [] as { id: string; name: string | null }[] }
-        const names = new Map(
-          ((profiles ?? []) as { id: string; name: string | null }[]).map((p) => [p.id, p.name ?? 'Siswa']),
-        )
-        for (const s of (subs ?? []) as Submission[]) {
-          const a = byAssignment.get(s.assignment_id)
-          if (!a) continue
-          queue.push({ submission: s, assignment: a, course, studentName: names.get(s.user_id) ?? 'Siswa' })
-        }
+      for (const s of submissions) {
+        const a = byAssignment.get(s.assignment_id)
+        if (!a) continue
+        const course = courseById.get(courseByLesson.get(a.lesson_id) ?? '')
+        if (!course) continue
+        queue.push({ submission: s, assignment: a, course, studentName: names.get(s.user_id) ?? 'Siswa' })
       }
       queue.sort((a, b) => +new Date(a.submission.submitted_at) - +new Date(b.submission.submitted_at))
       setRows(queue)

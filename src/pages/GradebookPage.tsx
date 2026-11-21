@@ -55,18 +55,42 @@ export default function GradebookPage() {
         if (cancelled) return
         const courses = await fetchCourses()
         const byId = new Map(courses.map((c) => [c.id, c]))
+        // Lesson semua course yang diambil, diambil paralel (bukan satu per
+        // satu) supaya halaman nilai tidak lama memuat.
+        const lessonsPerCourse = await Promise.all(
+          enrollments.map(async (enr) => ({
+            courseId: enr.course_id,
+            lessons: await fetchCourseLessons(enr.course_id),
+          })),
+        )
+        const lessonIds = lessonsPerCourse.flatMap((x) => x.lessons.map((l) => l.id))
+        const [quizzes, assignments] = await Promise.all([
+          fetchQuizzesForLessons(lessonIds),
+          fetchAssignmentsForLessons(lessonIds),
+        ])
+        const quizByLesson = new Map<string, typeof quizzes>()
+        const assignByLesson = new Map<string, typeof assignments>()
+        for (const q of quizzes) {
+          const arr = quizByLesson.get(q.lesson_id) ?? []
+          arr.push(q)
+          quizByLesson.set(q.lesson_id, arr)
+        }
+        for (const a of assignments) {
+          const arr = assignByLesson.get(a.lesson_id) ?? []
+          arr.push(a)
+          assignByLesson.set(a.lesson_id, arr)
+        }
         const rows: CourseGrade[] = []
         for (const enr of enrollments) {
           const course = byId.get(enr.course_id)
           if (!course) continue
-          const lessons = await fetchCourseLessons(course.id)
+          const entry = lessonsPerCourse.find((x) => x.courseId === enr.course_id)
+          const lessons = entry?.lessons ?? []
           const lessonIds = lessons.map((l) => l.id)
-          const [quizzes, assignments] = await Promise.all([
-            fetchQuizzesForLessons(lessonIds),
-            fetchAssignmentsForLessons(lessonIds),
-          ])
-          const quizIds = new Set(quizzes.map((q) => q.id))
-          const assignmentIds = new Set(assignments.map((a) => a.id))
+          const courseQuizzes = lessonIds.flatMap((id) => quizByLesson.get(id) ?? [])
+          const courseAssignments = lessonIds.flatMap((id) => assignByLesson.get(id) ?? [])
+          const quizIds = new Set(courseQuizzes.map((q) => q.id))
+          const assignmentIds = new Set(courseAssignments.map((a) => a.id))
           // Best attempt per quiz (latest best score counts once per quiz).
           const bestQuiz = new Map<string, number>()
           for (const att of quizAttempts) {

@@ -210,15 +210,18 @@ export default function HomePage() {
           setEnrolledIds(enr.map((e) => e.course_id))
           setProgress(prog)
           // Lesson tiap course yang diambil: untuk "Lanjutkan belajar",
-          // hitung progres per course, dan daftar tugasnya.
+          // hitung progres per course, dan daftar tugasnya. Diambil paralel
+          // (bukan satu per satu) supaya Beranda tidak lama memuat.
           const lessonCourseMap = new Map<string, string>()
           const lessonIds: string[] = []
           const totals = new Map<string, number>()
-          for (const e of enr) {
-            const lessons = await fetchCourseLessons(e.course_id)
-            totals.set(e.course_id, lessons.length)
+          const lessonsPerCourse = await Promise.all(
+            enr.map(async (e) => ({ courseId: e.course_id, lessons: await fetchCourseLessons(e.course_id) })),
+          )
+          for (const { courseId, lessons } of lessonsPerCourse) {
+            totals.set(courseId, lessons.length)
             for (const l of lessons) {
-              lessonCourseMap.set(l.id, e.course_id)
+              lessonCourseMap.set(l.id, courseId)
               lessonIds.push(l.id)
             }
           }

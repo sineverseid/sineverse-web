@@ -39,20 +39,39 @@ export default function DeadlinesPage() {
     async function load() {
       if (!user) return
       try {
-        const enrollments = await fetchEnrollments(user.id)
-        const courses = await fetchCourses()
+        const [enrollments, courses, submissions] = await Promise.all([
+          fetchEnrollments(user.id),
+          fetchCourses(),
+          fetchSubmissions(user.id),
+        ])
         const courseById = new Map(courses.map((c) => [c.id, c.title]))
-        const submissions = await fetchSubmissions(user.id)
         const submittedIds = new Set(submissions.map((s) => s.assignment_id))
 
+        // Lesson semua course yang diambil, diambil paralel (bukan satu per
+        // satu) supaya halaman tenggat tidak lama memuat.
+        const lessonsPerCourse = await Promise.all(
+          enrollments.map(async (en) => ({
+            courseId: en.course_id,
+            lessons: await fetchCourseLessons(en.course_id),
+          })),
+        )
+        const allLessonIds = lessonsPerCourse.flatMap((x) => x.lessons.map((l) => l.id))
+        const allAssignments = (
+          await fetchAssignmentsForLessons(allLessonIds)
+        ) as AssignmentRow[]
+        const assignByLesson = new Map<string, AssignmentRow[]>()
+        for (const a of allAssignments) {
+          const arr = assignByLesson.get(a.lesson_id) ?? []
+          arr.push(a)
+          assignByLesson.set(a.lesson_id, arr)
+        }
         const allRows: DeadlineRow[] = []
         for (const en of enrollments) {
-          const lessons = await fetchCourseLessons(en.course_id)
+          const entry = lessonsPerCourse.find((x) => x.courseId === en.course_id)
+          const lessons = entry?.lessons ?? []
           if (lessons.length === 0) continue
           const lessonById = new Map(lessons.map((l) => [l.id, l.title]))
-          const assignments = (await fetchAssignmentsForLessons(
-            lessons.map((l) => l.id),
-          )) as AssignmentRow[]
+          const assignments = lessons.flatMap((l) => assignByLesson.get(l.id) ?? [])
           for (const a of assignments) {
             const due = a.due_date ? new Date(a.due_date) : null
             const submitted = submittedIds.has(a.id)
