@@ -34,6 +34,11 @@ export default function AssignmentPage() {
   const [rubric, setRubric] = useState<RubricWithCriteria | null>(null)
   const [rubricNote, setRubricNote] = useState<string | null>(null)
   const [filesBySubmission, setFilesBySubmission] = useState<Record<string, SubmissionFile[]>>({})
+  // Course pemilik tugas — dibutuhkan untuk path upload storage yang
+  // sesuai konvensi README (<course-id>/<assignment-id>/<user-id>/...).
+  const [courseId, setCourseId] = useState<string | null>(null)
+  // Signed URL per file lampiran (bucket submission-files privat).
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
 
   const draftKey = user && id ? `sineverse-draft-${user.id}-${id}` : ''
 
@@ -59,6 +64,25 @@ export default function AssignmentPage() {
         }
         if (cancelled) return
         setAssignment(data as AssignmentRow | null)
+        // Tentukan course pemilik tugas (untuk path upload storage).
+        // Pakai helper RPC migrasi 014; bila gagal, telusuri lewat
+        // lesson -> module -> course.
+        try {
+          const { data: cid, error: cErr } = await supabase.rpc('course_id_for_assignment', { p_assignment_id: assignmentId })
+          if (!cErr && typeof cid === 'string' && cid) {
+            if (!cancelled) setCourseId(cid)
+          } else {
+            const { data: lRow } = await supabase
+              .from('lessons')
+              .select('module_id, modules(course_id)')
+              .eq('id', (data as AssignmentRow).lesson_id)
+              .maybeSingle()
+            const mid = (lRow as unknown as { modules?: { course_id?: string } } | null)?.modules?.course_id
+            if (mid && !cancelled) setCourseId(mid)
+          }
+        } catch {
+          // courseId tetap null; upload file diblokir dengan pesan jujur.
+        }
         const all = await subsP
         if (cancelled) return
         const mine = (all as SubmissionRow[])
@@ -114,6 +138,21 @@ export default function AssignmentPage() {
       }),
     )
     setFilesBySubmission(Object.fromEntries(entries))
+    // Signed URL per file (bucket submission-files privat): tautan
+    // unduhan yang bisa dibuka pemilik / mentor course / admin sesuai
+    // policy SELECT. Gagal membuat signed URL = jatuh ke getPublicUrl.
+    const allFiles = entries.flatMap(([, rows]) => rows)
+    const signed = await Promise.all(
+      allFiles.map(async (f) => {
+        try {
+          const { data } = await supabase.storage.from('submission-files').createSignedUrl(f.file_path, 3600)
+          return [f.id, data?.signedUrl ?? ''] as const
+        } catch {
+          return [f.id, ''] as const
+        }
+      }),
+    )
+    setSignedUrls(Object.fromEntries(signed.filter(([, u]) => u)))
   }
 
   /** Daftar semua file lampiran satu submission; bila belum ada baris di
@@ -126,7 +165,7 @@ export default function AssignmentPage() {
           {rows.map((f) => (
             <li key={f.id}>
               <a
-                href={supabase.storage.from('submission-files').getPublicUrl(f.file_path).data.publicUrl}
+                href={signedUrls[f.id] ?? supabase.storage.from('submission-files').getPublicUrl(f.file_path).data.publicUrl}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -154,12 +193,22 @@ export default function AssignmentPage() {
     setBusy(true)
     setNotice(null)
     try {
+      // Path upload HARUS mengikuti konvensi README
+      // <course-id>/<assignment-id>/<user-id>/... karena policy INSERT
+      // submission-files memeriksa segmen path itu (foldername[3] =
+      // pemilik, foldername[1] = course untuk mentor). Path lama
+      // <user-id>/<assignment-id>/... selalu ditolak policy.
+      if (files.length > 0 && !courseId) {
+        setNotice('Course tugas ini tidak bisa ditentukan, file tidak bisa diunggah. Kirim jawaban teks saja, atau coba lagi.')
+        setBusy(false)
+        return
+      }
       const uploaded: { path: string; name: string; size: number; url: string }[] = []
       for (const f of files) {
-        const path = `${user.id}/${currentAssignment.id}/v${nextVersion}-${f.name}`
+        const path = `${courseId}/${currentAssignment.id}/${user.id}/v${nextVersion}-${f.name}`
         const url = await uploadToBucket('submission-files', path, f)
         if (!url) {
-          setNotice('Bucket submission-files belum tersedia, file tidak bisa diunggah. Kirim jawaban teks saja, atau minta admin membuat bucket-nya (lihat supabase/README.md).')
+          setNotice('File tidak bisa diunggah. Periksa koneksi lalu coba lagi, atau kirim jawaban teks saja.')
           setBusy(false)
           return
         }
