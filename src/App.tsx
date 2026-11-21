@@ -28,12 +28,14 @@ import { ExamPage, ExamsPage } from './pages/ExamsPage'
 import FilmDetailPage from './pages/FilmDetailPage'
 import GradebookPage from './pages/GradebookPage'
 import GradingQueuePage from './pages/GradingQueuePage'
+import GrowthPage from './pages/GrowthPage'
 import HomePage from './pages/HomePage'
 import LessonDetailPage from './pages/LessonDetailPage'
 import { LibraryDetailPage, LibraryPage } from './pages/LibraryPage'
 import LoginPage from './pages/LoginPage'
 import MentorPage from './pages/MentorPage'
 import MentorAnalyticsPage from './pages/MentorAnalyticsPage'
+import MentorCourseBuilderPage from './pages/MentorCourseBuilderPage'
 import MentorDiscussionsPage from './pages/MentorDiscussionsPage'
 import MentorStudentsPage from './pages/MentorStudentsPage'
 import MentorsPage from './pages/MentorsPage'
@@ -83,6 +85,8 @@ export default function App() {
             <Route path="akademi" element={<AkademiPage />} />
             <Route path="course/:id" element={<CourseDetailPage />} />
             <Route path="lesson/:id" element={<LessonDetailPage />} />
+            {/* RPS — kini dijangkau dari Admin Panel (Editor RPS) dan
+                Mentor Workspace (tautan di Overview), bukan menu utama. */}
             <Route path="rps" element={<RpsPage />} />
             <Route path="pengumuman" element={<AnnouncementsPage />} />
             {/* Showcase / Library / Events / Competitions: public read */}
@@ -92,6 +96,9 @@ export default function App() {
             <Route path="pustaka/:id" element={<LibraryDetailPage />} />
             <Route path="acara" element={<EventsPage />} />
             <Route path="acara/:id" element={<EventDetailPage />} />
+            <Route path="growth" element={<Protected><GrowthPage /></Protected>} />
+            {/* Kompetisi & Sertifikat kini tab di dalam halaman Events (/acara);
+                rute lama tetap ada agar tautan/bookmark lama tidak putus. */}
             <Route path="kompetisi" element={<CompetitionsPage />} />
             <Route path="kompetisi/:id" element={<CompetitionDetailPage />} />
             <Route path="sertifikat/verifikasi" element={<VerifyCertificatePage />} />
@@ -100,7 +107,7 @@ export default function App() {
             <Route path="tugas/:id" element={<Protected><AssignmentPage /></Protected>} />
             <Route path="ujian" element={<Protected><ExamsPage /></Protected>} />
             <Route path="ujian/:id" element={<Protected><ExamPage /></Protected>} />
-            {/* Notifications (Fase B) */}
+            {/* Notifications (Fase B) — kini lonceng di header, bukan menu utama. */}
             <Route path="notifikasi" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="notifikasi/pengaturan" element={<Protected><NotificationPrefsPage /></Protected>} />
             {/* Community / Schools / Clubs (Fase C) */}
@@ -116,13 +123,17 @@ export default function App() {
             <Route path="portofolio/:userId" element={<Protected><PortfolioPage /></Protected>} />
             {/* Direktori Mentor (SINEVERSE Mentors) */}
             <Route path="mentors" element={<Protected><MentorsPage /></Protected>} />
-            {/* Certificates (Fase D) */}
+            {/* Certificates (Fase D) — kini tab "Sertifikat Saya" di /acara;
+                rute tetap ada agar tautan lama tidak putus. */}
             <Route path="sertifikat" element={<Protected><CertificatesPage /></Protected>} />
             {/* Office hours (Fase D) */}
             <Route path="jam-kantor" element={<Protected><OfficeHoursPage /></Protected>} />
-            {/* Existing protected pages */}
+            {/* Nilai / Tenggat / Ujian — kini dijangkau dari Academy & Growth,
+                bukan menu utama; rute tetap ada. */}
             <Route path="nilai" element={<Protected><GradebookPage /></Protected>} />
             <Route path="tenggat" element={<Protected><DeadlinesPage /></Protected>} />
+            {/* Profil — kini dijangkau dari header & Portofolio, bukan menu utama;
+                rute tetap ada. */}
             <Route path="profil" element={<Protected><ProfilePage /></Protected>} />
             <Route path="profil/edit" element={<Protected><EditProfilePage /></Protected>} />
             {/* Mentor Workspace (Fase D) */}
@@ -131,6 +142,14 @@ export default function App() {
               element={
                 <RoleRoute roles={['mentor', 'admin']}>
                   <MentorPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/course-builder"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorCourseBuilderPage />
                 </RoleRoute>
               }
             />

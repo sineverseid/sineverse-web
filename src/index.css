@@ -137,6 +137,72 @@ p {
   border-radius: 8px;
 }
 
+/* Aksi header (login): lonceng notifikasi + tautan profil. */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.header-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  padding: 0.45rem;
+  border-radius: 8px;
+}
+
+.header-bell:hover {
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.header-bell .nav-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.header-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 999px;
+}
+
+.header-profile:hover {
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.header-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--mint);
+}
+
+.header-profile-name {
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .header-profile-name {
+    display: none;
+  }
+}
+
 /* Nav atas: sembunyi di HP (diganti bottom navigation); tampil di desktop. */
 .topnav {
   display: none;
