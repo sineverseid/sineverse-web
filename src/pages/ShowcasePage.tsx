@@ -6,6 +6,7 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
+import { filmHue } from '../lib/brand'
 import { isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { Film } from '../lib/types'
@@ -91,9 +92,17 @@ export default function ShowcasePage() {
           {films.map((f) => (
             <li key={f.id} className="course-card">
               <Link to={`/showcase/${f.id}`}>
-                {f.poster_url && <img src={f.poster_url} alt={`Poster ${f.title}`} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />}
-                <h3>{f.title}</h3>
-                <p>{f.description ?? ''}</p>
+                {f.poster_url ? (
+                  <img src={f.poster_url} alt={`Poster ${f.title}`} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />
+                ) : (
+                  <div className="film-cover" style={{ background: filmHue(f.id) }} aria-hidden="true">
+                    <span className="film-cover-title">{f.title}</span>
+                  </div>
+                )}
+                <div className="course-card-body">
+                  <h3>{f.title}</h3>
+                  <p>{f.description ?? ''}</p>
+                </div>
               </Link>
             </li>
           ))}
