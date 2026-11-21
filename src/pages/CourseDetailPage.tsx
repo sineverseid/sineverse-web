@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { courseCoverKey, rpsWeekLabel } from '../lib/brand'
 import {
   enrollInCourse,
   fetchCourse,
@@ -24,8 +25,11 @@ import type { Course, Lesson, LessonProgress, Module } from '../lib/types'
 
 export default function CourseDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const navigate = useNavigate()
+
+  // Admin hanya memantau — admin tidak mengambil course.
+  const isAdmin = profile?.role === 'admin'
 
   const [course, setCourse] = useState<Course | null>(null)
   const [mentorName, setMentorName] = useState<string | null>(null)
@@ -108,6 +112,8 @@ export default function CourseDetailPage() {
   const nextLesson = allLessons.find((l) => !doneIds.has(l.id))
   const hasKey = Boolean(course.enrollment_key)
   const noMentor = course.mentor_id === null
+  const week = rpsWeekLabel(course.id)
+  const coverKey = courseCoverKey(course.title)
 
   async function doEnroll() {
     if (!user || !course) return
@@ -171,10 +177,14 @@ export default function CourseDetailPage() {
       <Link to="/akademi" className="back-link">
         ← Akademi
       </Link>
+      <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
+        {week && <span className="course-cover-week">{week}</span>}
+        <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+      </div>
       <h1>{course.title}</h1>
       <p className="muted">
-        {course.category ?? 'Lainnya'} · {course.level ?? 'Semua level'} · Mentor:{' '}
-        {mentorName ?? 'Belum ditugaskan'}
+        {course.category ?? 'Lainnya'} · {course.level ?? 'Semua level'}
+        {week ? ` · ${week}` : ''} · Mentor: {mentorName ?? 'Belum ditugaskan'}
       </p>
       {course.description && <p>{course.description}</p>}
 
@@ -198,7 +208,12 @@ export default function CourseDetailPage() {
 
       {!enrolled && (
         <div className="enroll-block">
-          {noMentor ? (
+          {isAdmin ? (
+            <p className="muted">
+              Kamu masuk sebagai admin. Admin hanya memantau progres course — admin tidak
+              mengambil course.
+            </p>
+          ) : noMentor ? (
             <>
               <p className="muted">
                 Course ini belum memiliki mentor. Ikuti daftar tunggu — kamu akan diberi tahu

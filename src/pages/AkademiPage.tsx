@@ -63,6 +63,10 @@ export default function AkademiPage() {
 
   // Progres Academy untuk admin: siswa, lesson selesai, dan total lesson
   // per course — dihitung dari enrollments + lesson_progress asli.
+  // Hanya progres siswa dan mentor yang dihitung: sebuah lesson selesai
+  // dihitung bila yang menyelesaikannya terdaftar di course itu (siswa)
+  // atau mengampu course itu (mentor). Admin hanya memantau dan tidak
+  // mengambil course, jadi aktivitas admin tidak masuk hitungan.
   useEffect(() => {
     if (!isAdmin || courses.length === 0) return
     let cancelled = false
@@ -72,8 +76,8 @@ export default function AkademiPage() {
           await Promise.all([
             supabase.from('modules').select('id,course_id'),
             supabase.from('lessons').select('id,module_id'),
-            supabase.from('enrollments').select('course_id'),
-            supabase.from('lesson_progress').select('lesson_id,status'),
+            supabase.from('enrollments').select('course_id,user_id'),
+            supabase.from('lesson_progress').select('lesson_id,user_id,status'),
           ])
         if (cancelled) return
         const moduleCourse = new Map(
@@ -84,6 +88,15 @@ export default function AkademiPage() {
             l.id,
             moduleCourse.get(l.module_id) ?? '',
           ]),
+        )
+        // Siapa terdaftar di course mana, dan siapa mentor tiap course.
+        const enrolledSet = new Set(
+          ((enr ?? []) as { course_id: string; user_id: string }[]).map(
+            (e) => `${e.user_id}:${e.course_id}`,
+          ),
+        )
+        const mentorByCourse = new Map(
+          courses.map((c) => [c.id, c.mentor_id as string | null]),
         )
         const stats = new Map<string, { students: number; completed: number; total: number }>()
         for (const c of courses) stats.set(c.id, { students: 0, completed: 0, total: 0 })
@@ -97,10 +110,16 @@ export default function AkademiPage() {
           if (row) row.students += 1
         }
         let completedTotal = 0
-        for (const p of (prog ?? []) as { lesson_id: string; status: string }[]) {
+        for (const p of (prog ?? []) as { lesson_id: string; user_id: string; status: string }[]) {
           if (p.status !== 'completed') continue
           const cid = lessonCourse.get(p.lesson_id)
-          const row = cid ? stats.get(cid) : undefined
+          if (!cid) continue
+          // Hanya hitung bila penyelesainya siswa terdaftar di course ini
+          // atau mentor yang mengampu course ini (bukan admin).
+          const isStudent = enrolledSet.has(`${p.user_id}:${cid}`)
+          const isMentor = mentorByCourse.get(cid) === p.user_id
+          if (!isStudent && !isMentor) continue
+          const row = stats.get(cid)
           if (row) {
             row.completed += 1
             completedTotal += 1
