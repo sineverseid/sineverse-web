@@ -88,9 +88,10 @@ export interface Assignment {
   description: string | null
   max_score: number
   created_at: string
-  // NOT in the written schema (001): no due_date / rubric columns exist.
-  // The UI treats description as the rubric text and states honestly
-  // that no deadline is recorded for the assignment.
+  // due_date + rubric ditambahkan migrasi 009 (diterapkan live 21 Nov 2026).
+  // Opsional: tugas lama yang dibuat sebelum 009 bernilai null.
+  due_date?: string | null
+  rubric?: string | null
 }
 
 export interface Submission {
