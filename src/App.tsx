@@ -33,10 +33,13 @@ import { EventDetailPage, EventsPage } from './pages/EventsPage'
 import { CompetitionDetailPage, CompetitionsPage } from './pages/CompetitionsPage'
 import { ExamPage, ExamsPage } from './pages/ExamsPage'
 import FilmDetailPage from './pages/FilmDetailPage'
+import FinalProjectDetailPage from './pages/FinalProjectDetailPage'
+import FinalProjectsPage from './pages/FinalProjectsPage'
 import GradebookPage from './pages/GradebookPage'
 import GradingQueuePage from './pages/GradingQueuePage'
 import GrowthPage from './pages/GrowthPage'
 import HomePage from './pages/HomePage'
+import IssueCourseCertificatePage from './pages/IssueCourseCertificatePage'
 import LessonDetailPage from './pages/LessonDetailPage'
 import { LibraryDetailPage, LibraryPage } from './pages/LibraryPage'
 import LoginPage from './pages/LoginPage'
@@ -129,6 +132,8 @@ export default function App() {
             {/* Projects / Crew Finder (Fase C) */}
             <Route path="proyek" element={<Protected><ProjectsPage /></Protected>} />
             <Route path="proyek/:id" element={<Protected><ProjectDetailPage /></Protected>} />
+            <Route path="proyek-akhir" element={<Protected><FinalProjectsPage /></Protected>} />
+            <Route path="proyek-akhir/:id" element={<Protected><FinalProjectDetailPage /></Protected>} />
             <Route path="kru" element={<Protected><CrewFinderPage /></Protected>} />
             {/* Portfolio (Fase C) */}
             <Route path="portofolio" element={<Protected><PortfolioPage /></Protected>} />
@@ -347,6 +352,14 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin']}>
                   <AdminCertificatesPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/sertifikat/terbitkan"
+              element={
+                <RoleRoute roles={['admin', 'mentor']}>
+                  <IssueCourseCertificatePage />
                 </RoleRoute>
               }
             />
