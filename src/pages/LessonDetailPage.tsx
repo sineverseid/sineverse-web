@@ -191,74 +191,104 @@ export default function LessonDetailPage() {
       }
       setAccess('allowed')
 
-      // 3. Companion fetch, masing-masing independen. Satu gagal hanya
-      // menampilkan notice kecil di seksinya, bukan error halaman.
-      try {
-        const sibs = await fetchCourseLessons(courseInfo.courseId)
-        if (!cancelled) setSiblings(sibs)
-      } catch {
-        if (!cancelled) setSiblings([])
-      }
-
+      // 3. Companion fetch, masing-masing independen dan PARALEL.
+      // Satu gagal hanya menampilkan notice kecil di seksinya, bukan
+      // error halaman. Kuis/tugas dibutuhkan tahap berikutnya, jadi
+      // hasilnya disimpan ke variabel lokal juga.
       let assigns: Assignment[] = []
-      try {
-        assigns = await fetchAssignmentsForLessons([l.id])
-        if (!cancelled) setAssignments(assigns)
-      } catch {
-        if (!cancelled) setAssignError('Tugas gagal dimuat. Coba muat ulang halaman.')
-      }
-
       let qs: Quiz[] = []
-      try {
-        qs = await fetchQuizzesForLessons([l.id])
-        if (!cancelled) setQuizzes(qs)
-      } catch {
-        if (!cancelled) setQuizError('Kuis gagal dimuat. Coba muat ulang halaman.')
-      }
-
-      try {
-        const threads = await fetchDiscussions(l.id)
-        if (!cancelled) setDiscussions(threads)
-      } catch {
-        if (!cancelled) setDiscussionError('Diskusi gagal dimuat. Coba muat ulang halaman.')
+      {
+        const [, assignsRes, qsRes] = await Promise.all([
+          (async () => {
+            try {
+              const sibs = await fetchCourseLessons(courseInfo.courseId)
+              if (!cancelled) setSiblings(sibs)
+            } catch {
+              if (!cancelled) setSiblings([])
+            }
+          })(),
+          (async () => {
+            try {
+              const a = await fetchAssignmentsForLessons([l.id])
+              if (!cancelled) setAssignments(a)
+              return a
+            } catch {
+              if (!cancelled) setAssignError('Tugas gagal dimuat. Coba muat ulang halaman.')
+              return [] as Assignment[]
+            }
+          })(),
+          (async () => {
+            try {
+              const q = await fetchQuizzesForLessons([l.id])
+              if (!cancelled) setQuizzes(q)
+              return q
+            } catch {
+              if (!cancelled) setQuizError('Kuis gagal dimuat. Coba muat ulang halaman.')
+              return [] as Quiz[]
+            }
+          })(),
+          (async () => {
+            try {
+              const threads = await fetchDiscussions(l.id)
+              if (!cancelled) setDiscussions(threads)
+            } catch {
+              if (!cancelled) setDiscussionError('Diskusi gagal dimuat. Coba muat ulang halaman.')
+            }
+          })(),
+        ])
+        assigns = assignsRes
+        qs = qsRes
       }
 
       if (user) {
-        try {
-          const prog = await fetchLessonProgressFor(user.id, l.id)
-          if (!cancelled && prog) setStatus(prog.status)
-          if (!prog || prog.status === 'not_started') {
+        // Progres, percobaan kuis, dan submission independen satu sama
+        // lain — dimuat paralel. markLessonStarted fire-and-forget:
+        // status jadi in_progress saat berhasil, tanpa memblokir render.
+        await Promise.all([
+          (async () => {
             try {
-              await markLessonStarted(user.id, l.id)
-              if (!cancelled) setStatus('in_progress')
+              const prog = await fetchLessonProgressFor(user.id, l.id)
+              if (cancelled) return
+              if (prog) setStatus(prog.status)
+              if (!prog || prog.status === 'not_started') {
+                void markLessonStarted(user.id, l.id)
+                  .then(() => {
+                    if (!cancelled) setStatus('in_progress')
+                  })
+                  .catch(() => {
+                    // Gagal menandai mulai: lesson tetap tampil, status apa adanya.
+                  })
+              }
             } catch {
-              // Gagal menandai mulai: lesson tetap tampil, status apa adanya.
+              // Progres gagal dimuat: lesson tetap tampil tanpa status.
             }
-          }
-        } catch {
-          // Progres gagal dimuat: lesson tetap tampil tanpa status.
-        }
-        try {
-          const attempts = await fetchQuizAttempts(user.id)
-          if (!cancelled) {
-            setPassedQuiz(
-              attempts.some((a) =>
-                qs.some((q) => q.id === a.quiz_id && a.score != null && a.score >= q.passing_score),
-              ),
-            )
-          }
-        } catch {
-          if (!cancelled) setPassedQuiz(false)
-        }
-        try {
-          const subs = await fetchSubmissions(user.id)
-          if (!cancelled) {
-            const assignIds = new Set(assigns.map((a) => a.id))
-            setSubmittedAssignment(subs.some((s) => assignIds.has(s.assignment_id)))
-          }
-        } catch {
-          if (!cancelled) setSubmittedAssignment(false)
-        }
+          })(),
+          (async () => {
+            try {
+              const attempts = await fetchQuizAttempts(user.id)
+              if (!cancelled) {
+                setPassedQuiz(
+                  attempts.some((a) =>
+                    qs.some((q) => q.id === a.quiz_id && a.score != null && a.score >= q.passing_score),
+                  ),
+                )
+              }
+            } catch {
+              if (!cancelled) setPassedQuiz(false)
+            }
+          })(),
+          (async () => {
+            try {
+              const subs = await fetchSubmissions(user.id)
+              if (!cancelled) {
+                const assignIds = new Set(assigns.map((a) => a.id))
+                setSubmittedAssignment(subs.some((s) => assignIds.has(s.assignment_id)))
+              }
+            } catch {
+              if (!cancelled) setSubmittedAssignment(false)
+            }
+          })(),
+        ])
       }
 
       if (!cancelled) setLoading(false)

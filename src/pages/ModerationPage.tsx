@@ -21,21 +21,26 @@ export default function ModerationPage() {
 
   async function load() {
     try {
-      const { data: dData, error: dErr } = await supabase.from('discussion_reports').select('*').order('created_at', { ascending: false })
-      if (dErr) {
-        if (isMissingTableError(dErr)) setDiscReports(null)
-        else throw dErr
-      } else setDiscReports((dData ?? []) as DiscussionReport[])
-      const { data: mData, error: mErr } = await supabase.from('moderation_reports').select('*').order('created_at', { ascending: false })
-      if (mErr) {
-        if (isMissingTableError(mErr)) setModReports(null)
-        else throw mErr
-      } else setModReports((mData ?? []) as ModerationReport[])
-      const { data: aData, error: aErr } = await supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(100)
-      if (aErr) {
-        if (isMissingTableError(aErr)) setAudit(null)
-        else throw aErr
-      } else setAudit((aData ?? []) as AuditLogRow[])
+      // Ketiga select independen: jalankan paralel, lalu terapkan
+      // penanganan error masing-masing dengan urutan yang sama seperti
+      // semula (missing table -> null, error lain -> throw).
+      const [dRes, mRes, aRes] = await Promise.all([
+        supabase.from('discussion_reports').select('*').order('created_at', { ascending: false }),
+        supabase.from('moderation_reports').select('*').order('created_at', { ascending: false }),
+        supabase.from('audit_log').select('*').order('created_at', { ascending: false }).limit(100),
+      ])
+      if (dRes.error) {
+        if (isMissingTableError(dRes.error)) setDiscReports(null)
+        else throw dRes.error
+      } else setDiscReports((dRes.data ?? []) as DiscussionReport[])
+      if (mRes.error) {
+        if (isMissingTableError(mRes.error)) setModReports(null)
+        else throw mRes.error
+      } else setModReports((mRes.data ?? []) as ModerationReport[])
+      if (aRes.error) {
+        if (isMissingTableError(aRes.error)) setAudit(null)
+        else throw aRes.error
+      } else setAudit((aRes.data ?? []) as AuditLogRow[])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat moderasi.')
     } finally {

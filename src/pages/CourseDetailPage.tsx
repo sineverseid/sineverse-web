@@ -21,7 +21,6 @@ import {
   fetchCourse,
   fetchEnrollment,
   fetchLessonProgress,
-  fetchLessons,
   fetchMentorName,
   fetchModules,
   fetchWaitlistEntry,
@@ -71,65 +70,101 @@ export default function CourseDetailPage() {
         }
         setCourse(c)
 
-        // Nama mentor: gagal tidak boleh mengosongkan halaman.
-        try {
-          setMentorName(await fetchMentorName(c.mentor_id))
-        } catch {
-          if (!cancelled) setMentorFailed(true)
-        }
-
-        // Modul + lesson per modul: gagal tidak boleh mengosongkan halaman.
-        try {
-          const mods = await fetchModules(c.id)
-          const withLessons = await Promise.all(
-            mods.map(async (m) => {
-              try {
-                return { ...m, lessons: await fetchLessons(m.id) }
-              } catch {
-                return { ...m, lessons: [] as Lesson[] }
-              }
-            }),
-          )
-          if (!cancelled) setModules(withLessons)
-        } catch {
-          if (!cancelled) setModulesError('Modul gagal dimuat. Coba muat ulang halaman.')
-        }
-
-        if (user) {
+        // Semua bagian independen dimuat PARALEL; satu gagal hanya
+        // menampilkan notice di seksinya, bukan mengosongkan halaman.
+        const mentorTask = (async () => {
+          // Nama mentor: gagal tidak boleh mengosongkan halaman.
           try {
-            const enr = await fetchEnrollment(user.id, c.id)
-            if (!cancelled) setEnrolled(enr !== null)
+            const name = await fetchMentorName(c.mentor_id)
+            if (!cancelled) setMentorName(name)
           } catch {
-            // Enrollment gagal dibaca: perlakukan sebagai belum terdaftar.
+            if (!cancelled) setMentorFailed(true)
           }
+        })()
+
+        const modulesTask = (async () => {
+          // Modul + lesson: gagal tidak boleh mengosongkan halaman.
+          // Satu query lesson untuk semua modul (bukan satu per modul),
+          // diurutkan seperti fetchCourseLessons: (urutan modul, urutan
+          // lesson). Query .in() langsung dipakai di sini — bukan
+          // fetchCourseLessons — karena fungsi itu memuat ulang modul
+          // secara internal, sementara modul sudah ada di sini.
           try {
-            const prog = await fetchLessonProgress(user.id)
-            if (!cancelled) setProgress(prog)
+            const mods = await fetchModules(c.id)
+            const orderByModule = new Map(mods.map((m) => [m.id, m.order_index]))
+            let lessons: Lesson[] = []
+            if (mods.length > 0) {
+              const { data: lData, error: lErr } = await supabase
+                .from('lessons')
+                .select('*')
+                .in('module_id', mods.map((m) => m.id))
+              if (lErr) throw lErr
+              lessons = ((lData ?? []) as Lesson[]).sort((a, b) => {
+                const ma = orderByModule.get(a.module_id) ?? 0
+                const mb = orderByModule.get(b.module_id) ?? 0
+                if (ma !== mb) return ma - mb
+                return (a.order_index ?? 0) - (b.order_index ?? 0)
+              })
+            }
+            if (!cancelled) {
+              setModules(mods.map((m) => ({ ...m, lessons: lessons.filter((x) => x.module_id === m.id) })))
+            }
           } catch {
-            // Progres gagal dibaca: tampilkan course tanpa progres.
+            if (!cancelled) setModulesError('Modul gagal dimuat. Coba muat ulang halaman.')
           }
-          if (c.mentor_id === null) {
-            try {
-              const wl = await fetchWaitlistEntry(user.id, c.id)
-              if (!cancelled) setOnWaitlist(wl)
-            } catch {
-              // Status daftar tunggu gagal dibaca: tampilkan tombol apa adanya.
-            }
-          }
-          if (profile?.role === 'mentor') {
-            try {
-              const { data } = await supabase
-                .from('course_claims')
-                .select('id')
-                .eq('mentor_id', user.id)
-                .eq('course_id', c.id)
-                .maybeSingle()
-              if (!cancelled && data) setClaimed(true)
-            } catch {
-              // Pengajuan lama gagal dibaca: tombol tetap bisa dikirim.
-            }
-          }
-        }
+        })()
+
+        const userTasks = user
+          ? Promise.all([
+              (async () => {
+                try {
+                  const enr = await fetchEnrollment(user.id, c.id)
+                  if (!cancelled) setEnrolled(enr !== null)
+                } catch {
+                  // Enrollment gagal dibaca: perlakukan sebagai belum terdaftar.
+                }
+              })(),
+              (async () => {
+                try {
+                  const prog = await fetchLessonProgress(user.id)
+                  if (!cancelled) setProgress(prog)
+                } catch {
+                  // Progres gagal dibaca: tampilkan course tanpa progres.
+                }
+              })(),
+              ...(c.mentor_id === null
+                ? [
+                    (async () => {
+                      try {
+                        const wl = await fetchWaitlistEntry(user.id, c.id)
+                        if (!cancelled) setOnWaitlist(wl)
+                      } catch {
+                        // Status daftar tunggu gagal dibaca: tampilkan tombol apa adanya.
+                      }
+                    })(),
+                  ]
+                : []),
+              ...(profile?.role === 'mentor'
+                ? [
+                    (async () => {
+                      try {
+                        const { data } = await supabase
+                          .from('course_claims')
+                          .select('id')
+                          .eq('mentor_id', user.id)
+                          .eq('course_id', c.id)
+                          .maybeSingle()
+                        if (!cancelled && data) setClaimed(true)
+                      } catch {
+                        // Pengajuan lama gagal dibaca: tombol tetap bisa dikirim.
+                      }
+                    })(),
+                  ]
+                : []),
+            ])
+          : Promise.resolve()
+
+        await Promise.all([mentorTask, modulesTask, userTasks])
       } catch {
         if (!cancelled) setError('Gagal memuat course. Periksa koneksi lalu coba lagi.')
       } finally {

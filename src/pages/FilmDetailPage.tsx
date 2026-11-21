@@ -76,7 +76,12 @@ export default function FilmDetailPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data, error: qErr } = await supabase.from('films').select('*').eq('id', filmId).maybeSingle()
+        // Film dan daftar ulasannya independen (keduanya hanya butuh
+        // filmId) — dimuat paralel, bukan film dulu baru ulasan.
+        const [{ data, error: qErr }, { data: revData }] = await Promise.all([
+          supabase.from('films').select('*').eq('id', filmId).maybeSingle(),
+          supabase.from('film_reviews').select('*').eq('film_id', filmId).order('created_at', { ascending: false }),
+        ])
         if (qErr) {
           if (isMissingTableError(qErr)) {
             setMissing(true)
@@ -88,16 +93,20 @@ export default function FilmDetailPage() {
         setFilm(data as Film | null)
         if (data) {
           const f = data as Film
-          if (f.reviewed_by) {
-            // Nama penilai gagal dimuat tidak boleh merusak halaman film.
-            try {
-              const reviewerNames = await fetchProfileNames([f.reviewed_by])
-              if (!cancelled) setReviewerName(reviewerNames.get(f.reviewed_by) ?? 'Admin')
-            } catch {
-              if (!cancelled) setReviewerName('Admin')
-            }
-          }
-          await loadReviews(filmId)
+          const rows = (revData ?? []) as FilmReview[]
+          setReviews(rows)
+          // Nama penilai (bila ditolak) dan nama pemberi ulasan independen
+          // satu sama lain — dimuat paralel.
+          const [reviewerNames, reviewNames] = await Promise.all([
+            f.reviewed_by
+              ? fetchProfileNames([f.reviewed_by]).catch(() => new Map<string, string>())
+              : Promise.resolve(new Map<string, string>()),
+            fetchProfileNames(rows.map((r) => r.user_id)).catch(() => new Map<string, string>()),
+          ])
+          if (cancelled) return
+          // Nama penilai gagal dimuat tidak boleh merusak halaman film.
+          if (f.reviewed_by) setReviewerName(reviewerNames.get(f.reviewed_by) ?? 'Admin')
+          setNames(reviewNames)
         }
       } catch {
         if (!cancelled) setError('Gagal memuat film. Silakan muat ulang halaman.')

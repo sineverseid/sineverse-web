@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourseLessons, fetchCourses, supabase } from '../lib/supabase'
+import { fetchCourses, supabase } from '../lib/supabase'
 import type { Course, CourseClaim } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -46,44 +46,81 @@ export default function MentorPage() {
     let cancelled = false
     async function load() {
       try {
-        const courses = await fetchCourses()
+        // fetchCourses, klaim, dan lamaran independen — paralel sejak awal.
+        const [courses, { data: cl }, { data: apps }] = await Promise.all([
+          fetchCourses(),
+          supabase.from('course_claims').select('*').eq('mentor_id', currentUser.id).order('created_at', { ascending: false }),
+          supabase
+            .from('mentor_applications')
+            .select('id')
+            .eq('user_id', currentUser.id)
+            .eq('status', 'pending')
+            .limit(1),
+        ])
         if (cancelled) return
         const mine = profile?.role === 'admin' ? courses : courses.filter((c) => c.mentor_id === currentUser.id)
-        const out: MentorCourseRow[] = []
-        for (const course of mine) {
-          const [enr, lessons] = await Promise.all([
-            supabase.from('enrollments').select('id').eq('course_id', course.id),
-            fetchCourseLessons(course.id),
+        // Batch lintas SEMUA course yang diampu (bukan loop per course):
+        // enrollments + modules paralel, lalu lessons → assignments →
+        // submissions belum dinilai; jumlah siswa/pending dihitung di JS.
+        let out: MentorCourseRow[] = []
+        if (mine.length > 0) {
+          const mineIds = mine.map((c) => c.id)
+          const [{ data: enr }, { data: mods }] = await Promise.all([
+            supabase.from('enrollments').select('id,course_id').in('course_id', mineIds),
+            supabase.from('modules').select('id,course_id').in('course_id', mineIds),
           ])
-          const lessonIds = lessons.map((l) => l.id)
-          let pending = 0
-          if (lessonIds.length > 0) {
-            const { data: assigns } = await supabase.from('assignments').select('id').in('lesson_id', lessonIds)
-            const aIds = ((assigns ?? []) as { id: string }[]).map((a) => a.id)
-            if (aIds.length > 0) {
-              const { count } = await supabase
-                .from('submissions')
-                .select('id', { count: 'exact', head: true })
-                .in('assignment_id', aIds)
-                .is('score', null)
-              pending = count ?? 0
-            }
+          const enrRows = (enr ?? []) as { id: string; course_id: string }[]
+          const modRows = (mods ?? []) as { id: string; course_id: string }[]
+          const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
+          let lessonRows: { id: string; module_id: string }[] = []
+          if (modRows.length > 0) {
+            const { data: lessons } = await supabase
+              .from('lessons')
+              .select('id,module_id')
+              .in('module_id', modRows.map((m) => m.id))
+            lessonRows = (lessons ?? []) as { id: string; module_id: string }[]
           }
-          out.push({ course, students: (enr.data ?? []).length, pending })
+          const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
+          let assignRows: { id: string; lesson_id: string }[] = []
+          if (lessonRows.length > 0) {
+            const { data: assigns } = await supabase
+              .from('assignments')
+              .select('id,lesson_id')
+              .in('lesson_id', lessonRows.map((l) => l.id))
+            assignRows = (assigns ?? []) as { id: string; lesson_id: string }[]
+          }
+          const assignCourse = new Map(assignRows.map((a) => [a.id, lessonCourse.get(a.lesson_id) ?? '']))
+          let subRows: { assignment_id: string }[] = []
+          if (assignRows.length > 0) {
+            const { data: subs } = await supabase
+              .from('submissions')
+              .select('assignment_id')
+              .in('assignment_id', assignRows.map((a) => a.id))
+              .is('score', null)
+            subRows = (subs ?? []) as { assignment_id: string }[]
+          }
+          const studentsByCourse = new Map<string, number>()
+          for (const e of enrRows) {
+            studentsByCourse.set(e.course_id, (studentsByCourse.get(e.course_id) ?? 0) + 1)
+          }
+          const pendingByCourse = new Map<string, number>()
+          for (const s of subRows) {
+            const cid = assignCourse.get(s.assignment_id)
+            if (!cid) continue
+            pendingByCourse.set(cid, (pendingByCourse.get(cid) ?? 0) + 1)
+          }
+          out = mine.map((course) => ({
+            course,
+            students: studentsByCourse.get(course.id) ?? 0,
+            pending: pendingByCourse.get(course.id) ?? 0,
+          }))
         }
         if (!cancelled) {
           setRows(out)
           setUnassigned(courses.filter((c) => !c.mentor_id))
+          setClaims((cl ?? []) as CourseClaim[])
+          setPendingApplication(((apps ?? []) as { id: string }[]).length > 0)
         }
-        const { data: cl } = await supabase.from('course_claims').select('*').eq('mentor_id', currentUser.id).order('created_at', { ascending: false })
-        if (!cancelled) setClaims((cl ?? []) as CourseClaim[])
-        const { data: apps } = await supabase
-          .from('mentor_applications')
-          .select('id')
-          .eq('user_id', currentUser.id)
-          .eq('status', 'pending')
-          .limit(1)
-        if (!cancelled) setPendingApplication(((apps ?? []) as { id: string }[]).length > 0)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat Mentor Workspace.')
       } finally {

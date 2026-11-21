@@ -28,14 +28,17 @@ export default function OfficeHoursPage() {
 
   async function load() {
     try {
-      const { data, error: qErr } = await supabase.from('office_hours').select('*').order('starts_at', { ascending: true })
+      // office_hours dan bookings independen — dimuat paralel.
+      const [{ data, error: qErr }, { data: bData }] = await Promise.all([
+        supabase.from('office_hours').select('*').order('starts_at', { ascending: true }),
+        supabase.from('office_hour_bookings').select('*').eq('status', 'booked'),
+      ])
       if (qErr) {
         if (isMissingTableError(qErr)) setHours(null)
         else throw qErr
         return
       }
       setHours((data ?? []) as OfficeHour[])
-      const { data: bData } = await supabase.from('office_hour_bookings').select('*').eq('status', 'booked')
       const bRows = (bData ?? []) as OfficeHourBooking[]
       setBookings(bRows)
       setNames(await fetchProfileNames([...new Set(bRows.map((b) => b.user_id))]))

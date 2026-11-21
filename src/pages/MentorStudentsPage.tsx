@@ -49,10 +49,16 @@ export default function MentorStudentsPage() {
           if (!cancelled) setRows([])
           return
         }
-        const { data: mods } = await supabase
-          .from('modules')
-          .select('id,course_id')
-          .in('course_id', mine.map((c) => c.id))
+        const userIds = [...new Set(enrRows.map((e) => e.user_id))]
+        // Modules dan nama profil independen satu sama lain (nama hanya butuh
+        // userIds dari enrollments) — jalankan paralel, bukan berurutan.
+        const [{ data: mods }, names] = await Promise.all([
+          supabase
+            .from('modules')
+            .select('id,course_id')
+            .in('course_id', mine.map((c) => c.id)),
+          fetchProfileNames(userIds),
+        ])
         const modRows = (mods ?? []) as { id: string; course_id: string }[]
         const { data: lessons } = await supabase
           .from('lessons')
@@ -64,8 +70,6 @@ export default function MentorStudentsPage() {
           .select('user_id,status')
           .in('lesson_id', lessonIds.length > 0 ? lessonIds : ['00000000-0000-0000-0000-000000000000'])
         const progRows = (prog ?? []) as { user_id: string; status: string }[]
-        const userIds = [...new Set(enrRows.map((e) => e.user_id))]
-        const names = await fetchProfileNames(userIds)
         const byUser = new Map<string, StudentRow>()
         for (const e of enrRows) {
           const row = byUser.get(e.user_id) ?? {

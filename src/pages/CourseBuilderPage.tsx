@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourse, fetchLessons, fetchModules, supabase } from '../lib/supabase'
+import { fetchCourse, fetchModules, supabase } from '../lib/supabase'
 import type { Assignment, CompetencyExam, Lesson, LessonResource, Module, Quiz } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -65,17 +65,44 @@ export default function CourseBuilderPage() {
   async function refresh(courseId: string) {
     const mods = await fetchModules(courseId)
     setModules(mods)
-    const map: Record<string, Lesson[]> = {}
-    for (const m of mods) map[m.id] = await fetchLessons(m.id)
-    setLessonsByModule(map)
-    const allLessonIds = Object.values(map).flat().map((l) => l.id)
-    if (allLessonIds.length > 0) {
-      const { data: qData } = await supabase.from('quizzes').select('*').in('lesson_id', allLessonIds)
-      setQuizzes((qData ?? []) as Quiz[])
-      const { data: aData } = await supabase.from('assignments').select('*').in('lesson_id', allLessonIds)
-      setAssignments((aData ?? []) as Assignment[])
+    // Satu query untuk semua lesson (bukan satu query per modul),
+    // diurutkan seperti fetchCourseLessons: (urutan modul, urutan lesson).
+    // Query .in() langsung dipakai di sini — bukan fetchCourseLessons —
+    // karena fungsi itu memuat ulang modul secara internal.
+    const orderByModule = new Map(mods.map((m) => [m.id, m.order_index]))
+    let allLessons: Lesson[] = []
+    if (mods.length > 0) {
+      const { data: lData } = await supabase
+        .from('lessons')
+        .select('*')
+        .in('module_id', mods.map((m) => m.id))
+      allLessons = ((lData ?? []) as Lesson[]).sort((a, b) => {
+        const ma = orderByModule.get(a.module_id) ?? 0
+        const mb = orderByModule.get(b.module_id) ?? 0
+        if (ma !== mb) return ma - mb
+        return (a.order_index ?? 0) - (b.order_index ?? 0)
+      })
     }
-    const { data: eData } = await supabase.from('competency_exams').select('*').eq('course_id', courseId)
+    const map: Record<string, Lesson[]> = {}
+    for (const m of mods) map[m.id] = []
+    for (const l of allLessons) {
+      if (map[l.module_id]) map[l.module_id].push(l)
+    }
+    setLessonsByModule(map)
+    const allLessonIds = allLessons.map((l) => l.id)
+    // Kuis + tugas + ujian dimuat paralel. Bila tidak ada lesson,
+    // kuis/tugas tetap seperti semula (tidak diubah), ujian tetap dimuat.
+    const [qData, aData, eData] = await Promise.all([
+      allLessonIds.length > 0
+        ? supabase.from('quizzes').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
+        : Promise.resolve(null),
+      allLessonIds.length > 0
+        ? supabase.from('assignments').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
+        : Promise.resolve(null),
+      supabase.from('competency_exams').select('*').eq('course_id', courseId).then((r) => r.data),
+    ])
+    if (qData !== null) setQuizzes((qData ?? []) as Quiz[])
+    if (aData !== null) setAssignments((aData ?? []) as Assignment[])
     setExams((eData ?? []) as CompetencyExam[])
   }
 

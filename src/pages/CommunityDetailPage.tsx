@@ -45,19 +45,26 @@ export default function CommunityDetailPage() {
     if (qErr) throw qErr
     const rows = (data ?? []) as CommunityPost[]
     const userIds = [...new Set(rows.map((r) => r.user_id))]
+    // Nama penulis dan balasan tidak saling bergantung: jalankan paralel.
+    const [profsRes, repsRes] = await Promise.all([
+      userIds.length > 0
+        ? supabase.from('profiles').select('id,name,photo_url').in('id', userIds)
+        : Promise.resolve({ data: null as { id: string; name: string | null; photo_url: string | null }[] | null }),
+      rows.length > 0
+        ? supabase
+            .from('community_post_replies')
+            .select('*')
+            .in('post_id', rows.map((r) => r.id))
+            .order('created_at', { ascending: true })
+        : Promise.resolve({ data: null as CommunityPostReply[] | null }),
+    ])
     if (userIds.length > 0) {
-      const { data: profs } = await supabase.from('profiles').select('id,name,photo_url').in('id', userIds)
-      const byId = new Map(((profs ?? []) as { id: string; name: string | null; photo_url: string | null }[]).map((p) => [p.id, p]))
+      const byId = new Map(((profsRes.data ?? []) as { id: string; name: string | null; photo_url: string | null }[]).map((p) => [p.id, p]))
       for (const r of rows) r.author = byId.get(r.user_id) ?? null
     }
     setPosts(rows)
     if (rows.length > 0) {
-      const { data: reps } = await supabase
-        .from('community_post_replies')
-        .select('*')
-        .in('post_id', rows.map((r) => r.id))
-        .order('created_at', { ascending: true })
-      const rrows = (reps ?? []) as CommunityPostReply[]
+      const rrows = (repsRes.data ?? []) as CommunityPostReply[]
       const rIds = [...new Set(rrows.map((r) => r.user_id))]
       if (rIds.length > 0) {
         const { data: profs } = await supabase.from('profiles').select('id,name').in('id', rIds)
@@ -89,15 +96,25 @@ export default function CommunityDetailPage() {
         if (cancelled) return
         const comm = data as Community | null
         setCommunity(comm)
+        // Keanggotaan saya dan daftar anggota tidak saling bergantung.
+        const [memRes, memRowsRes] = await Promise.all([
+          user
+            ? supabase
+                .from('community_members')
+                .select('id,role')
+                .eq('community_id', communityId)
+                .eq('user_id', user.id)
+                .maybeSingle()
+            : Promise.resolve({ data: null as { role: string | null } | null }),
+          supabase
+            .from('community_members')
+            .select('user_id,role')
+            .eq('community_id', communityId),
+        ])
         let member = false
         let role: string | null = null
         if (user) {
-          const { data: mem } = await supabase
-            .from('community_members')
-            .select('id,role')
-            .eq('community_id', communityId)
-            .eq('user_id', user.id)
-            .maybeSingle()
+          const mem = memRes.data
           member = mem !== null
           role = (mem as { role: string | null } | null)?.role ?? null
           if (!cancelled) {
@@ -105,40 +122,37 @@ export default function CommunityDetailPage() {
             setMyRole(role)
           }
         }
-        // Daftar anggota + jumlah anggota.
-        const { data: memRows } = await supabase
-          .from('community_members')
-          .select('user_id,role')
-          .eq('community_id', communityId)
-        const memList = (memRows ?? []) as { user_id: string; role: string | null }[]
-        const names = await fetchProfileNames(memList.map((m) => m.user_id)).catch(
-          () => new Map<string, string>(),
-        )
-        if (!cancelled) {
-          setMembers(
-            memList.map((m) => ({
-              user_id: m.user_id,
-              role: m.role ?? 'member',
-              name: names.get(m.user_id) ?? 'Anggota',
-            })),
-          )
-        }
+        // Daftar anggota + jumlah anggota; nama anggota dan feed dimuat
+        // paralel karena tidak saling bergantung.
+        const memList = (memRowsRes.data ?? []) as { user_id: string; role: string | null }[]
         // Feed hanya boleh dibaca anggota, pembuat, dan admin. Bila query
         // post diblokir RLS, tampilkan pesan terkunci, bukan halaman error.
         const canRead =
           member || comm?.created_by === user?.id || profile?.role === 'admin'
-        if (canRead) {
-          try {
-            await loadPosts(communityId)
-          } catch {
+        const namesPromise = fetchProfileNames(memList.map((m) => m.user_id))
+          .catch(() => new Map<string, string>())
+          .then((names) => {
             if (!cancelled) {
-              setPosts([])
-              setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+              setMembers(
+                memList.map((m) => ({
+                  user_id: m.user_id,
+                  role: m.role ?? 'member',
+                  name: names.get(m.user_id) ?? 'Anggota',
+                })),
+              )
             }
-          }
-        } else if (!cancelled) {
-          setPosts([])
-        }
+          })
+        const postsPromise = canRead
+          ? loadPosts(communityId).catch(() => {
+              if (!cancelled) {
+                setPosts([])
+                setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+              }
+            })
+          : Promise.resolve().then(() => {
+              if (!cancelled) setPosts([])
+            })
+        await Promise.all([namesPromise, postsPromise])
       } catch {
         if (!cancelled) setError('Gagal memuat komunitas. Coba lagi nanti.')
       } finally {

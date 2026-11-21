@@ -95,40 +95,39 @@ export default function CommunitiesPage() {
         return
       }
       setItems((data ?? []) as Community[])
+      // Semua fetch independen di bawah ini dijalankan paralel dalam satu
+      // batch; yang bergantung pada hasilnya (seeking butuh mineSet, nama
+      // butuh usulan/laporan) menyusul di batch kedua.
+      const [memRes, allMemRes, myPropRes, propRes, repRes] = await Promise.all([
+        user
+          ? supabase.from('community_members').select('community_id,role').eq('user_id', user.id)
+          : Promise.resolve({ data: null as { community_id: string; role: string | null }[] | null }),
+        supabase.from('community_members').select('community_id'),
+        !isAdmin && user
+          ? supabase
+              .from('community_proposals')
+              .select('*')
+              .eq('proposer_id', user.id)
+              .order('created_at', { ascending: false })
+          : Promise.resolve({ data: null as CommunityProposal[] | null }),
+        isAdmin
+          ? supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at')
+          : Promise.resolve({ data: null as CommunityProposal[] | null }),
+        isAdmin
+          ? supabase.from('moderation_reports').select('*').eq('status', 'open').order('created_at', { ascending: false })
+          : Promise.resolve({ data: null as ModerationReport[] | null, error: null }),
+      ])
       let mineSet = new Set<string>()
       if (user) {
-        const { data: mem } = await supabase
-          .from('community_members')
-          .select('community_id,role')
-          .eq('user_id', user.id)
-        const memRows = (mem ?? []) as { community_id: string; role: string | null }[]
+        const memRows = (memRes.data ?? []) as { community_id: string; role: string | null }[]
         mineSet = new Set(memRows.map((m) => m.community_id))
         setMine(mineSet)
         setMyRoles(new Map(memRows.map((m) => [m.community_id, m.role ?? 'member'])))
       }
-      // Mentor: community yang sedang mencari pembimbing (011) dan belum
-      // diikuti mentor ini. Bila kolom seeking_mentor belum ada (migrasi
-      // 011 belum diterapkan), query gagal, tampilkan daftar kosong,
-      // bukan crash.
-      if (isMentor) {
-        const { data: seekData, error: seekErr } = await supabase
-          .from('communities')
-          .select('*')
-          .eq('is_approved', true)
-          .eq('seeking_mentor', true)
-          .order('name')
-        if (seekErr) setSeeking([])
-        else setSeeking(((seekData ?? []) as Community[]).filter((c) => !mineSet.has(c.id)))
-      } else {
-        setSeeking([])
-      }
       // Jumlah anggota per community (semua peran melihatnya).
       {
-        const { data: allMem } = await supabase
-          .from('community_members')
-          .select('community_id')
         const counts = new Map<string, number>()
-        for (const m of (allMem ?? []) as { community_id: string }[]) {
+        for (const m of (allMemRes.data ?? []) as { community_id: string }[]) {
           counts.set(m.community_id, (counts.get(m.community_id) ?? 0) + 1)
         }
         setMemberCounts(counts)
@@ -136,77 +135,82 @@ export default function CommunitiesPage() {
       // Usulan komunitas saya sendiri (semua status) agar pengusul bisa
       // melihat status usulannya.
       if (!isAdmin && user) {
-        const { data: myPropData } = await supabase
-          .from('community_proposals')
-          .select('*')
-          .eq('proposer_id', user.id)
-          .order('created_at', { ascending: false })
-        setMyProposals((myPropData ?? []) as CommunityProposal[])
+        setMyProposals((myPropRes.data ?? []) as CommunityProposal[])
       } else {
         setMyProposals([])
       }
       // Admin: usulan menunggu persetujuan + laporan community.
-      if (isAdmin) {
-        const { data: propData } = await supabase
-          .from('community_proposals')
-          .select('*')
-          .eq('status', 'pending')
-          .order('created_at')
-        const props = (propData ?? []) as CommunityProposal[]
-        setProposals(props)
-        setProposalNames(
-          await fetchProfileNames(props.map((p) => p.proposer_id)).catch(
-            () => new Map<string, string>(),
-          ),
-        )
-        const { data: repData, error: repErr } = await supabase
-          .from('moderation_reports')
-          .select('*')
-          .eq('status', 'open')
-          .order('created_at', { ascending: false })
-        if (repErr) {
-          if (isMissingTableError(repErr)) setModReports(null)
-          else setModReports([])
-        } else {
-          const reports = ((repData ?? []) as ModerationReport[]).filter(
-            (r) => r.target_type === 'community' || r.target_type === 'community_post',
-          )
-          setModReports(reports)
-          // Selesaikan target laporan ke label yang bisa dibaca + tautan,
-          // bukan UUID mentah.
-          const targets = new Map<string, { label: string; href: string | null }>()
-          const communityIds = reports
-            .filter((r) => r.target_type === 'community' && r.target_id)
-            .map((r) => r.target_id as string)
-          const postIds = reports
-            .filter((r) => r.target_type === 'community_post' && r.target_id)
-            .map((r) => r.target_id as string)
-          if (communityIds.length > 0) {
-            const { data: comms } = await supabase
+      const props = isAdmin ? ((propRes.data ?? []) as CommunityProposal[]) : []
+      if (isAdmin) setProposals(props)
+      const repErr = repRes.error
+      if (isAdmin && repErr) {
+        if (isMissingTableError(repErr)) setModReports(null)
+        else setModReports([])
+        // Bila laporan gagal dimuat, daftar seeking mentor tetap dimuat
+        // di bawah (tidak bergantung pada laporan).
+      }
+      const reports =
+        isAdmin && !repErr
+          ? (((repRes.data ?? []) as ModerationReport[]).filter(
+              (r) => r.target_type === 'community' || r.target_type === 'community_post',
+            ))
+          : []
+      if (isAdmin && !repErr) setModReports(reports)
+      // Batch kedua (paralel): seeking butuh mineSet; nama pengusul butuh
+      // usulan; target + pelapor laporan butuh daftar laporan. Dua lookup
+      // target (nama community dan isi postingan) juga paralel.
+      const communityIds = reports
+        .filter((r) => r.target_type === 'community' && r.target_id)
+        .map((r) => r.target_id as string)
+      const postIds = reports
+        .filter((r) => r.target_type === 'community_post' && r.target_id)
+        .map((r) => r.target_id as string)
+      const [seekRes, proposalNamesRes, commsRes, postsRes, reporterNamesRes] = await Promise.all([
+        isMentor
+          ? supabase
               .from('communities')
-              .select('id,name')
-              .in('id', communityIds)
-            for (const c of (comms ?? []) as { id: string; name: string }[]) {
-              targets.set(c.id, { label: c.name, href: `/komunitas/${c.id}` })
-            }
-          }
-          if (postIds.length > 0) {
-            const { data: postsData } = await supabase
-              .from('community_posts')
-              .select('id,body,community_id')
-              .in('id', postIds)
-            for (const p of (postsData ?? []) as { id: string; body: string; community_id: string }[]) {
-              const excerpt = p.body.length > 60 ? `${p.body.slice(0, 60)}…` : p.body
-              targets.set(p.id, { label: excerpt, href: `/komunitas/${p.community_id}` })
-            }
-          }
-          setReportTargets(targets)
-          setReportReporters(
-            await fetchProfileNames(reports.map((r) => r.reporter_id)).catch(
-              () => new Map<string, string>(),
-            ),
-          )
+              .select('*')
+              .eq('is_approved', true)
+              .eq('seeking_mentor', true)
+              .order('name')
+          : Promise.resolve({ data: null as Community[] | null, error: null }),
+        isAdmin
+          ? fetchProfileNames(props.map((p) => p.proposer_id)).catch(() => new Map<string, string>())
+          : Promise.resolve(new Map<string, string>()),
+        communityIds.length > 0
+          ? supabase.from('communities').select('id,name').in('id', communityIds)
+          : Promise.resolve({ data: null as { id: string; name: string }[] | null }),
+        postIds.length > 0
+          ? supabase.from('community_posts').select('id,body,community_id').in('id', postIds)
+          : Promise.resolve({ data: null as { id: string; body: string; community_id: string }[] | null }),
+        isAdmin && !repErr
+          ? fetchProfileNames(reports.map((r) => r.reporter_id)).catch(() => new Map<string, string>())
+          : Promise.resolve(new Map<string, string>()),
+      ])
+      // Mentor: community yang sedang mencari pembimbing (011) dan belum
+      // diikuti mentor ini. Bila kolom seeking_mentor belum ada (migrasi
+      // 011 belum diterapkan), query gagal, tampilkan daftar kosong,
+      // bukan crash.
+      if (isMentor) {
+        if (seekRes.error) setSeeking([])
+        else setSeeking(((seekRes.data ?? []) as Community[]).filter((c) => !mineSet.has(c.id)))
+      } else {
+        setSeeking([])
+      }
+      if (isAdmin) setProposalNames(proposalNamesRes)
+      if (isAdmin && !repErr) {
+        // Selesaikan target laporan ke label yang bisa dibaca + tautan,
+        // bukan UUID mentah.
+        const targets = new Map<string, { label: string; href: string | null }>()
+        for (const c of (commsRes.data ?? []) as { id: string; name: string }[]) {
+          targets.set(c.id, { label: c.name, href: `/komunitas/${c.id}` })
         }
+        for (const p of (postsRes.data ?? []) as { id: string; body: string; community_id: string }[]) {
+          const excerpt = p.body.length > 60 ? `${p.body.slice(0, 60)}…` : p.body
+          targets.set(p.id, { label: excerpt, href: `/komunitas/${p.community_id}` })
+        }
+        setReportTargets(targets)
+        setReportReporters(reporterNamesRes)
       }
     } catch {
       setError('Gagal memuat komunitas. Coba lagi nanti.')

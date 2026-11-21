@@ -2,6 +2,10 @@
 // film sendiri (006). Hanya film status 'published' + visibility 'public'
 // yang tampil di galeri; draft/privat hanya untuk pemilik/admin (RLS).
 //
+// Poster film WAJIB milik anggota sendiri (Arif, 21 Nov 2026): ilustrasi
+// TIDAK dipakai untuk film. Form publikasi mewajibkan unggah poster ke
+// bucket film-posters (migrasi 012); film tanpa poster tidak bisa dikirim.
+//
 // Kurasi admin: film baru masuk sebagai 'draft' (menunggu dinilai admin),
 // BUKAN langsung published. Admin melihat bagian "Perlu Dinilai" di atas
 // galeri, "Layak Ditampilkan" mengubah status menjadi 'published'.
@@ -20,7 +24,7 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { filmHue } from '../lib/brand'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import { fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
 import type { Film } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -69,6 +73,11 @@ export default function ShowcasePage() {
   const [filmUrl, setFilmUrl] = useState('')
   const [visibility, setVisibility] = useState<'public' | 'private'>('public')
   const [showSchool, setShowSchool] = useState(false)
+  // Poster film WAJIB milik anggota sendiri (Arif, 21 Nov 2026): ilustrasi
+  // tidak dipakai untuk film. Poster diunggah ke bucket film-posters.
+  const [posterFile, setPosterFile] = useState<File | null>(null)
+  const [posterPreview, setPosterPreview] = useState<string | null>(null)
+  const [posterError, setPosterError] = useState<string | null>(null)
 
   const isAdmin = profile?.role === 'admin'
 
@@ -86,36 +95,40 @@ export default function ShowcasePage() {
         return
       }
       setFilms((data ?? []) as Film[])
-      if (user) {
-        const { data: mine } = await supabase.from('films').select('*').eq('owner_id', user.id).order('created_at', { ascending: false })
-        const mineRows = (mine ?? []) as Film[]
-        setMyFilms(mineRows)
-        const reviewerIds = [...new Set(mineRows.map((f) => f.reviewed_by).filter((v): v is string => !!v))]
-        if (reviewerIds.length > 0) {
-          setReviewerNames(
-            await fetchProfileNames(reviewerIds).catch(() => new Map<string, string>()),
-          )
-        } else {
-          setReviewerNames(new Map())
-        }
-      }
-      if (isAdmin) {
-        const { data: pend } = await supabase
-          .from('films')
-          .select('*')
-          .eq('status', 'draft')
-          .eq('visibility', 'public')
-          .order('created_at', { ascending: true })
-        const pendRows = (pend ?? []) as Film[]
-        setPending(pendRows)
-        setOwnerNames(
-          await fetchProfileNames(pendRows.map((f) => f.owner_id)).catch(
-            () => new Map<string, string>(),
-          ),
-        )
-      } else {
-        setPending([])
-      }
+      // Film saya dan antrean admin independen: paralel. Nama penilai dan
+      // nama pemilik antrean baru bisa dicari setelah kedua daftar ada,
+      // jadi keduanya ikut paralel di batch kedua.
+      const [mineRes, pendRes] = await Promise.all([
+        user
+          ? supabase.from('films').select('*').eq('owner_id', user.id).order('created_at', { ascending: false })
+          : Promise.resolve({ data: null as Film[] | null }),
+        isAdmin
+          ? supabase
+              .from('films')
+              .select('*')
+              .eq('status', 'draft')
+              .eq('visibility', 'public')
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: null as Film[] | null }),
+      ])
+      const mineRows = user ? ((mineRes.data ?? []) as Film[]) : []
+      const pendRows = isAdmin ? ((pendRes.data ?? []) as Film[]) : []
+      if (user) setMyFilms(mineRows)
+      if (isAdmin) setPending(pendRows)
+      else setPending([])
+      const reviewerIds = [...new Set(mineRows.map((f) => f.reviewed_by).filter((v): v is string => !!v))]
+      const [reviewerNamesRes, ownerNamesRes] = await Promise.all([
+        user
+          ? reviewerIds.length > 0
+            ? fetchProfileNames(reviewerIds).catch(() => new Map<string, string>())
+            : Promise.resolve(new Map<string, string>())
+          : Promise.resolve(new Map<string, string>()),
+        isAdmin
+          ? fetchProfileNames(pendRows.map((f) => f.owner_id)).catch(() => new Map<string, string>())
+          : Promise.resolve(new Map<string, string>()),
+      ])
+      if (user) setReviewerNames(reviewerNamesRes)
+      if (isAdmin) setOwnerNames(ownerNamesRes)
     } catch {
       setError('Gagal memuat Showcase. Silakan muat ulang halaman.')
     } finally {
@@ -131,6 +144,21 @@ export default function ShowcasePage() {
   async function handlePublish(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim()) return
+    // Poster film WAJIB: anggota memakai poster mereka sendiri, bukan ilustrasi.
+    if (!posterFile) {
+      setPosterError('Unggah poster filmmu sendiri (gambar). Poster wajib diisi.')
+      return
+    }
+    setPosterError(null)
+    const posterUrl = await uploadToBucket(
+      'film-posters',
+      `${user.id}/${Date.now()}-${posterFile.name}`,
+      posterFile,
+    )
+    if (!posterUrl) {
+      setPosterError('Poster belum terunggah: bucket film-posters belum tersedia. Coba lagi nanti atau hubungi admin.')
+      return
+    }
     // Film privat tidak masuk antrean penilaian admin, jadi saat dikirim
     // film langsung dijadikan publik bersama status draft.
     const makePublic = visibility === 'private'
@@ -139,6 +167,7 @@ export default function ShowcasePage() {
       description: desc.trim() || null,
       owner_id: user.id,
       film_url: filmUrl.trim() || null,
+      poster_url: posterUrl,
       visibility: makePublic ? 'public' : visibility,
       show_school: showSchool,
       status: 'draft',
@@ -153,8 +182,30 @@ export default function ShowcasePage() {
       setTitle('')
       setDesc('')
       setFilmUrl('')
+      setPosterFile(null)
+      if (posterPreview) URL.revokeObjectURL(posterPreview)
+      setPosterPreview(null)
       await load()
     }
+  }
+
+  function handlePosterChange(file: File | null) {
+    if (!file) {
+      setPosterFile(null)
+      if (posterPreview) URL.revokeObjectURL(posterPreview)
+      setPosterPreview(null)
+      return
+    }
+    if (file.type.startsWith('image/') === false) {
+      setPosterError('Poster harus berupa gambar (JPG, PNG, atau WebP).')
+      return
+    }
+    // Tidak ada batas ukuran file: poster diunggah langsung ke Supabase
+    // Storage, jadi foto besar pun diterima (Arif, 21 Nov 2026).
+    setPosterError(null)
+    setPosterFile(file)
+    if (posterPreview) URL.revokeObjectURL(posterPreview)
+    setPosterPreview(URL.createObjectURL(file))
   }
 
   // Kirim ulang film yang ditolak: status kembali 'draft', penilaian lama
@@ -403,6 +454,27 @@ export default function ShowcasePage() {
             {!filmUrl.trim() && (
               <p className="notice-box">
                 Film tanpa tautan tidak bisa ditonton, admin hanya bisa menilai dari judul dan deskripsi.
+              </p>
+            )}
+            <label>
+              Poster film (wajib, poster filmmu sendiri)
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handlePosterChange(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {posterPreview && (
+              <img
+                src={posterPreview}
+                alt="Pratinjau poster film"
+                style={{ width: '100%', maxWidth: 320, borderRadius: 12 }}
+              />
+            )}
+            {posterError && <p className="error-box">{posterError}</p>}
+            {!posterFile && !posterError && (
+              <p className="muted">
+                Poster wajib diisi dengan poster film buatanmu sendiri (bukan ilustrasi).
               </p>
             )}
             <label>

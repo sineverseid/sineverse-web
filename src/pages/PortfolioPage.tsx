@@ -56,7 +56,17 @@ export default function PortfolioPage() {
     let cancelled = false
     async function load() {
       try {
-        const prof = await fetchPublicProfile(targetId)
+        // Profil publik dan item portofolio tidak saling bergantung:
+        // jalankan paralel. Bila profil tidak ditemukan, hasil item
+        // dibuang dan tampil tetap seperti semula (daftar kosong).
+        const [prof, itemsRes] = await Promise.all([
+          fetchPublicProfile(targetId),
+          supabase
+            .from('portfolio_items')
+            .select('*')
+            .eq('user_id', targetId)
+            .order('created_at', { ascending: false }),
+        ])
         if (!cancelled) {
           setOwner(prof ? { name: prof.name, photo_url: prof.photo_url } : null)
           setOwnerFound(prof !== null)
@@ -65,11 +75,7 @@ export default function PortfolioPage() {
           if (!cancelled) setItems([])
           return
         }
-        const { data, error: qErr } = await supabase
-          .from('portfolio_items')
-          .select('*')
-          .eq('user_id', targetId)
-          .order('created_at', { ascending: false })
+        const { data, error: qErr } = itemsRes
         if (qErr) {
           if (isMissingTableError(qErr)) {
             if (!cancelled) setItems(null)
@@ -111,12 +117,15 @@ export default function PortfolioPage() {
         })
         setItems(visible)
         if (canSeePrivate) {
-          const [progress, courses, enrollments, mods, less] = await Promise.all([
+          // Sertifikat hanya butuh id pemilik, bukan hasil batch lain:
+          // ikut paralel dalam batch yang sama, bukan await sesudahnya.
+          const [progress, courses, enrollments, mods, less, myCerts] = await Promise.all([
             fetchLessonProgress(targetId),
             fetchCourses(),
             fetchEnrollments(targetId),
             supabase.from('modules').select('id,course_id'),
             supabase.from('lessons').select('id,module_id'),
+            fetchMyCertificates(targetId),
           ])
           if (cancelled) return
           // Petakan tiap lesson ke course-nya lewat module, lalu hanya
@@ -143,7 +152,6 @@ export default function PortfolioPage() {
             .map((cid) => byId.get(cid)?.title)
             .filter((t): t is string => !!t)
           setInProgress(titles)
-          const myCerts = await fetchMyCertificates(targetId)
           if (!cancelled) setCerts(myCerts)
         }
       } catch (err) {

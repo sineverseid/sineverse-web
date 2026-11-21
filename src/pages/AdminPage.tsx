@@ -21,6 +21,61 @@ interface ProgressRow {
   inProgress: number
 }
 
+// Beban mentor (jumlah course + submission belum dinilai) untuk SEMUA mentor
+// sekaligus: rantai batch 4 query (modules → lessons → assignments →
+// submissions belum dinilai), lalu dihitung per course di JS.
+// Sebelumnya: 4 query SEQUENTIAL per course, di dalam loop per mentor.
+async function fetchMentorLoad(
+  mentors: { id: string; name: string | null }[],
+  courseList: Course[],
+): Promise<{ name: string; courses: number; pending: number }[]> {
+  const mentorIds = new Set(mentors.map((m) => m.id))
+  const mentorCourses = courseList.filter((c) => c.mentor_id && mentorIds.has(c.mentor_id))
+  const pendingByCourse = new Map<string, number>()
+  if (mentorCourses.length > 0) {
+    const { data: mods } = await supabase
+      .from('modules')
+      .select('id,course_id')
+      .in('course_id', mentorCourses.map((c) => c.id))
+    const modRows = (mods ?? []) as { id: string; course_id: string }[]
+    const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
+    if (modRows.length > 0) {
+      const { data: lessons } = await supabase
+        .from('lessons')
+        .select('id,module_id')
+        .in('module_id', modRows.map((m) => m.id))
+      const lessonRows = (lessons ?? []) as { id: string; module_id: string }[]
+      const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
+      if (lessonRows.length > 0) {
+        const { data: assigns } = await supabase
+          .from('assignments')
+          .select('id,lesson_id')
+          .in('lesson_id', lessonRows.map((l) => l.id))
+        const assignRows = (assigns ?? []) as { id: string; lesson_id: string }[]
+        const assignCourse = new Map(assignRows.map((a) => [a.id, lessonCourse.get(a.lesson_id) ?? '']))
+        if (assignRows.length > 0) {
+          const { data: subs } = await supabase
+            .from('submissions')
+            .select('assignment_id')
+            .in('assignment_id', assignRows.map((a) => a.id))
+            .is('score', null)
+          for (const s of (subs ?? []) as { assignment_id: string }[]) {
+            const cid = assignCourse.get(s.assignment_id)
+            if (!cid) continue
+            pendingByCourse.set(cid, (pendingByCourse.get(cid) ?? 0) + 1)
+          }
+        }
+      }
+    }
+  }
+  return mentors.map((m) => {
+    const mine = courseList.filter((c) => c.mentor_id === m.id)
+    let pending = 0
+    for (const c of mine) pending += pendingByCourse.get(c.id) ?? 0
+    return { name: m.name ?? 'Mentor', courses: mine.length, pending }
+  })
+}
+
 export default function AdminPage() {
   const { user, profile } = useAuth()
   const location = useLocation()
@@ -52,20 +107,43 @@ export default function AdminPage() {
 
   async function load() {
     try {
-      const { data: profiles } = await supabase.from('profiles').select('id,name,role')
+      // Semua fetch tingkat atas independen — jalankan paralel (Promise.all),
+      // bukan 12 await berurutan seperti sebelumnya.
+      const [
+        { data: profiles },
+        { count: enrCount },
+        courseList,
+        { data: appData },
+        { data: claimData },
+        { data: schoolData },
+        { data: propData },
+        { data: commData },
+        { data: repData },
+        { data: annData },
+        { data: progData },
+        { data: enrData },
+      ] = await Promise.all([
+        supabase.from('profiles').select('id,name,role'),
+        supabase.from('enrollments').select('id', { count: 'exact', head: true }),
+        fetchCourses(),
+        supabase.from('mentor_applications').select('*').eq('status', 'pending').order('created_at'),
+        supabase.from('course_claims').select('*').eq('status', 'pending').order('created_at'),
+        supabase.from('schools').select('*').order('name'),
+        supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at'),
+        supabase.from('communities').select('id,name').order('name'),
+        supabase.from('discussion_reports').select('id').eq('status', 'open'),
+        supabase.from('announcements').select('id,title,scope').order('created_at', { ascending: false }).limit(20),
+        supabase.from('lesson_progress').select('user_id,status'),
+        supabase.from('enrollments').select('user_id,course_id'),
+      ])
       const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
-      const { count: enrCount } = await supabase.from('enrollments').select('id', { count: 'exact', head: true })
-      const courseList = await fetchCourses()
-      const { data: appData } = await supabase.from('mentor_applications').select('*').eq('status', 'pending').order('created_at')
-      const { data: claimData } = await supabase.from('course_claims').select('*').eq('status', 'pending').order('created_at')
-      const { data: schoolData } = await supabase.from('schools').select('*').order('name')
-      const { data: propData } = await supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at')
-      const { data: commData } = await supabase.from('communities').select('id,name').order('name')
-      const { data: repData } = await supabase.from('discussion_reports').select('id').eq('status', 'open')
-      const { data: annData } = await supabase.from('announcements').select('id,title,scope').order('created_at', { ascending: false }).limit(20)
-      const { data: progData } = await supabase.from('lesson_progress').select('user_id,status')
-      const { data: enrData } = await supabase.from('enrollments').select('user_id,course_id')
-      setNames(await fetchProfileNames(profs.map((p) => p.id)))
+      const mentors = profs.filter((p) => p.role === 'mentor')
+      // Nama profil dan beban mentor independen satu sama lain — paralel.
+      const [namesMap, loadRows] = await Promise.all([
+        fetchProfileNames(profs.map((p) => p.id)),
+        fetchMentorLoad(mentors, courseList),
+      ])
+      setNames(namesMap)
       setCounts({
         users: profs.length,
         siswa: profs.filter((p) => p.role === 'siswa').length,
@@ -96,25 +174,6 @@ export default function AdminPage() {
           }
         })
       setProgress(rows)
-      const loadRows: { name: string; courses: number; pending: number }[] = []
-      for (const m of profs.filter((p) => p.role === 'mentor')) {
-        const mine = courseList.filter((c) => c.mentor_id === m.id)
-        let pending = 0
-        for (const c of mine) {
-          const { data: mods } = await supabase.from('modules').select('id').eq('course_id', c.id)
-          const modIds = ((mods ?? []) as { id: string }[]).map((x) => x.id)
-          if (modIds.length === 0) continue
-          const { data: lessons } = await supabase.from('lessons').select('id').in('module_id', modIds)
-          const lessonIds = ((lessons ?? []) as { id: string }[]).map((x) => x.id)
-          if (lessonIds.length === 0) continue
-          const { data: assigns } = await supabase.from('assignments').select('id').in('lesson_id', lessonIds)
-          const aIds = ((assigns ?? []) as { id: string }[]).map((x) => x.id)
-          if (aIds.length === 0) continue
-          const { count } = await supabase.from('submissions').select('id', { count: 'exact', head: true }).in('assignment_id', aIds).is('score', null)
-          pending += count ?? 0
-        }
-        loadRows.push({ name: m.name ?? 'Mentor', courses: mine.length, pending })
-      }
       setMentorLoad(loadRows)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat Admin Panel.')

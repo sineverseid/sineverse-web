@@ -320,12 +320,17 @@ export function EventDetailPage() {
         }
         if (cancelled) return
         setEvent(data as SineEvent | null)
-        const { data: sData } = await supabase.from('event_sessions').select('*').eq('event_id', eventId).order('order_index')
-        if (!cancelled) setSessions((sData ?? []) as EventSession[])
-        const { data: regs, count: total } = await supabase
-          .from('event_registrations')
-          .select('id,user_id', { count: 'exact' })
-          .eq('event_id', eventId)
+        // Sesi dan pendaftaran hanya butuh id acara: jalankan paralel.
+        const [sRes, regRes] = await Promise.all([
+          supabase.from('event_sessions').select('*').eq('event_id', eventId).order('order_index'),
+          supabase
+            .from('event_registrations')
+            .select('id,user_id', { count: 'exact' })
+            .eq('event_id', eventId),
+        ])
+        if (!cancelled) setSessions((sRes.data ?? []) as EventSession[])
+        const regs = regRes.data
+        const total = regRes.count
         if (!cancelled) {
           setCount(total ?? (regs ?? []).length)
           if (user) setRegistered(((regs ?? []) as EventRegistration[]).some((r) => r.user_id === user.id))

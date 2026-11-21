@@ -53,14 +53,22 @@ export default function ProjectsPage() {
         if (cancelled) return
         const list = (data ?? []) as Project[]
         setProjects(list)
-        // Nama pemilik + jumlah anggota per proyek.
-        const { data: memData } = await supabase.from('project_members').select('project_id,user_id')
+        // Nama pemilik, jumlah anggota, dan template tidak saling
+        // bergantung: jalankan paralel. fetchProfileNames hanya butuh
+        // daftar proyek yang sudah ada, bukan hasil query anggota.
+        const [memRes, ownerNamesRes, tRes] = await Promise.all([
+          supabase.from('project_members').select('project_id,user_id'),
+          fetchProfileNames(list.map((p) => p.owner_id)),
+          supabase.from('project_templates').select('*').eq('is_system', true).order('title'),
+        ])
+        if (cancelled) return
+        const memData = memRes.data
         const counts = new Map<string, number>()
         for (const m of (memData ?? []) as { project_id: string; user_id: string }[]) {
           counts.set(m.project_id, (counts.get(m.project_id) ?? 0) + 1)
         }
         if (!cancelled) setMemberCounts(counts)
-        if (!cancelled) setOwnerNames(await fetchProfileNames(list.map((p) => p.owner_id)))
+        if (!cancelled) setOwnerNames(ownerNamesRes)
         // Proyek yang bisa dilihat penuh oleh pengguna saat ini.
         if (user) {
           const mine = new Set<string>()
@@ -69,11 +77,10 @@ export default function ProjectsPage() {
           }
           if (!cancelled) setMyProjectIds(mine)
         }
-        const { data: tData, error: tErr } = await supabase.from('project_templates').select('*').eq('is_system', true).order('title')
-        if (tErr) {
+        if (tRes.error) {
           if (!cancelled) setTemplatesFailed(true)
         } else if (!cancelled) {
-          setTemplates((tData ?? []) as ProjectTemplate[])
+          setTemplates((tRes.data ?? []) as ProjectTemplate[])
         }
       } catch {
         if (!cancelled) setError('Gagal memuat proyek. Coba lagi.')
@@ -119,10 +126,13 @@ export default function ProjectsPage() {
     setDesc('')
     setMode('open')
     setTemplate('')
-    const { data: fresh } = await supabase.from('projects').select('*').order('created_at', { ascending: false })
-    const list = (fresh ?? []) as Project[]
+    const [freshRes, memRes] = await Promise.all([
+      supabase.from('projects').select('*').order('created_at', { ascending: false }),
+      supabase.from('project_members').select('project_id,user_id'),
+    ])
+    const list = (freshRes.data ?? []) as Project[]
     setProjects(list)
-    const { data: memData } = await supabase.from('project_members').select('project_id,user_id')
+    const memData = memRes.data
     const counts = new Map<string, number>()
     const mine = new Set<string>()
     for (const m of (memData ?? []) as { project_id: string; user_id: string }[]) {

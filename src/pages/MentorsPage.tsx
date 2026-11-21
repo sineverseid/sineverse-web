@@ -28,37 +28,52 @@ export default function MentorsPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data: profs, error: qErr } = await supabase
-          .from('profiles')
-          .select('id,email,name,role,photo_url,phone,city,bio,skills,interests,created_at')
-          .eq('role', 'mentor')
-          .order('name')
+        // Profil mentor, lamaran, course, dan office hours independen —
+        // dimuat paralel. Lamaran dan office hours gagal tetap ditangani
+        // non-fatal seperti sebelumnya (tampil semua mentor / jadwal
+        // gagal dimuat), bukan error halaman.
+        const [profRes, appsRes, courses, hoursRes] = await Promise.all([
+          supabase
+            .from('profiles')
+            .select('id,email,name,role,photo_url,phone,city,bio,skills,interests,created_at')
+            .eq('role', 'mentor')
+            .order('name'),
+          supabase
+            .from('mentor_applications')
+            .select('user_id')
+            .eq('status', 'approved')
+            .then(
+              (r) => ({ ok: !r.error, data: r.data }) as const,
+              () => ({ ok: false, data: null }) as const,
+            ),
+          fetchCourses(),
+          supabase
+            .from('office_hours')
+            .select('*')
+            .order('starts_at', { ascending: true })
+            .then(
+              (r) => ({ ok: !r.error, data: r.data }) as const,
+              () => ({ ok: false, data: null }) as const,
+            ),
+        ])
+        const { data: profs, error: qErr } = profRes
         if (qErr) throw qErr
         const mentors = (profs ?? []) as Profile[]
         // Hanya mentor yang lamarannya disetujui yang boleh tampil dengan
         // label terverifikasi. Bila query lamaran gagal, tampilkan semua
         // mentor tanpa klaim terverifikasi.
         let verifiedIds: Set<string> | null = null
-        const { data: apps, error: appErr } = await supabase
-          .from('mentor_applications')
-          .select('user_id')
-          .eq('status', 'approved')
-        if (appErr) {
+        if (!appsRes.ok) {
           verifiedIds = null
         } else {
-          verifiedIds = new Set(((apps ?? []) as { user_id: string }[]).map((a) => a.user_id))
+          verifiedIds = new Set(((appsRes.data ?? []) as { user_id: string }[]).map((a) => a.user_id))
         }
         const visible = verifiedIds ? mentors.filter((m) => verifiedIds.has(m.id)) : mentors
         if (!cancelled) setVerifiedOnly(verifiedIds !== null)
-        const courses = await fetchCourses()
-        const { data: hours, error: hoursErr } = await supabase
-          .from('office_hours')
-          .select('*')
-          .order('starts_at', { ascending: true })
-        if (hoursErr) {
+        if (!hoursRes.ok) {
           if (!cancelled) setHoursError(true)
         }
-        const hourRows = (hours ?? []) as OfficeHour[]
+        const hourRows = (hoursRes.data ?? []) as OfficeHour[]
         const now = new Date()
         const out: MentorRow[] = visible.map((m) => ({
           profile: m,

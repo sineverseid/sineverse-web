@@ -192,7 +192,22 @@ export function CompetitionDetailPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data, error: qErr } = await supabase.from('competitions').select('*').eq('id', compId).maybeSingle()
+        // Kompetisi, submissions, winners, dan status juri semuanya hanya
+        // butuh compId (+ user) — dimuat paralel, bukan berurutan.
+        const [compRes, sData, wData, jData] = await Promise.all([
+          supabase.from('competitions').select('*').eq('id', compId).maybeSingle(),
+          supabase.from('competition_submissions').select('*').eq('competition_id', compId).order('created_at', { ascending: true }),
+          supabase.from('competition_winners').select('*').eq('competition_id', compId).order('rank'),
+          user
+            ? supabase
+                .from('competition_judges')
+                .select('id')
+                .eq('competition_id', compId)
+                .eq('judge_id', user.id)
+                .maybeSingle()
+            : Promise.resolve({ data: null } as { data: null }),
+        ])
+        const { data, error: qErr } = compRes
         if (qErr) {
           if (isMissingTableError(qErr)) {
             setMissing(true)
@@ -202,34 +217,28 @@ export function CompetitionDetailPage() {
         }
         if (cancelled) return
         setComp(data as Competition | null)
-        const [sData, wData] = await Promise.all([
-          supabase.from('competition_submissions').select('*').eq('competition_id', compId).order('created_at', { ascending: true }),
-          supabase.from('competition_winners').select('*').eq('competition_id', compId).order('rank'),
-        ])
         const sRows = (sData.data ?? []) as CompetitionSubmission[]
         if (!cancelled) {
           setSubs(sRows)
           setWinners((wData.data ?? []) as CompetitionWinner[])
-          setNames(await fetchProfileNames(sRows.map((s) => s.user_id)))
+          if (user) setIsJudge(jData.data !== null)
         }
-        if (user) {
-          const { data: jData } = await supabase
-            .from('competition_judges')
-            .select('id')
-            .eq('competition_id', compId)
-            .eq('judge_id', user.id)
-            .maybeSingle()
-          if (!cancelled) setIsJudge(jData !== null)
-        }
-        // Skor hanya dimuat untuk juri/admin, atau untuk semua orang bila
-        // kompetisi sudah selesai (RLS menegakkan hal yang sama di server).
+        // Nama peserta dan skor independen satu sama lain (keduanya hanya
+        // butuh sRows + status kompetisi) — dimuat paralel.
         const c = data as Competition | null
-        if (c && (c.status === 'selesai' || isAdmin)) {
-          const { data: scData } = await supabase
-            .from('competition_scores')
-            .select('*')
-            .in('submission_id', sRows.map((s) => s.id))
-          if (!cancelled) setScores((scData ?? []) as CompetitionScore[])
+        const scoresNeeded = !!c && (c.status === 'selesai' || isAdmin)
+        const [namesMap, scData] = await Promise.all([
+          fetchProfileNames(sRows.map((s) => s.user_id)),
+          scoresNeeded
+            ? supabase
+                .from('competition_scores')
+                .select('*')
+                .in('submission_id', sRows.map((s) => s.id))
+            : Promise.resolve({ data: null } as { data: null }),
+        ])
+        if (!cancelled) {
+          setNames(namesMap)
+          if (scoresNeeded) setScores((scData.data ?? []) as CompetitionScore[])
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat kompetisi.')
@@ -322,12 +331,18 @@ export function CompetitionDetailPage() {
     let seq = (existing ?? []).length
     const issued: string[] = []
     const failed: string[] = []
-    for (const w of winners) {
-      const sub = subs.find((s) => s.id === w.submission_id)
-      if (!sub) continue
+    // Enrollment tiap pemenang independen — diambil paralel dulu; insert
+    // sertifikat tetap berurutan supaya nomor serial (seq) sesuai urutan
+    // pemenang seperti sebelumnya.
+    const winnerSubs = winners
+      .map((w) => ({ w, sub: subs.find((s) => s.id === w.submission_id) }))
+      .filter((x): x is { w: CompetitionWinner; sub: CompetitionSubmission } => !!x.sub)
+    const enrollments = await Promise.all(winnerSubs.map(({ sub }) => fetchEnrollments(sub.user_id)))
+    for (let i = 0; i < winnerSubs.length; i++) {
+      const { sub } = winnerSubs[i]
+      const enr = enrollments[i]
       // certificates.course_id wajib terisi (001): pakai course terbaru
       // yang sedang/diambil pemenang, jujur dicatat di pesan hasil.
-      const enr = await fetchEnrollments(sub.user_id)
       if (enr.length === 0) {
         failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: belum mengambil course apa pun, sertifikat karya tidak bisa diterbitkan (course_id wajib terisi).`)
         continue

@@ -45,80 +45,95 @@ export default function MentorAnalyticsPage() {
           if (!cancelled) setRows([])
           return
         }
-        const out: CourseStats[] = []
-        for (const course of mine) {
-          const { data: enr } = await supabase
-            .from('enrollments')
-            .select('id,user_id')
-            .eq('course_id', course.id)
-          const enrRows = (enr ?? []) as { id: string; user_id: string }[]
-          const { data: mods } = await supabase
-            .from('modules')
-            .select('id')
-            .eq('course_id', course.id)
-          const modIds = ((mods ?? []) as { id: string }[]).map((m) => m.id)
-          const { data: lessons } = await supabase
-            .from('lessons')
-            .select('id')
-            .in('module_id', modIds.length > 0 ? modIds : ['00000000-0000-0000-0000-000000000000'])
-          const lessonIds = ((lessons ?? []) as { id: string }[]).map((l) => l.id)
-          let completedLessons = 0
-          if (lessonIds.length > 0) {
-            const { count } = await supabase
-              .from('lesson_progress')
-              .select('id', { count: 'exact', head: true })
-              .in('lesson_id', lessonIds)
-              .eq('status', 'completed')
-            completedLessons = count ?? 0
-          }
-          const { data: quizzes } = await supabase
-            .from('quizzes')
-            .select('id,passing_score')
-            .in('lesson_id', lessonIds.length > 0 ? lessonIds : ['00000000-0000-0000-0000-000000000000'])
-          const quizRows = (quizzes ?? []) as { id: string; passing_score: number }[]
-          let quizAttempts = 0
-          let quizPassed = 0
-          if (quizRows.length > 0) {
-            const { data: attempts } = await supabase
-              .from('quiz_attempts')
-              .select('quiz_id,score')
-              .in('quiz_id', quizRows.map((q) => q.id))
-            const attRows = (attempts ?? []) as { quiz_id: string; score: number | null }[]
-            const passing = new Map(quizRows.map((q) => [q.id, q.passing_score]))
-            quizAttempts = attRows.length
-            quizPassed = attRows.filter(
-              (a) => a.score !== null && a.score >= (passing.get(a.quiz_id) ?? 0),
-            ).length
-          }
-          const { data: assigns } = await supabase
-            .from('assignments')
-            .select('id')
-            .in('lesson_id', lessonIds.length > 0 ? lessonIds : ['00000000-0000-0000-0000-000000000000'])
-          const aIds = ((assigns ?? []) as { id: string }[]).map((a) => a.id)
-          let submissions = 0
-          let graded = 0
-          if (aIds.length > 0) {
-            const { data: subs } = await supabase
-              .from('submissions')
-              .select('id,score')
-              .in('assignment_id', aIds)
-            const subRows = (subs ?? []) as { id: string; score: number | null }[]
-            submissions = subRows.length
-            graded = subRows.filter((s) => s.score !== null).length
-          }
-          out.push({
-            courseId: course.id,
-            title: course.title,
-            students: enrRows.length,
-            lessons: lessonIds.length,
-            completedLessons,
-            quizAttempts,
-            quizPassed,
-            submissions,
-            graded,
-            pending: submissions - graded,
-          })
+        // Batch lintas SEMUA course sekaligus (bukan ~7 query sequential per
+        // course): enrollments + modules paralel, lalu lessons, lalu
+        // lesson_progress + quizzes + assignments paralel, lalu quiz_attempts
+        // + submissions paralel. Pengelompokan per course dihitung di JS.
+        const mineIds = mine.map((c) => c.id)
+        const noId = ['00000000-0000-0000-0000-000000000000']
+        const [{ data: enr }, { data: mods }] = await Promise.all([
+          supabase.from('enrollments').select('id,user_id,course_id').in('course_id', mineIds),
+          supabase.from('modules').select('id,course_id').in('course_id', mineIds),
+        ])
+        const enrRows = (enr ?? []) as { id: string; user_id: string; course_id: string }[]
+        const modRows = (mods ?? []) as { id: string; course_id: string }[]
+        const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
+        const { data: lessons } = await supabase
+          .from('lessons')
+          .select('id,module_id')
+          .in('module_id', modRows.length > 0 ? modRows.map((m) => m.id) : noId)
+        const lessonRows = (lessons ?? []) as { id: string; module_id: string }[]
+        const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
+        const lessonIds = lessonRows.map((l) => l.id)
+        const lessonIn = lessonIds.length > 0 ? lessonIds : noId
+        const [{ data: prog }, { data: quizzes }, { data: assigns }] = await Promise.all([
+          supabase.from('lesson_progress').select('lesson_id').in('lesson_id', lessonIn).eq('status', 'completed'),
+          supabase.from('quizzes').select('id,passing_score,lesson_id').in('lesson_id', lessonIn),
+          supabase.from('assignments').select('id,lesson_id').in('lesson_id', lessonIn),
+        ])
+        const progRows = (prog ?? []) as { lesson_id: string }[]
+        const quizRows = (quizzes ?? []) as { id: string; passing_score: number; lesson_id: string }[]
+        const assignRows = (assigns ?? []) as { id: string; lesson_id: string }[]
+        const quizCourse = new Map(quizRows.map((q) => [q.id, lessonCourse.get(q.lesson_id) ?? '']))
+        const assignCourse = new Map(assignRows.map((a) => [a.id, lessonCourse.get(a.lesson_id) ?? '']))
+        const [{ data: attempts }, { data: subs }] = await Promise.all([
+          supabase
+            .from('quiz_attempts')
+            .select('quiz_id,score')
+            .in('quiz_id', quizRows.length > 0 ? quizRows.map((q) => q.id) : noId),
+          supabase
+            .from('submissions')
+            .select('id,score,assignment_id')
+            .in('assignment_id', assignRows.length > 0 ? assignRows.map((a) => a.id) : noId),
+        ])
+        const attRows = (attempts ?? []) as { quiz_id: string; score: number | null }[]
+        const subRows = (subs ?? []) as { id: string; score: number | null; assignment_id: string }[]
+        const passing = new Map(quizRows.map((q) => [q.id, q.passing_score]))
+        const stats = new Map<string, CourseStats>(
+          mine.map((c) => [
+            c.id,
+            {
+              courseId: c.id,
+              title: c.title,
+              students: 0,
+              lessons: 0,
+              completedLessons: 0,
+              quizAttempts: 0,
+              quizPassed: 0,
+              submissions: 0,
+              graded: 0,
+              pending: 0,
+            },
+          ]),
+        )
+        for (const e of enrRows) {
+          const s = stats.get(e.course_id)
+          if (s) s.students += 1
         }
+        for (const l of lessonRows) {
+          const s = stats.get(lessonCourse.get(l.id) ?? '')
+          if (s) s.lessons += 1
+        }
+        for (const p of progRows) {
+          const s = stats.get(lessonCourse.get(p.lesson_id) ?? '')
+          if (s) s.completedLessons += 1
+        }
+        for (const a of attRows) {
+          const s = stats.get(quizCourse.get(a.quiz_id) ?? '')
+          if (!s) continue
+          s.quizAttempts += 1
+          if (a.score !== null && a.score >= (passing.get(a.quiz_id) ?? 0)) s.quizPassed += 1
+        }
+        for (const sub of subRows) {
+          const s = stats.get(assignCourse.get(sub.assignment_id) ?? '')
+          if (!s) continue
+          s.submissions += 1
+          if (sub.score !== null) s.graded += 1
+        }
+        const out: CourseStats[] = [...stats.values()].map((s) => ({
+          ...s,
+          pending: s.submissions - s.graded,
+        }))
         if (!cancelled) setRows(out)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat analitik.')

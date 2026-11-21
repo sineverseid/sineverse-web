@@ -45,15 +45,22 @@ export default function SchoolsPage() {
         throw sErr
       }
       setSchools((sData ?? []) as School[])
-      const { data: cData } = await supabase.from('film_clubs').select('*').order('name')
-      setClubs((cData ?? []) as FilmClub[])
-      const { data: aData } = await supabase.from('club_activities').select('*').order('starts_at', { ascending: true })
-      setActivities((aData ?? []) as ClubActivity[])
+      // Klub, aktivitas, dan kedua keanggotaan saya independen: paralel.
+      const [cRes, aRes, memRes, cmRes] = await Promise.all([
+        supabase.from('film_clubs').select('*').order('name'),
+        supabase.from('club_activities').select('*').order('starts_at', { ascending: true }),
+        user
+          ? supabase.from('school_members').select('school_id').eq('user_id', user.id)
+          : Promise.resolve({ data: null as { school_id: string }[] | null }),
+        user
+          ? supabase.from('club_members').select('club_id').eq('user_id', user.id)
+          : Promise.resolve({ data: null as { club_id: string }[] | null }),
+      ])
+      setClubs((cRes.data ?? []) as FilmClub[])
+      setActivities((aRes.data ?? []) as ClubActivity[])
       if (user) {
-        const { data: mem } = await supabase.from('school_members').select('school_id').eq('user_id', user.id)
-        setMySchools(new Set(((mem ?? []) as { school_id: string }[]).map((m) => m.school_id)))
-        const { data: cm } = await supabase.from('club_members').select('club_id').eq('user_id', user.id)
-        setClubMembers(new Set(((cm ?? []) as { club_id: string }[]).map((m) => m.club_id)))
+        setMySchools(new Set(((memRes.data ?? []) as { school_id: string }[]).map((m) => m.school_id)))
+        setClubMembers(new Set(((cmRes.data ?? []) as { club_id: string }[]).map((m) => m.club_id)))
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat sekolah & klub.')
