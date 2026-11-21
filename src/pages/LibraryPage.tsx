@@ -1,4 +1,4 @@
-// SINEVERSE — Library (006): daftar + isi lengkap + ilustrasi + bookmark.
+// SINEVERSE, Library (006): daftar + isi lengkap + ilustrasi + bookmark.
 // PENEGAKAN DASAR HUKUM: item naskah tanpa legal_basis DITOLAK di UI —
 // isinya tidak ditampilkan, diganti pesan jujur. Admin bisa mengedit /
 // menghapus item (tombol hanya muncul untuk admin).
@@ -14,6 +14,30 @@ import EmptyState from '../components/EmptyState'
 
 function isScript(item: LibraryItem): boolean {
   return (item.category ?? '').toLowerCase().includes('naskah')
+}
+
+function itemInitial(title: string): string {
+  const first = title.trim().charAt(0)
+  return first ? first.toUpperCase() : 'S'
+}
+
+function LibraryThumb({ item }: { item: LibraryItem }) {
+  const [broken, setBroken] = useState(false)
+  if (!item.image_url || broken) {
+    return (
+      <div className="media-placeholder" aria-hidden="true">
+        <span>{itemInitial(item.title)}</span>
+      </div>
+    )
+  }
+  return (
+    <img
+      src={item.image_url}
+      alt={`Ilustrasi ${item.title}`}
+      style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+      onError={() => setBroken(true)}
+    />
+  )
 }
 
 export function LibraryPage() {
@@ -80,7 +104,7 @@ export function LibraryPage() {
       <PageHeader
         icon="library"
         title="Library"
-        subtitle="Naskah, glosarium, template, dan bacaan filmmaking — lengkap dengan dasar hukum dan atribusi."
+        subtitle="Naskah, glosarium, template, dan bacaan filmmaking, lengkap dengan dasar hukum dan atribusi."
       />
       {notice && <p className="notice-box">{notice}</p>}
       <div className="chip-row" style={{ marginBottom: '1rem' }}>
@@ -98,16 +122,25 @@ export function LibraryPage() {
             return (
               <li key={it.id} className="course-card">
                 <Link to={`/pustaka/${it.id}`}>
-                  {it.image_url && <img src={it.image_url} alt={`Ilustrasi ${it.title}`} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />}
+                  <LibraryThumb item={it} />
+                  <div className="course-card-body">
                   <h3>{it.title}</h3>
                   <p>{it.category ?? 'Pustaka'}</p>
                   {rejected && <p className="muted">Naskah ini belum bisa ditampilkan: dasar hukum belum tercatat.</p>}
+                  </div>
                 </Link>
-                {user && (
+                {user ? (
                   <div style={{ padding: '0 1.25rem 1rem' }}>
                     <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleBookmark(it.id, bookmarks.has(it.id))}>
                       {bookmarks.has(it.id) ? 'Hapus Bookmark' : 'Bookmark'}
                     </button>
+                  </div>
+                ) : (
+                  <div style={{ padding: '0 1.25rem 1rem' }}>
+                    <button type="button" className="btn btn-ghost btn-small" disabled>
+                      Bookmark
+                    </button>
+                    <p className="muted" style={{ margin: '0.4rem 0 0' }}>Masuk untuk menyimpan.</p>
                   </div>
                 )}
               </li>
@@ -243,10 +276,17 @@ export function LibraryDetailPage() {
         <div><dt>Batas pakai</dt><dd>{currentItem.usage_limits ?? '—'}</dd></div>
         {currentItem.source_url && <div><dt>Sumber</dt><dd><a href={currentItem.source_url} target="_blank" rel="noreferrer">{currentItem.source_url}</a></dd></div>}
       </dl>
-      {user && (
+      {user ? (
         <button type="button" className="btn btn-ghost btn-small" onClick={toggleBookmark}>
           {bookmarked ? 'Hapus Bookmark' : 'Bookmark'}
         </button>
+      ) : (
+        <div>
+          <button type="button" className="btn btn-ghost btn-small" disabled>
+            Bookmark
+          </button>
+          <p className="muted">Masuk untuk menyimpan.</p>
+        </div>
       )}
       {isAdmin && (
         <section className="section" style={{ marginTop: '1.5rem' }}>
