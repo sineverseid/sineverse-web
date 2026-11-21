@@ -181,6 +181,43 @@ p {
   padding: 0.2rem 0.3rem;
 }
 
+/* --- Sub-navigasi workspace (Mentor Workspace & Admin Panel) --- */
+.workspace-nav {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.1rem 0.75rem;
+  margin-bottom: 0.25rem;
+  scrollbar-width: thin;
+}
+
+.workspace-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  padding: 0.5rem 0.8rem;
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--light-grey);
+  background: #fff;
+  color: var(--deep-navy);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.workspace-nav-item:hover {
+  border-color: var(--film-green);
+  color: var(--film-green);
+}
+
+.workspace-nav-item.active {
+  background: var(--film-green);
+  border-color: var(--film-green);
+  color: #fff;
+}
+
 /* --- Bottom navigation (handphone, sesuai artefak: 4–5 menu + Lainnya) --- */
 .bottomnav {
   display: none;
@@ -753,6 +790,41 @@ p {
   color: #7a5b00;
 }
 
+.chip-danger {
+  background: #fde8e8;
+  color: #b42318;
+}
+
+.chip-success {
+  background: #e6f4ea;
+  color: #0f5c40;
+}
+
+/* Daftar baris sederhana (mis. Tenggat Saya). */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.list-row .chip {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
 .course-list {
   list-style: none;
   margin: 0;
@@ -1249,7 +1321,7 @@ p {
   background-color: var(--navy);
   background-image:
     linear-gradient(100deg, rgba(23, 36, 56, 0.96) 0%, rgba(23, 36, 56, 0.82) 42%, rgba(23, 36, 56, 0.15) 75%, rgba(23, 36, 56, 0.05) 100%),
-    url('./home-hero-cinematic.webp');
+    url('/home-hero-cinematic.webp');
   background-size: cover;
   background-position: center right;
   background-repeat: no-repeat;
@@ -1590,7 +1662,7 @@ p {
   background-color: var(--navy);
   background-image:
     linear-gradient(100deg, rgba(23, 36, 56, 0.92) 0%, rgba(23, 36, 56, 0.75) 55%, rgba(23, 36, 56, 0.45) 100%),
-    url('./cta-crowd.webp');
+    url('/cta-crowd.webp');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;

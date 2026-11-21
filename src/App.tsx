@@ -5,7 +5,11 @@ import Layout from './components/Layout'
 import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
 import AdminDiscussionsPage from './pages/AdminDiscussionsPage'
+import AdminEventsPage from './pages/AdminEventsPage'
+import AdminLibraryPage from './pages/AdminLibraryPage'
 import AdminPage from './pages/AdminPage'
+import AdminSettingsPage from './pages/AdminSettingsPage'
+import AdminUsersPage from './pages/AdminUsersPage'
 import AboutPage from './pages/AboutPage'
 import AkademiPage from './pages/AkademiPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
@@ -16,6 +20,7 @@ import CommunityDetailPage from './pages/CommunityDetailPage'
 import CourseBuilderPage from './pages/CourseBuilderPage'
 import CourseDetailPage from './pages/CourseDetailPage'
 import CrewFinderPage from './pages/CrewFinderPage'
+import DeadlinesPage from './pages/DeadlinesPage'
 import EditProfilePage from './pages/EditProfilePage'
 import { EventDetailPage, EventsPage } from './pages/EventsPage'
 import { CompetitionDetailPage, CompetitionsPage } from './pages/CompetitionsPage'
@@ -28,6 +33,10 @@ import LessonDetailPage from './pages/LessonDetailPage'
 import { LibraryDetailPage, LibraryPage } from './pages/LibraryPage'
 import LoginPage from './pages/LoginPage'
 import MentorPage from './pages/MentorPage'
+import MentorAnalyticsPage from './pages/MentorAnalyticsPage'
+import MentorDiscussionsPage from './pages/MentorDiscussionsPage'
+import MentorStudentsPage from './pages/MentorStudentsPage'
+import MentorsPage from './pages/MentorsPage'
 import ModerationPage from './pages/ModerationPage'
 import NotificationPrefsPage from './pages/NotificationPrefsPage'
 import NotificationsPage from './pages/NotificationsPage'
@@ -105,12 +114,15 @@ export default function App() {
             {/* Portfolio (Fase C) */}
             <Route path="portofolio" element={<Protected><PortfolioPage /></Protected>} />
             <Route path="portofolio/:userId" element={<Protected><PortfolioPage /></Protected>} />
+            {/* Direktori Mentor (SINEVERSE Mentors) */}
+            <Route path="mentors" element={<Protected><MentorsPage /></Protected>} />
             {/* Certificates (Fase D) */}
             <Route path="sertifikat" element={<Protected><CertificatesPage /></Protected>} />
             {/* Office hours (Fase D) */}
             <Route path="jam-kantor" element={<Protected><OfficeHoursPage /></Protected>} />
             {/* Existing protected pages */}
             <Route path="nilai" element={<Protected><GradebookPage /></Protected>} />
+            <Route path="tenggat" element={<Protected><DeadlinesPage /></Protected>} />
             <Route path="profil" element={<Protected><ProfilePage /></Protected>} />
             <Route path="profil/edit" element={<Protected><EditProfilePage /></Protected>} />
             {/* Mentor Workspace (Fase D) */}
@@ -135,6 +147,30 @@ export default function App() {
               element={
                 <RoleRoute roles={['mentor', 'admin']}>
                   <GradingQueuePage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/diskusi"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorDiscussionsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/siswa"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorStudentsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/analitik"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorAnalyticsPage />
                 </RoleRoute>
               }
             />
@@ -168,6 +204,38 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin', 'mentor']}>
                   <AdminDiscussionsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/pengguna"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminUsersPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/acara"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminEventsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/pustaka"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminLibraryPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/pengaturan"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminSettingsPage />
                 </RoleRoute>
               }
             />
