@@ -707,6 +707,17 @@ p {
   border: 1px solid var(--light-grey);
 }
 
+.btn-outline-light {
+  background: transparent;
+  color: #fff;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+}
+
+.btn-outline-light:hover {
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .btn-small {
   padding: 0.4rem 0.75rem;
   font-size: 0.85rem;
@@ -1056,6 +1067,144 @@ p {
 .continue-title {
   font-weight: 700;
   color: var(--navy);
+}
+
+/* --- Dashboard anggota (Beranda siswa) --- */
+.hero-note {
+  color: #d7e0ea;
+  margin: 1rem 0 0;
+}
+
+.hero-note a {
+  color: var(--mint);
+  font-weight: 700;
+}
+
+.rec-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rec-row {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+.rec-row a {
+  display: block;
+}
+
+.rec-row a:hover {
+  text-decoration: none;
+}
+
+.rec-row h3 {
+  margin: 0.15rem 0;
+}
+
+.rec-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--film-green);
+  margin: 0;
+}
+
+.rec-desc {
+  margin: 0.15rem 0 0;
+  color: #5b6b7c;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.empty-card {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 1.25rem 1rem;
+  text-align: center;
+}
+
+.empty-card h3 {
+  margin: 0 0 0.25rem;
+}
+
+.empty-card p {
+  margin: 0;
+  color: #5b6b7c;
+}
+
+.progress-track {
+  height: 8px;
+  background: var(--light-grey);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--film-green);
+  border-radius: 999px;
+}
+
+/* --- Kurikulum Semester 1 (Akademi) --- */
+/* Baris kolom penuh: judul + minggu di baris pertama, status mentor di
+   barisnya sendiri di bawah — judul tidak pernah terpotong di HP. */
+.kurikulum-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.kurikulum-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+.kurikulum-num {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  background: var(--film-green);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+.kurikulum-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.kurikulum-title {
+  font-weight: 700;
+  margin: 0;
+}
+
+.kurikulum-status {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+  color: #5b6b7c;
 }
 
 /* --- Course detail --- */
