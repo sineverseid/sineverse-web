@@ -200,6 +200,22 @@ p {
   color: #fff;
 }
 
+/* Tombol Masuk di header saat belum login (di luar nav). */
+.topbar > a.nav-cta {
+  background: var(--film-green);
+  color: #fff;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.topbar > a.nav-cta:hover {
+  text-decoration: none;
+  background: #127a54;
+}
+
 .main {
   flex: 1;
   width: 100%;
