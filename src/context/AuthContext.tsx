@@ -90,6 +90,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [registrationNotice, setRegistrationNotice] = useState<string | null>(null)
 
+  // Cache profil di localStorage supaya hero Beranda bisa menampilkan nama
+  // langsung dari cache saat aplikasi dibuka (tanpa menunggu fetch profil
+  // dari server). Cache dipakai optimistis dan selalu disegarkan di latar
+  // belakang oleh loadProfile; bila data berubah, tampilan diperbarui.
+  const PROFILE_CACHE_KEY = 'sineverse-profile-cache-v1'
+  const readCachedProfile = (userId: string): Profile | null => {
+    try {
+      const raw = localStorage.getItem(PROFILE_CACHE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { userId: string; profile: Profile }
+      return parsed.userId === userId ? parsed.profile : null
+    } catch {
+      return null
+    }
+  }
+  const writeCachedProfile = (userId: string, p: Profile | null) => {
+    try {
+      if (p) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ userId, profile: p }))
+      else localStorage.removeItem(PROFILE_CACHE_KEY)
+    } catch {
+      // localStorage penuh/tidak tersedia — abaikan, profil tetap dimuat segar.
+    }
+  }
+
   // getSession() dan onAuthStateChange (INITIAL_SESSION) sama-sama
   // terpanggil saat mount dan keduanya memuat profil — tanpa dedupe,
   // fetchProfile jalan dua kali untuk user yang sama. Janji yang sedang
@@ -113,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const p = await pending
       setProfile(p)
+      writeCachedProfile(userId, p)
     } catch {
       setProfile(null)
     }
@@ -145,6 +170,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session)
       setUser(data.session?.user ?? null)
       if (data.session?.user) {
+        // Tampilkan profil dari cache dulu (instan), lalu segarkan di latar.
+        const cached = readCachedProfile(data.session.user.id)
+        if (cached) setProfile(cached)
         void loadProfile(data.session.user.id)
         void runPendingCompletion(data.session.user)
       }
@@ -155,6 +183,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(newSession)
       setUser(newSession?.user ?? null)
       if (newSession?.user) {
+        const cached = readCachedProfile(newSession.user.id)
+        if (cached) setProfile(cached)
         void loadProfile(newSession.user.id)
         void runPendingCompletion(newSession.user)
       } else setProfile(null)
@@ -213,6 +243,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setSession(null)
     setProfile(null)
+    try {
+      localStorage.removeItem(PROFILE_CACHE_KEY)
+    } catch {
+      // Abaikan.
+    }
   }, [])
 
   const refreshProfile = useCallback(async () => {
