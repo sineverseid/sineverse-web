@@ -42,6 +42,7 @@ import type {
   Course,
   CourseClaim,
   DiscussionReport,
+  Enrollment,
   Lesson,
   LessonProgress,
   MentorApplication,
@@ -164,48 +165,75 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false
     async function load() {
+      // Semua fetch independen dimulai BERSAMAAN (bukan berurutan):
+      // course, pengumuman, enrollment, dan progres. Sebelumnya lima tahap
+      // berjalan berurutan (course → pengumuman → enrollment/progres →
+      // lesson → tugas/proyek/dll), sehingga waktunya dijumlah — itu yang
+      // bikin Beranda paling lambat (1,6–2,8 detik). Kini tahap independen
+      // berjalan paralel dan enrollment hanya diambil sekali (dipakai juga
+      // untuk filter pengumuman).
+      const coursesP = fetchCourses()
+      const annP = supabase
+        .from('announcements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(3)
+      const enrP = user ? fetchEnrollments(user.id) : Promise.resolve([] as Enrollment[])
+      const progP = user ? fetchLessonProgress(user.id) : Promise.resolve([] as LessonProgress[])
+
       // Kursus dimuat sendiri: bila gagal, halaman tetap tampil dan hanya
       // muncul pemberitahuan inline, bukan error seluruh halaman.
+      let all: Course[] = []
       try {
-        const all = await fetchCourses()
+        all = await coursesP
         if (cancelled) return
         setCourses(all)
       } catch {
         if (!cancelled) setCoursesError('Kursus gagal dimuat.')
       }
-        // Pengumuman terbaru (platform + course yang diikuti), sama seperti
-        // halaman Pengumuman, bukan teks kosong hardcode.
-        try {
-          const { data: ann, error: annErr } = await supabase
-            .from('announcements')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(3)
-          if (annErr) {
-            if (!isMissingTableError(annErr)) throw annErr
+
+      // Pengumuman terbaru (platform + course yang diikuti), sama seperti
+      // halaman Pengumuman, bukan teks kosong hardcode.
+      let enr: Enrollment[] = []
+      let prog: LessonProgress[] = []
+      try {
+        const [annRes, enrRes, progRes] = await Promise.all([annP, enrP, progP])
+        if (cancelled) return
+        enr = enrRes
+        prog = progRes
+        if (annRes.error) {
+          if (isMissingTableError(annRes.error)) {
             if (!cancelled) setAnnouncements(null)
           } else {
-            let rows = (ann ?? []) as Announcement[]
-            if (user) {
-              const enr0 = await fetchEnrollments(user.id)
-              const mine = new Set(enr0.map((e) => e.course_id))
-              rows = rows.filter(
-                (a) => a.scope === 'platform' || (a.course_id && mine.has(a.course_id)),
-              )
-            } else {
-              rows = rows.filter((a) => a.scope === 'platform')
-            }
-            if (!cancelled) setAnnouncements(rows)
+            throw annRes.error
           }
-        } catch {
-          if (!cancelled) setAnnouncements([])
+        } else {
+          let rows = (annRes.data ?? []) as Announcement[]
+          if (user) {
+            const mine = new Set(enr.map((e) => e.course_id))
+            rows = rows.filter(
+              (a) => a.scope === 'platform' || (a.course_id && mine.has(a.course_id)),
+            )
+          } else {
+            rows = rows.filter((a) => a.scope === 'platform')
+          }
+          if (!cancelled) setAnnouncements(rows)
         }
-        if (user) {
-          try {
-          const [enr, prog] = await Promise.all([
-            fetchEnrollments(user.id),
-            fetchLessonProgress(user.id),
-          ])
+      } catch {
+        if (!cancelled) setAnnouncements([])
+        // Enrollment/progres gagal → lanjut dengan daftar kosong; bagian
+        // dashboard di bawah memakai nilai yang sudah didapat (atau kosong).
+        try {
+          enr = await enrP.catch(() => [] as Enrollment[])
+          prog = await progP.catch(() => [] as LessonProgress[])
+        } catch {
+          enr = []
+          prog = []
+        }
+      }
+
+      if (user) {
+        try {
           if (cancelled) return
           setEnrolledIds(enr.map((e) => e.course_id))
           setProgress(prog)
