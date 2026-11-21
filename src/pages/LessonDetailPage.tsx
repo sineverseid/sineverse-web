@@ -17,7 +17,11 @@ import {
   fetchDiscussions,
   fetchEnrollment,
   fetchLesson,
+  fetchLessonProgress,
   fetchLessonProgressFor,
+  fetchLessonResources,
+  fetchLessons,
+  fetchModules,
   fetchQuizAttempts,
   fetchQuizzesForLessons,
   fetchSubmissions,
@@ -32,6 +36,7 @@ import type {
   Discussion,
   Lesson,
   LessonProgressStatus,
+  LessonResource,
   Quiz,
 } from '../lib/types'
 
@@ -55,6 +60,9 @@ export default function LessonDetailPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [discussions, setDiscussions] = useState<Discussion[]>([])
+  const [resources, setResources] = useState<LessonResource[]>([])
+  const [resourcesError, setResourcesError] = useState<string | null>(null)
+  const [sequentialLocked, setSequentialLocked] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -118,6 +126,9 @@ export default function LessonDetailPage() {
       setAssignError(null)
       setQuizError(null)
       setDiscussionError(null)
+      setResources([])
+      setResourcesError(null)
+      setSequentialLocked(false)
       setPassedQuiz(false)
       setSubmittedAssignment(false)
 
@@ -197,6 +208,10 @@ export default function LessonDetailPage() {
       // hasilnya disimpan ke variabel lokal juga.
       let assigns: Assignment[] = []
       let qs: Quiz[] = []
+      // Kunci berurutan (migrasi 013): hanya untuk peserta biasa, bukan
+      // admin / mentor pengampu. Gagal membaca mode akses = fail-open:
+      // lesson tetap tampil, tidak terkunci.
+      let seqLocked = false
       {
         const [, assignsRes, qsRes] = await Promise.all([
           (async () => {
@@ -235,9 +250,51 @@ export default function LessonDetailPage() {
               if (!cancelled) setDiscussionError('Diskusi gagal dimuat. Coba muat ulang halaman.')
             }
           })(),
+          (async () => {
+            // Materi tambahan: gagal dimuat tidak boleh merusak halaman.
+            try {
+              const res = await fetchLessonResources(l.id)
+              if (!cancelled) setResources(res)
+            } catch {
+              if (!cancelled) setResourcesError('Materi tambahan gagal dimuat.')
+            }
+          })(),
+          (async () => {
+            // Kunci Section 2 (mode 'sequential'): Section 2 (modul
+            // order_index 2) terkunci sampai seluruh lesson Section 1
+            // (modul order_index 1) selesai.
+            try {
+              if (!user || profile?.role === 'admin') return
+              const course = await fetchCourse(courseInfo.courseId)
+              if (!course || (course.access_mode ?? 'direct') !== 'sequential') return
+              if (course.mentor_id === user.id) return
+              const mods = await fetchModules(courseInfo.courseId)
+              const myMod = mods.find((m) => m.id === l.module_id)
+              if (!myMod || myMod.order_index !== 2) return
+              const section1 = mods.find((m) => m.order_index === 1)
+              if (!section1) return
+              const s1Lessons = await fetchLessons(section1.id)
+              if (s1Lessons.length === 0) return
+              const prog = await fetchLessonProgress(user.id)
+              const done = new Set(
+                prog.filter((p) => p.status === 'completed').map((p) => p.lesson_id),
+              )
+              if (!s1Lessons.every((sl) => done.has(sl.id))) seqLocked = true
+            } catch {
+              // Fail-open: kunci tidak diterapkan bila datanya gagal dibaca.
+            }
+          })(),
         ])
         assigns = assignsRes
         qs = qsRes
+      }
+
+      if (seqLocked) {
+        if (!cancelled) {
+          setSequentialLocked(true)
+          setLoading(false)
+        }
+        return
       }
 
       if (user) {
@@ -321,6 +378,21 @@ export default function LessonDetailPage() {
     return (
       <div className="page">
         <p className="error-box">Lesson ini hanya untuk peserta course.</p>
+        {courseId ? (
+          <Link to={`/course/${courseId}`}>
+            Buka halaman course{courseTitle ? `: ${courseTitle}` : ''}
+          </Link>
+        ) : (
+          <Link to="/akademi">Kembali ke Akademi</Link>
+        )}
+      </div>
+    )
+  }
+
+  if (sequentialLocked) {
+    return (
+      <div className="page">
+        <p className="error-box">Section 2 terkunci. Selesaikan dulu seluruh lesson di Section 1.</p>
         {courseId ? (
           <Link to={`/course/${courseId}`}>
             Buka halaman course{courseTitle ? `: ${courseTitle}` : ''}
@@ -535,6 +607,75 @@ export default function LessonDetailPage() {
           <p className="empty">Belum ada materi bacaan untuk lesson ini.</p>
         )}
       </section>
+
+      {resourcesError && <p className="muted">{resourcesError}</p>}
+      {resources.length > 0 && (
+        <section className="section" aria-label="Materi tambahan">
+          <h2>Materi Tambahan</h2>
+          <ul>
+            {resources.map((r) => (
+              <li key={r.id}>
+                {r.kind === 'pdf' ? (
+                  <>
+                    <strong>{r.title}</strong>
+                    {r.url ? (
+                      <>
+                        {' — '}
+                        <a href={r.url} target="_blank" rel="noreferrer">
+                          Unduh PDF
+                        </a>
+                      </>
+                    ) : null}
+                  </>
+                ) : r.kind === 'video' ? (
+                  <>
+                    <strong>{r.title}</strong>
+                    {r.url ? (
+                      <>
+                        {' — '}
+                        <a href={r.url} target="_blank" rel="noreferrer">
+                          Tonton video
+                        </a>
+                      </>
+                    ) : null}
+                  </>
+                ) : r.kind === 'reading' ? (
+                  <>
+                    <strong>{r.title}</strong>
+                    {r.body ? <p>{r.body}</p> : r.url ? (
+                      <>
+                        {' — '}
+                        <a href={r.url} target="_blank" rel="noreferrer">
+                          Baca materi
+                        </a>
+                      </>
+                    ) : null}
+                  </>
+                ) : r.kind === 'image' ? (
+                  <>
+                    <strong>{r.title}</strong>
+                    {r.url ? (
+                      <div>
+                        <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">
+                        {r.title}
+                      </a>
+                    ) : (
+                      <strong>{r.title}</strong>
+                    )}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="section" aria-label="Cek pemahaman">
         <h2>CHECK, Kuis</h2>

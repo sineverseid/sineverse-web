@@ -6,22 +6,24 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourse, fetchModules, invalidateCatalogCache, supabase } from '../lib/supabase'
-import type { Assignment, CompetencyExam, Lesson, LessonResource, Module, Quiz } from '../lib/types'
+import { fetchCourse, fetchModules, invalidateCatalogCache, supabase, updateCourseAccessMode } from '../lib/supabase'
+import type { Assignment, CompetencyExam, Course, Lesson, LessonResource, Module, Quiz } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 
 export default function CourseBuilderPage() {
   const { id } = useParams<{ id: string }>()
   const { user, profile } = useAuth()
-  const [course, setCourse] = useState<{ id: string; title: string; mentor_id: string | null } | null>(null)
+  const [course, setCourse] = useState<Course | null>(null)
   const [modules, setModules] = useState<Module[]>([])
+  const [accessMode, setAccessMode] = useState<'direct' | 'sequential'>('direct')
+  const [accessSaving, setAccessSaving] = useState(false)
   const [lessonsByModule, setLessonsByModule] = useState<Record<string, Lesson[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const [moduleTitle, setModuleTitle] = useState('')
+  const [moduleSection, setModuleSection] = useState('')
   const [lessonModule, setLessonModule] = useState('')
   const [lessonTitle, setLessonTitle] = useState('')
   const [lessonVideo, setLessonVideo] = useState('')
@@ -115,7 +117,10 @@ export default function CourseBuilderPage() {
         const c = await fetchCourse(courseId)
         if (cancelled) return
         setCourse(c)
-        if (c) await refresh(courseId)
+        if (c) {
+          setAccessMode(c.access_mode ?? 'direct')
+          await refresh(courseId)
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat course.')
       } finally {
@@ -144,21 +149,54 @@ export default function CourseBuilderPage() {
 
   const currentCourse = course
   const allLessons = Object.values(lessonsByModule).flat()
+  // Section = modul order_index 1 (Section 1) atau 2 (Section 2).
+  // Orientasi (order_index 0) tidak dihitung sebagai section.
+  const sectionOrderTaken = new Set(
+    modules.filter((m) => m.order_index === 1 || m.order_index === 2).map((m) => m.order_index),
+  )
+  const sectionChoices = [
+    { order: 1, title: 'Section 1 — Minggu 1' },
+    { order: 2, title: 'Section 2 — Minggu 2' },
+  ].filter((s) => !sectionOrderTaken.has(s.order))
   const ok = (msg: string) => setNotice(msg)
   const fail = (err: unknown) => setNotice(err instanceof Error ? err.message : 'Gagal menyimpan.')
 
+  async function changeAccessMode(mode: 'direct' | 'sequential') {
+    setAccessMode(mode)
+    setAccessSaving(true)
+    try {
+      const updated = await updateCourseAccessMode(currentCourse.id, mode)
+      setCourse(updated)
+      ok(
+        mode === 'sequential'
+          ? 'Mode akses diubah ke Berurutan: Section 2 terbuka setelah Section 1 selesai.'
+          : 'Mode akses diubah ke Langsung: semua section bisa dibuka.',
+      )
+    } catch (err) {
+      setAccessMode(course?.access_mode ?? 'direct')
+      fail(err)
+    } finally {
+      setAccessSaving(false)
+    }
+  }
+
   async function addModule(e: FormEvent) {
     e.preventDefault()
+    const choice = sectionChoices.find((s) => s.order === Number(moduleSection))
+    if (!choice) {
+      setNotice('Pilih section dulu.')
+      return
+    }
     const { error: insErr } = await supabase.from('modules').insert({
       course_id: currentCourse.id,
-      title: moduleTitle.trim(),
-      order_index: modules.length,
+      title: choice.title,
+      order_index: choice.order,
       is_published: true,
     })
     if (insErr) fail(insErr)
     else {
       invalidateCatalogCache()
-      setModuleTitle('')
+      setModuleSection('')
       ok('Modul ditambahkan.')
       await refresh(currentCourse.id)
     }
@@ -168,6 +206,14 @@ export default function CourseBuilderPage() {
     e.preventDefault()
     if (!lessonModule) {
       setNotice('Pilih modul dulu.')
+      return
+    }
+    // Batas Stage 1: tiap section (order_index 1/2) maksimal 5 lesson.
+    const targetModule = modules.find((m) => m.id === lessonModule)
+    const isSectionModule =
+      targetModule !== undefined && (targetModule.order_index === 1 || targetModule.order_index === 2)
+    if (isSectionModule && (lessonsByModule[lessonModule] ?? []).length >= 5) {
+      setNotice('Section ini sudah berisi 5 lesson.')
       return
     }
     const { error: insErr } = await supabase.from('lessons').insert({
@@ -370,11 +416,53 @@ export default function CourseBuilderPage() {
       </section>
 
       <section className="section">
-        <h2>Tambah Modul</h2>
-        <form className="form" onSubmit={addModule}>
-          <label>Judul modul<input value={moduleTitle} onChange={(e) => setModuleTitle(e.target.value)} required /></label>
-          <button type="submit" className="btn btn-primary">Tambah Modul</button>
+        <h2>Mode Akses Section</h2>
+        <form
+          className="form"
+          onSubmit={(e) => {
+            e.preventDefault()
+          }}
+        >
+          <label>
+            Cara membuka section
+            <select
+              value={accessMode}
+              onChange={(e) => void changeAccessMode(e.target.value as 'direct' | 'sequential')}
+              disabled={accessSaving}
+              style={selectStyle}
+            >
+              <option value="direct">Langsung — semua section bisa dibuka</option>
+              <option value="sequential">Berurutan — Section 2 terbuka setelah Section 1 selesai</option>
+            </select>
+          </label>
+          {accessSaving && <p className="muted">Menyimpan…</p>}
         </form>
+      </section>
+
+      <section className="section">
+        <h2>Tambah Modul</h2>
+        <p className="muted">
+          Modul Orientasi sudah ada dan tidak diubah. Setiap course maksimal 2 section:
+          Section 1 dan Section 2, masing-masing berisi 5 lesson.
+        </p>
+        {sectionChoices.length === 0 ? (
+          <p className="empty">Kedua section sudah ada (Section 1 dan Section 2).</p>
+        ) : (
+          <form className="form" onSubmit={addModule}>
+            <label>
+              Section
+              <select value={moduleSection} onChange={(e) => setModuleSection(e.target.value)} required style={selectStyle}>
+                <option value="">— Pilih section —</option>
+                {sectionChoices.map((s) => (
+                  <option key={s.order} value={s.order}>
+                    {s.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="submit" className="btn btn-primary">Tambah Modul</button>
+          </form>
+        )}
       </section>
 
       <section className="section">
@@ -387,6 +475,17 @@ export default function CourseBuilderPage() {
               {modules.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
             </select>
           </label>
+          {(() => {
+            const target = modules.find((m) => m.id === lessonModule)
+            if (!target || (target.order_index !== 1 && target.order_index !== 2)) return null
+            const count = (lessonsByModule[lessonModule] ?? []).length
+            return (
+              <p className="muted">
+                Section ini berisi {count}/5 lesson.
+                {count >= 5 ? ' Sudah penuh — tidak bisa tambah lesson lagi.' : ''}
+              </p>
+            )
+          })()}
           <label>Judul lesson<input value={lessonTitle} onChange={(e) => setLessonTitle(e.target.value)} required /></label>
           <label>URL video (opsional)<input value={lessonVideo} onChange={(e) => setLessonVideo(e.target.value)} placeholder="https://…" /></label>
           <label>Isi bacaan<textarea value={lessonContent} onChange={(e) => setLessonContent(e.target.value)} rows={4} /></label>

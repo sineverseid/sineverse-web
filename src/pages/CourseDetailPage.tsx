@@ -418,11 +418,41 @@ export default function CourseDetailPage() {
         {modules.length === 0 ? (
           <p className="empty">Belum ada modul di course ini.</p>
         ) : (
-          modules.map((m) => (
+          modules.map((m) => {
+            // Section = modul order_index 1 (Section 1) atau 2 (Section 2);
+            // Orientasi (order_index 0) tampil sebagai grup kecil sendiri.
+            const isSection = m.order_index === 1 || m.order_index === 2
+            const sectionDone = m.lessons.filter((l) => doneIds.has(l.id)).length
+            const sectionComplete = isSection && sectionDone >= 5
+            const groupTitle =
+              m.title && m.title.trim()
+                ? m.title
+                : m.order_index === 0
+                  ? 'Orientasi'
+                  : m.order_index === 1
+                    ? 'Section 1'
+                    : m.order_index === 2
+                      ? 'Section 2'
+                      : `Modul ${m.order_index + 1}`
+            return (
             <div key={m.id} className="module-block">
               <h3>
-                {m.title}
+                {groupTitle}
                 {m.release_label ? ` · ${m.release_label}` : ''}
+                {isSection && (
+                  <>
+                    {' · '}
+                    <span className="muted">
+                      {sectionDone}/5 selesai
+                    </span>
+                    {sectionComplete && (
+                      <>
+                        {' '}
+                        <span className="badge-pass">Selesai</span>
+                      </>
+                    )}
+                  </>
+                )}
               </h3>
               {m.lessons.length === 0 ? (
                 <p className="empty">Belum ada lesson di modul ini.</p>
@@ -452,7 +482,8 @@ export default function CourseDetailPage() {
                 </ol>
               )}
             </div>
-          ))
+            )
+          })
         )}
       </section>
     </div>
