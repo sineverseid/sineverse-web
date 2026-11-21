@@ -6,6 +6,7 @@ import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
 import AdminDiscussionsPage from './pages/AdminDiscussionsPage'
 import AdminPage from './pages/AdminPage'
+import AboutPage from './pages/AboutPage'
 import AkademiPage from './pages/AkademiPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
 import AssignmentPage from './pages/AssignmentPage'
@@ -67,6 +68,9 @@ export default function App() {
             <Route index element={<HomePage />} />
             <Route path="login" element={<LoginPage />} />
             <Route path="register" element={<RegisterPage />} />
+            <Route path="tentang" element={<AboutPage section="tentang" />} />
+            <Route path="privasi" element={<AboutPage section="privasi" />} />
+            <Route path="syarat" element={<AboutPage section="syarat" />} />
             <Route path="akademi" element={<AkademiPage />} />
             <Route path="course/:id" element={<CourseDetailPage />} />
             <Route path="lesson/:id" element={<LessonDetailPage />} />
