@@ -122,6 +122,15 @@ export default function Layout() {
                 )}
                 <span className="header-profile-name">{profile?.name ?? 'Profil'}</span>
               </Link>
+              <button
+                type="button"
+                className="header-logout"
+                aria-label="Keluar"
+                title="Keluar"
+                onClick={handleSignOut}
+              >
+                <Icon name="logout" size={20} />
+              </button>
             </div>
           </>
         ) : (
@@ -154,28 +163,7 @@ export default function Layout() {
         <p>
           <strong>SINEVERSE</strong> — Your World of Filmmaking
         </p>
-        <p className="footer-sub">
-          Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
-        </p>
-        <nav className="footer-nav" aria-label="Tautan footer">
-          <Link to="/tentang">Tentang SINEVERSE</Link>
-          <Link to="/akademi">Academy</Link>
-          <Link to="/komunitas">Community</Link>
-          <Link to="/proyek">Projects</Link>
-          <Link to="/showcase">Showcase</Link>
-          <Link to="/acara">Events</Link>
-          <Link to="/privasi">Kebijakan Privasi</Link>
-          <Link to="/syarat">Syarat dan Ketentuan</Link>
-        </nav>
-        {user && profile && (
-          <p className="footer-sub">
-            Masuk sebagai {profile.name ?? profile.email} ({profile.role})
-            {' · '}
-            <button type="button" className="link-button" onClick={handleSignOut}>
-              Keluar
-            </button>
-          </p>
-        )}
+        <p className="footer-sub">© SINEVERSE 2026</p>
       </footer>
 
       {user && (
