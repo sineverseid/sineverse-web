@@ -5,6 +5,7 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
+import { filmHue } from '../lib/brand'
 import { fmtDate, isMissingTableError, videoEmbed } from '../lib/guarded'
 import { fetchProfileNames, supabase } from '../lib/supabase'
 import type { Film, FilmReview } from '../lib/types'
@@ -105,7 +106,13 @@ export default function FilmDetailPage() {
         {currentFilm.description ?? ''} · {currentFilm.status} · {currentFilm.visibility}
         {avg !== null ? ` · Rata-rata ulasan: ${avg.toFixed(1)} / 5 (${reviews.length} ulasan)` : ' · Belum ada ulasan'}
       </p>
-      {currentFilm.poster_url && <img src={currentFilm.poster_url} alt={`Poster ${currentFilm.title}`} style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} />}
+      {currentFilm.poster_url ? (
+        <img src={currentFilm.poster_url} alt={`Poster ${currentFilm.title}`} style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} />
+      ) : (
+        <div className="film-cover" style={{ background: filmHue(currentFilm.id), borderRadius: 12, marginBottom: '1rem' }} aria-hidden="true">
+          <span className="film-cover-title">{currentFilm.title}</span>
+        </div>
+      )}
       {embed && embed.kind !== 'link' && embed.embedUrl ? (
         <div className="video-wrap">
           <iframe src={embed.embedUrl} title={`Film: ${currentFilm.title}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
