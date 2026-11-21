@@ -16,6 +16,11 @@ export interface WorkspaceNavEntry {
 export const MENTOR_NAV: WorkspaceNavEntry[] = [
   { to: '/mentor', label: 'Overview', icon: 'mentor', end: true },
   { to: '/mentor/course-builder', label: 'Course Builder', icon: 'academy' },
+  { to: '/mentor/materi', label: 'Materi', icon: 'book' },
+  { to: '/mentor/video', label: 'Video', icon: 'film' },
+  { to: '/mentor/kuis', label: 'Kuis', icon: 'exam' },
+  { to: '/mentor/rubrik', label: 'Rubrik', icon: 'grade' },
+  { to: '/mentor/pengumuman', label: 'Pengumuman', icon: 'announcement' },
 ]
 
 // Menu Admin Panel (master prompt §04): Dashboard, Pengguna, Acara &
@@ -28,5 +33,12 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin/moderasi', label: 'Moderasi', icon: 'admin' },
   { to: '/admin/diskusi-mentor', label: 'Diskusi Mentor', icon: 'message' },
   { to: '/admin/rps', label: 'Editor RPS', icon: 'rps' },
+  { to: '/admin/sections', label: 'Section & Lesson', icon: 'academy' },
+  { to: '/admin/enrollment', label: 'Enrollment', icon: 'user' },
+  { to: '/admin/tugas', label: 'Monitoring Tugas', icon: 'fileText' },
+  { to: '/admin/kuis', label: 'Kelola Kuis', icon: 'exam' },
+  { to: '/admin/sertifikat', label: 'Sertifikat', icon: 'certificate' },
+  { to: '/admin/materi', label: 'Materi', icon: 'book' },
+  { to: '/admin/analitik', label: 'Analytics', icon: 'chart' },
   { to: '/admin/pengaturan', label: 'Pengaturan', icon: 'settings' },
 ]
