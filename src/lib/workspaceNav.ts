@@ -9,17 +9,13 @@ export interface WorkspaceNavEntry {
   end?: boolean
 }
 
-// Menu Mentor Workspace (master prompt §09): Overview, Course Saya,
-// Course Builder, Antrean Penilaian, Diskusi, Siswa, Office Hours, Analitik, RPS.
+// Menu Mentor Workspace — sama seperti artefak: 2 tab, Overview dan
+// Course Builder. Penilaian kini menu utama (nav atas/bawah, mentor saja),
+// bukan tab workspace; RPS dibaca dari tautan di halaman Overview, dan
+// Siswa/Diskusi/Analitik/Office Hours dijangkau dari kartu di Overview.
 export const MENTOR_NAV: WorkspaceNavEntry[] = [
   { to: '/mentor', label: 'Overview', icon: 'mentor', end: true },
-  { to: '/mentor/siswa', label: 'Siswa', icon: 'user' },
-  { to: '/mentor/penilaian', label: 'Penilaian', icon: 'grade' },
-  { to: '/mentor/diskusi', label: 'Diskusi', icon: 'message' },
-  { to: '/mentor/analitik', label: 'Analitik', icon: 'chart' },
-  { to: '/jam-kantor', label: 'Office Hours', icon: 'clock' },
-  { to: '/admin/diskusi-mentor', label: 'Diskusi Admin', icon: 'message' },
-  { to: '/rps', label: 'RPS', icon: 'rps' },
+  { to: '/mentor/course-builder', label: 'Course Builder', icon: 'academy' },
 ]
 
 // Menu Admin Panel (master prompt §04): Dashboard, Pengguna, Acara &
