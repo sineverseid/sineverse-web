@@ -8,11 +8,17 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchSubmissions, supabase, uploadToBucket } from '../lib/supabase'
-import type { Assignment, Submission } from '../lib/types'
+import { fetchSubmissions, supabase, uploadToBucket, addSubmissionFiles, fetchRubricForAssignment, fetchSubmissionFiles } from '../lib/supabase'
+import type { Assignment, RubricWithCriteria, Submission, SubmissionFile } from '../lib/types'
 
 type AssignmentRow = Assignment & { due_date?: string | null; rubric?: string | null }
 type SubmissionRow = Submission & { is_draft?: boolean | null; version?: number | null; is_late?: boolean | null }
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 export default function AssignmentPage() {
   const { id } = useParams<{ id: string }>()
@@ -22,9 +28,12 @@ export default function AssignmentPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [content, setContent] = useState('')
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [rubric, setRubric] = useState<RubricWithCriteria | null>(null)
+  const [rubricNote, setRubricNote] = useState<string | null>(null)
+  const [filesBySubmission, setFilesBySubmission] = useState<Record<string, SubmissionFile[]>>({})
 
   const draftKey = user && id ? `sineverse-draft-${user.id}-${id}` : ''
 
@@ -52,11 +61,17 @@ export default function AssignmentPage() {
         setAssignment(data as AssignmentRow | null)
         const all = await subsP
         if (cancelled) return
-        setSubs(
-          (all as SubmissionRow[])
-            .filter((s) => s.assignment_id === assignmentId)
-            .sort((a, b) => +new Date(b.submitted_at) - +new Date(a.submitted_at)),
-        )
+        const mine = (all as SubmissionRow[])
+          .filter((s) => s.assignment_id === assignmentId)
+          .sort((a, b) => +new Date(b.submitted_at) - +new Date(a.submitted_at))
+        setSubs(mine)
+        void loadFilesFor(mine)
+        try {
+          const r = await fetchRubricForAssignment(assignmentId)
+          if (!cancelled) setRubric(r)
+        } catch {
+          if (!cancelled) setRubricNote('Rubrik terstruktur gagal dimuat, deskripsi di atas tetap bisa dibaca.')
+        }
         const saved = draftKey ? localStorage.getItem(draftKey) : null
         if (saved) setContent(saved)
       } catch (err) {
@@ -85,52 +100,110 @@ export default function AssignmentPage() {
     setNotice('Draft tersimpan di perangkat ini.')
   }
 
+  /** Muat daftar file lampiran tiap submission; gagal muat tidak merusak
+   *  halaman, tampilannya jatuh kembali ke tautan file_url tunggal. */
+  async function loadFilesFor(list: SubmissionRow[]) {
+    const entries = await Promise.all(
+      list.map(async (s) => {
+        try {
+          const rows = await fetchSubmissionFiles(s.id)
+          return [s.id, rows] as const
+        } catch {
+          return [s.id, []] as const
+        }
+      }),
+    )
+    setFilesBySubmission(Object.fromEntries(entries))
+  }
+
+  /** Daftar semua file lampiran satu submission; bila belum ada baris di
+   *  submission_files (pengiriman lama), pakai tautan file_url tunggal. */
+  function renderSubmissionFiles(s: SubmissionRow) {
+    const rows = filesBySubmission[s.id] ?? []
+    if (rows.length > 0) {
+      return (
+        <ul>
+          {rows.map((f) => (
+            <li key={f.id}>
+              <a
+                href={supabase.storage.from('submission-files').getPublicUrl(f.file_path).data.publicUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {f.file_name}
+              </a>
+              {f.file_size !== null ? ` (${fmtSize(f.file_size)})` : ''}
+            </li>
+          ))}
+        </ul>
+      )
+    }
+    if (s.file_url) {
+      return <p><a href={s.file_url} target="_blank" rel="noreferrer">Lihat file terkirim</a></p>
+    }
+    return null
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const currentAssignment = assignment
-    if (!user || !currentAssignment || (!content.trim() && !file)) {
+    if (!user || !currentAssignment || (!content.trim() && files.length === 0)) {
       setNotice('Isi jawaban teks atau pilih file untuk dikirim.')
       return
     }
     setBusy(true)
     setNotice(null)
     try {
-      let fileUrl: string | null = null
-      if (file) {
-        fileUrl = await uploadToBucket(
-          'submission-files',
-          `${user.id}/${currentAssignment.id}/v${nextVersion}-${file.name}`,
-          file,
-        )
-        if (!fileUrl) {
-          setNotice('Bucket submission-files belum tersedia — file tidak bisa diunggah. Kirim jawaban teks saja, atau minta admin membuat bucket-nya (lihat supabase/README.md).')
+      const uploaded: { path: string; name: string; size: number; url: string }[] = []
+      for (const f of files) {
+        const path = `${user.id}/${currentAssignment.id}/v${nextVersion}-${f.name}`
+        const url = await uploadToBucket('submission-files', path, f)
+        if (!url) {
+          setNotice('Bucket submission-files belum tersedia, file tidak bisa diunggah. Kirim jawaban teks saja, atau minta admin membuat bucket-nya (lihat supabase/README.md).')
           setBusy(false)
           return
         }
+        uploaded.push({ path, name: f.name, size: f.size, url })
       }
-      const { error: insErr } = await supabase.from('submissions').insert({
-        assignment_id: currentAssignment.id,
-        user_id: user.id,
-        content: content.trim() || null,
-        file_url: fileUrl,
-        version: nextVersion,
-        is_late: isLate,
-        is_draft: false,
-      })
+      const { data: inserted, error: insErr } = await supabase
+        .from('submissions')
+        .insert({
+          assignment_id: currentAssignment.id,
+          user_id: user.id,
+          content: content.trim() || null,
+          file_url: uploaded[0]?.url ?? null,
+          version: nextVersion,
+          is_late: isLate,
+          is_draft: false,
+        })
+        .select()
+        .single()
       if (insErr) throw insErr
+      let filesNote = ''
+      if (uploaded.length > 0 && inserted) {
+        try {
+          await addSubmissionFiles((inserted as { id: string }).id, uploaded.map((u) => ({
+            file_path: u.path,
+            file_name: u.name,
+            file_size: u.size,
+          })))
+        } catch {
+          filesNote = ' Daftar lampiran gagal disimpan, file pertama tetap bisa dibuka dari tautan pengiriman.'
+        }
+      }
       if (draftKey) localStorage.removeItem(draftKey)
       setContent('')
-      setFile(null)
+      setFiles([])
       const all = await fetchSubmissions(user.id)
-      setSubs(
-        (all as SubmissionRow[])
-          .filter((s) => s.assignment_id === assignment.id)
-          .sort((a, b) => +new Date(b.submitted_at) - +new Date(a.submitted_at)),
-      )
+      const mine = (all as SubmissionRow[])
+        .filter((s) => s.assignment_id === assignment.id)
+        .sort((a, b) => +new Date(b.submitted_at) - +new Date(a.submitted_at))
+      setSubs(mine)
+      void loadFilesFor(mine)
       setNotice(
-        isLate
-          ? `Terkirim sebagai versi ${nextVersion} — ditandai terlambat (lewat tenggat ${fmtDate(currentAssignment.due_date)}).`
-          : `Terkirim sebagai versi ${nextVersion}.`,
+        (isLate
+          ? `Terkirim sebagai versi ${nextVersion}, ditandai terlambat (lewat tenggat ${fmtDate(currentAssignment.due_date)}).`
+          : `Terkirim sebagai versi ${nextVersion}.`) + filesNote,
       )
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal mengirim tugas.')
@@ -154,6 +227,20 @@ export default function AssignmentPage() {
         <div className="lesson-content">
           {assignment.rubric ?? assignment.description ?? 'Belum ada deskripsi/rubrik untuk tugas ini.'}
         </div>
+        {rubric && rubric.criteria.length > 0 && (
+          <div>
+            <h3>{rubric.rubric.title}</h3>
+            <ul>
+              {rubric.criteria.map((c) => (
+                <li key={c.id}>
+                  <strong>{c.title}</strong> (maks. {c.max_score})
+                  {c.description ? `: ${c.description}` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {rubricNote && <p className="muted">{rubricNote}</p>}
       </section>
 
       {latest && (
@@ -165,7 +252,7 @@ export default function AssignmentPage() {
             {' · '}Nilai: {latest.score === null ? 'belum dinilai' : `${latest.score} / ${assignment.max_score}`}
           </p>
           {latest.feedback && <p>Umpan balik mentor: {latest.feedback}</p>}
-          {latest.file_url && <p><a href={latest.file_url} target="_blank" rel="noreferrer">Lihat file terkirim</a></p>}
+          {renderSubmissionFiles(latest)}
         </section>
       )}
 
@@ -177,9 +264,16 @@ export default function AssignmentPage() {
           <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={6} placeholder="Tulis jawabanmu di sini…" />
         </label>
         <label>
-          File jawaban (opsional)
-          <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          File jawaban (opsional, boleh lebih dari satu)
+          <input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
         </label>
+        {files.length > 0 && (
+          <ul>
+            {files.map((f, i) => (
+              <li key={`${f.name}-${i}`}>{f.name} ({fmtSize(f.size)})</li>
+            ))}
+          </ul>
+        )}
         <div className="form-actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? 'Mengirim…' : subs.length > 0 ? `Kirim Ulang (versi ${nextVersion})` : 'Kirim Tugas'}
@@ -202,6 +296,7 @@ export default function AssignmentPage() {
                 {s.is_late ? ' · Terlambat' : ''}
                 {' — '}Nilai: {s.score === null ? 'belum dinilai' : s.score}
                 {s.feedback ? ` · Umpan balik: ${s.feedback}` : ''}
+                {renderSubmissionFiles(s)}
               </li>
             ))}
           </ul>

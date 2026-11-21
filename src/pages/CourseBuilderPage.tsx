@@ -6,10 +6,18 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourse, fetchModules, invalidateCatalogCache, supabase, updateCourseAccessMode } from '../lib/supabase'
+import { fetchCourse, fetchModules, fetchRubricForAssignment, invalidateCatalogCache, saveRubric, supabase, updateCourseAccessMode } from '../lib/supabase'
 import type { Assignment, CompetencyExam, Course, Lesson, LessonResource, Module, Quiz } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
+
+/** Baris kriteria di editor rubrik (belum tentu sudah tersimpan). */
+interface RubricDraftCriterion {
+  key: string
+  title: string
+  description: string
+  max_score: number
+}
 
 export default function CourseBuilderPage() {
   const { id } = useParams<{ id: string }>()
@@ -61,6 +69,11 @@ export default function CourseBuilderPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [exams, setExams] = useState<CompetencyExam[]>([])
+  const [rubAsg, setRubAsg] = useState('')
+  const [rubTitle, setRubTitle] = useState('Rubrik Penilaian')
+  const [rubCriteria, setRubCriteria] = useState<RubricDraftCriterion[]>([])
+  const [rubLoading, setRubLoading] = useState(false)
+  const [rubSaving, setRubSaving] = useState(false)
 
   const canEdit = profile?.role === 'admin' || course?.mentor_id === user?.id
 
@@ -280,6 +293,74 @@ export default function CourseBuilderPage() {
     }
   }
 
+  async function loadRubric(assignmentId: string) {
+    setRubLoading(true)
+    try {
+      const found = await fetchRubricForAssignment(assignmentId)
+      if (found) {
+        setRubTitle(found.rubric.title)
+        setRubCriteria(
+          found.criteria.map((c, i) => ({
+            key: `${c.id}-${i}`,
+            title: c.title,
+            description: c.description ?? '',
+            max_score: c.max_score,
+          })),
+        )
+      } else {
+        setRubTitle('Rubrik Penilaian')
+        setRubCriteria([{ key: `new-${Date.now()}`, title: '', description: '', max_score: 10 }])
+      }
+    } catch {
+      setNotice('Rubrik gagal dimuat, coba lagi sebentar lagi.')
+      setRubCriteria([])
+    } finally {
+      setRubLoading(false)
+    }
+  }
+
+  function selectRubricAssignment(assignmentId: string) {
+    setRubAsg(assignmentId)
+    if (assignmentId) void loadRubric(assignmentId)
+    else setRubCriteria([])
+  }
+
+  async function saveRubricForm(e: FormEvent) {
+    e.preventDefault()
+    if (!rubAsg) {
+      setNotice('Pilih tugas dulu.')
+      return
+    }
+    const filled = rubCriteria.filter((c) => c.title.trim())
+    if (filled.length === 0) {
+      setNotice('Isi minimal satu kriteria dengan judul.')
+      return
+    }
+    for (const c of filled) {
+      if (!Number.isInteger(c.max_score) || c.max_score < 1) {
+        setNotice(`Nilai maks. kriteria "${c.title.trim()}" harus bilangan bulat minimal 1.`)
+        return
+      }
+    }
+    setRubSaving(true)
+    try {
+      await saveRubric(
+        rubAsg,
+        rubTitle.trim() || 'Rubrik Penilaian',
+        filled.map((c) => ({
+          title: c.title.trim(),
+          description: c.description.trim() || null,
+          max_score: c.max_score,
+        })),
+      )
+      ok('Rubrik penilaian disimpan.')
+    } catch (err) {
+      fail(err)
+    } finally {
+      setRubSaving(false)
+    }
+  }
+
   async function addQuiz(e: FormEvent) {
     e.preventDefault()
     if (!quizLesson) {
@@ -380,6 +461,12 @@ export default function CourseBuilderPage() {
       ok('Soal ujian ditambahkan.')
     }
   }
+
+  const rubricAssignment = assignments.find((a) => a.id === rubAsg)
+  const rubricTotalMax = rubCriteria.reduce(
+    (s, c) => s + (Number.isInteger(c.max_score) && c.max_score > 0 ? c.max_score : 0),
+    0,
+  )
 
   const selectStyle: React.CSSProperties = { fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }
 
@@ -536,6 +623,81 @@ export default function CourseBuilderPage() {
           <label>Nilai maks.<input type="number" min={1} value={asgMax} onChange={(e) => setAsgMax(Number(e.target.value))} required /></label>
           <label>Tenggat (opsional)<input type="datetime-local" value={asgDue} onChange={(e) => setAsgDue(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Buat Tugas</button>
+        </form>
+      </section>
+
+      <section className="section">
+        <h2>Rubrik Penilaian Tugas</h2>
+        <p className="muted">
+          Rubrik terstruktur per tugas, dipakai mentor saat menilai. Siswa melihat
+          kriteria dan nilai maks. tiap kriteria di halaman tugas.
+        </p>
+        <form className="form" onSubmit={saveRubricForm}>
+          <label>
+            Tugas
+            <select value={rubAsg} onChange={(e) => selectRubricAssignment(e.target.value)} required style={selectStyle}>
+              <option value="">— Pilih tugas —</option>
+              {assignments.map((a) => <option key={a.id} value={a.id}>{a.title} (maks. {a.max_score})</option>)}
+            </select>
+          </label>
+          {rubLoading && <p className="muted">Memuat rubrik…</p>}
+          {rubAsg && !rubLoading && (
+            <>
+              <label>Judul rubrik<input value={rubTitle} onChange={(e) => setRubTitle(e.target.value)} /></label>
+              {rubCriteria.map((c, idx) => (
+                <div key={c.key}>
+                  <label>
+                    Kriteria {idx + 1} — judul
+                    <input
+                      value={c.title}
+                      onChange={(e) => setRubCriteria((prev) => prev.map((p) => (p.key === c.key ? { ...p, title: e.target.value } : p)))}
+                      placeholder="Contoh: Ketepatan isi"
+                    />
+                  </label>
+                  <label>
+                    Deskripsi kriteria
+                    <input
+                      value={c.description}
+                      onChange={(e) => setRubCriteria((prev) => prev.map((p) => (p.key === c.key ? { ...p, description: e.target.value } : p)))}
+                      placeholder="Apa yang dinilai pada kriteria ini"
+                    />
+                  </label>
+                  <label>
+                    Nilai maks.
+                    <input
+                      type="number"
+                      min={1}
+                      value={c.max_score}
+                      onChange={(e) => setRubCriteria((prev) => prev.map((p) => (p.key === c.key ? { ...p, max_score: Number(e.target.value) } : p)))}
+                    />
+                  </label>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setRubCriteria((prev) => prev.filter((p) => p.key !== c.key))}>
+                    Hapus kriteria
+                  </button>
+                </div>
+              ))}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setRubCriteria((prev) => [...prev, { key: `new-${Date.now()}-${prev.length}`, title: '', description: '', max_score: 10 }])}
+                >
+                  Tambah Kriteria
+                </button>
+              </div>
+              {rubricAssignment && (
+                <p className="muted">
+                  Total maks. kriteria: {rubricTotalMax}
+                  {rubricTotalMax > rubricAssignment.max_score
+                    ? `, melebihi nilai maks. tugas (${rubricAssignment.max_score}), nilai akhir akan dibatasi ke nilai maks. tugas.`
+                    : '.'}
+                </p>
+              )}
+              <button type="submit" className="btn btn-primary" disabled={rubSaving}>
+                {rubSaving ? 'Menyimpan…' : 'Simpan Rubrik'}
+              </button>
+            </>
+          )}
         </form>
       </section>
 

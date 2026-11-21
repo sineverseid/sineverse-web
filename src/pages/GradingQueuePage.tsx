@@ -7,8 +7,8 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchCourses, sendNotification, supabase } from '../lib/supabase'
-import type { Assignment, Course, Submission } from '../lib/types'
+import { fetchCourses, fetchRubricForAssignment, fetchRubricScores, saveRubricScores, sendNotification, supabase } from '../lib/supabase'
+import type { Assignment, Course, RubricWithCriteria, Submission } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 
@@ -29,6 +29,10 @@ export default function GradingQueuePage() {
   const [feedback, setFeedback] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [rubricByAssignment, setRubricByAssignment] = useState<Record<string, RubricWithCriteria | null>>({})
+  const [rubricLoadingId, setRubricLoadingId] = useState<string | null>(null)
+  const [criterionScores, setCriterionScores] = useState<Record<string, string>>({})
+  const [rubricNote, setRubricNote] = useState<string | null>(null)
 
   const isAdmin = profile?.role === 'admin'
   const isMentor = profile?.role === 'mentor' || isAdmin
@@ -39,6 +43,7 @@ export default function GradingQueuePage() {
       return
     }
     const currentUser = user
+    setRubricByAssignment({})
     try {
       // Semua data diambil dalam 6 query saja (bukan puluhan query berurutan
       // per course). Sebelumnya halaman ini memuat ~60 query satu per satu,
@@ -135,12 +140,75 @@ export default function GradingQueuePage() {
   }
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
+  /** Total sementara dari skor kriteria yang sedang diisi (belum dibatasi). */
+  function rubricTotal(row: QueueRow): number {
+    const r = rubricByAssignment[row.assignment.id]
+    if (!r) return 0
+    return r.criteria.reduce((s, c) => {
+      const v = parseInt(criterionScores[c.id] ?? '', 10)
+      return s + (Number.isNaN(v) ? 0 : v)
+    }, 0)
+  }
+
+  async function startGrading(row: QueueRow) {
+    setGradingId(row.submission.id)
+    setScore('')
+    setFeedback('')
+    setCriterionScores({})
+    setRubricNote(null)
+    let rubric = rubricByAssignment[row.assignment.id]
+    if (rubric === undefined) {
+      setRubricLoadingId(row.submission.id)
+      try {
+        rubric = await fetchRubricForAssignment(row.assignment.id)
+        setRubricByAssignment((prev) => ({ ...prev, [row.assignment.id]: rubric ?? null }))
+      } catch {
+        setRubricNote('Rubrik gagal dimuat, penilaian memakai skor tunggal.')
+        setRubricByAssignment((prev) => ({ ...prev, [row.assignment.id]: null }))
+        rubric = null
+      } finally {
+        setRubricLoadingId(null)
+      }
+    }
+    if (rubric && rubric.criteria.length > 0) {
+      try {
+        const existing = await fetchRubricScores(row.submission.id)
+        const prefill: Record<string, string> = {}
+        for (const s of existing) prefill[s.criterion_id] = String(s.score)
+        setCriterionScores(prefill)
+      } catch {
+        // Skor lama tidak termuat, mentor mengisi dari nol.
+      }
+    }
+  }
+
   async function handleGrade(e: FormEvent, row: QueueRow) {
     e.preventDefault()
-    const value = Number(score)
-    if (Number.isNaN(value) || value < 0 || value > row.assignment.max_score) {
-      setNotice(`Skor harus antara 0 dan ${row.assignment.max_score}.`)
-      return
+    const rubric = rubricByAssignment[row.assignment.id]
+    let value: number
+    let parsed: { criterion_id: string; score: number }[] = []
+    if (rubric && rubric.criteria.length > 0) {
+      for (const c of rubric.criteria) {
+        const raw = (criterionScores[c.id] ?? '').trim()
+        if (raw === '') {
+          setNotice(`Isi skor untuk kriteria "${c.title}".`)
+          return
+        }
+        const v = Number(raw)
+        if (!Number.isInteger(v) || v < 0 || v > c.max_score) {
+          setNotice(`Skor "${c.title}" harus bilangan bulat antara 0 dan ${c.max_score}.`)
+          return
+        }
+        parsed.push({ criterion_id: c.id, score: v })
+      }
+      // Total = jumlah skor kriteria, dibatasi ke nilai maks. tugas.
+      value = Math.min(parsed.reduce((s, p) => s + p.score, 0), row.assignment.max_score)
+    } else {
+      value = Number(score)
+      if (Number.isNaN(value) || value < 0 || value > row.assignment.max_score) {
+        setNotice(`Skor harus antara 0 dan ${row.assignment.max_score}.`)
+        return
+      }
     }
     const { error: updErr } = await supabase
       .from('submissions')
@@ -149,6 +217,14 @@ export default function GradingQueuePage() {
     if (updErr) {
       setNotice('Gagal menyimpan nilai. Coba lagi sebentar lagi.')
       return
+    }
+    let rubricScoresNote = ''
+    if (parsed.length > 0) {
+      try {
+        await saveRubricScores(row.submission.id, parsed)
+      } catch {
+        rubricScoresNote = ' Skor per kriteria gagal disimpan, nilai total tetap tersimpan.'
+      }
     }
     setSaving(true)
     // Beri tahu siswa (best-effort; gagal kirim tidak membatalkan nilai).
@@ -159,10 +235,11 @@ export default function GradingQueuePage() {
       `Nilai kamu: ${value} / ${row.assignment.max_score}.`,
       { assignment_id: row.assignment.id },
     ).catch(() => undefined)
-    setNotice(`Submission ${row.studentName} dinilai: ${value}.`)
+    setNotice(`Submission ${row.studentName} dinilai: ${value}.${rubricScoresNote}`)
     setGradingId(null)
     setScore('')
     setFeedback('')
+    setCriterionScores({})
     await load()
     setSaving(false)
   }
@@ -192,10 +269,43 @@ export default function GradingQueuePage() {
               )}
               {gradingId === row.submission.id ? (
                 <form className="form" onSubmit={(e) => handleGrade(e, row)}>
-                  <label>
-                    Skor (maks. {row.assignment.max_score})
-                    <input type="number" min={0} max={row.assignment.max_score} value={score} onChange={(e) => setScore(e.target.value)} required />
-                  </label>
+                  {rubricNote && <p className="muted">{rubricNote}</p>}
+                  {(() => {
+                    const r = rubricByAssignment[row.assignment.id]
+                    if (rubricLoadingId === row.submission.id) {
+                      return <p className="muted">Memuat rubrik…</p>
+                    }
+                    if (r && r.criteria.length > 0) {
+                      return (
+                        <>
+                          <p className="muted">{r.rubric.title}</p>
+                          {r.criteria.map((c) => (
+                            <label key={c.id}>
+                              {c.title} (maks. {c.max_score})
+                              <input
+                                type="number"
+                                min={0}
+                                max={c.max_score}
+                                step={1}
+                                value={criterionScores[c.id] ?? ''}
+                                onChange={(e) => setCriterionScores((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                required
+                              />
+                            </label>
+                          ))}
+                          <p className="muted">
+                            Total sementara: {Math.min(rubricTotal(row), row.assignment.max_score)} / {row.assignment.max_score}
+                          </p>
+                        </>
+                      )
+                    }
+                    return (
+                      <label>
+                        Skor (maks. {row.assignment.max_score})
+                        <input type="number" min={0} max={row.assignment.max_score} value={score} onChange={(e) => setScore(e.target.value)} required />
+                      </label>
+                    )
+                  })()}
                   <label>
                     Umpan balik
                     <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3} placeholder="Apa yang bagus, apa yang bisa diperbaiki…" />
@@ -206,7 +316,7 @@ export default function GradingQueuePage() {
                   </div>
                 </form>
               ) : (
-                <button type="button" className="btn btn-primary btn-small" onClick={() => { setGradingId(row.submission.id); setScore(''); setFeedback('') }}>
+                <button type="button" className="btn btn-primary btn-small" onClick={() => void startGrading(row)}>
                   Nilai
                 </button>
               )}

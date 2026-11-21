@@ -28,6 +28,7 @@ import {
   markLessonCompleted,
   markLessonStarted,
   postDiscussion,
+  sendNotification,
   supabase,
 } from '../lib/supabase'
 import { isMissingTableError } from '../lib/guarded'
@@ -75,6 +76,7 @@ export default function LessonDetailPage() {
   const [saving, setSaving] = useState(false)
 
   const [newPost, setNewPost] = useState('')
+  const [discussionQuery, setDiscussionQuery] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [replyBody, setReplyBody] = useState('')
   const [posting, setPosting] = useState(false)
@@ -423,6 +425,20 @@ export default function LessonDetailPage() {
   )
   const replies = (parentId: string) => discussions.filter((d) => d.parent_id === parentId)
 
+  // Pencarian diskusi (client-side, tidak mengubah fetch): cocok bila isi
+  // atau nama penulis thread cocok, atau bila ada balasan di thread itu
+  // yang cocok. Urutan sematan dari topLevel dipertahankan.
+  const searchText = discussionQuery.trim().toLowerCase()
+  const visibleTopLevel = searchText
+    ? topLevel.filter((d) => {
+        const threadText = `${d.body} ${d.author?.name ?? ''}`.toLowerCase()
+        if (threadText.includes(searchText)) return true
+        return replies(d.id).some((r) =>
+          `${r.body} ${r.author?.name ?? ''}`.toLowerCase().includes(searchText),
+        )
+      })
+    : topLevel
+
   // Strip mencerminkan penyelesaian nyata, bukan sekadar konten ada:
   // WATCH/READ menyala saat lesson sudah dimulai (in_progress/completed;
   // in_progress dipakai sebagai proksi "sudah dibaca" karena pembacaan
@@ -521,6 +537,24 @@ export default function LessonDetailPage() {
       row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null }
       setDiscussions((d) => [...d, row])
       setNewPost('')
+      // Beri tahu mentor course (best-effort; gagal kirim tidak
+      // membatalkan kiriman dan tidak memblokir UI).
+      if (courseId) {
+        const body = newPost.trim().slice(0, 120)
+        void fetchCourse(courseId)
+          .then((course) => {
+            const mentorId = course?.mentor_id
+            if (!mentorId || mentorId === user.id) return
+            void sendNotification(
+              mentorId,
+              'discussion',
+              `Diskusi baru di "${l.title}"`,
+              body,
+              { lesson_id: l.id, discussion_id: row.id },
+            ).catch(() => undefined)
+          })
+          .catch(() => undefined)
+      }
     } catch {
       setNotice('Gagal mengirim diskusi. Periksa koneksi lalu coba lagi.')
     } finally {
@@ -539,6 +573,32 @@ export default function LessonDetailPage() {
       setDiscussions((d) => [...d, row])
       setReplyBody('')
       setReplyTo(null)
+      // Beri tahu penulis thread induk dan mentor course (best-effort;
+      // gagal kirim tidak membatalkan balasan dan tidak memblokir UI).
+      // Penerima dideduplikasi dan pengirim sendiri tidak pernah diberi tahu.
+      if (courseId) {
+        const parent = discussions.find((d) => d.id === parentId)
+        const body = replyBody.trim().slice(0, 120)
+        void fetchCourse(courseId)
+          .then((course) => {
+            const recipients = new Set<string>()
+            if (parent && parent.user_id !== user.id) recipients.add(parent.user_id)
+            const mentorId = course?.mentor_id
+            if (mentorId && mentorId !== user.id && mentorId !== parent?.user_id) {
+              recipients.add(mentorId)
+            }
+            for (const recipientId of recipients) {
+              void sendNotification(
+                recipientId,
+                'discussion',
+                `Balasan baru di "${l.title}"`,
+                body,
+                { lesson_id: l.id, discussion_id: row.id },
+              ).catch(() => undefined)
+            }
+          })
+          .catch(() => undefined)
+      }
     } catch {
       setNotice('Gagal mengirim balasan. Periksa koneksi lalu coba lagi.')
     } finally {
@@ -770,8 +830,26 @@ export default function LessonDetailPage() {
         ) : topLevel.length === 0 ? (
           <p className="empty">Belum ada diskusi. Jadilah yang pertama bertanya.</p>
         ) : (
-          <ul className="discussion-list">
-            {topLevel.map((d) => (
+          <>
+            <label>
+              Cari diskusi
+              <input
+                type="search"
+                value={discussionQuery}
+                onChange={(e) => setDiscussionQuery(e.target.value)}
+                placeholder="Cari diskusi…"
+              />
+            </label>
+            {searchText && (
+              <p className="muted">
+                Menampilkan {visibleTopLevel.length} dari {topLevel.length} diskusi
+              </p>
+            )}
+            {visibleTopLevel.length === 0 ? (
+              <p className="empty">Tidak ada diskusi yang cocok dengan pencarian.</p>
+            ) : (
+              <ul className="discussion-list">
+                {visibleTopLevel.map((d) => (
               <li key={d.id} className="discussion-item">
                 <p className="discussion-meta">
                   {d.author?.name ?? 'Anggota'} ·{' '}
@@ -887,8 +965,10 @@ export default function LessonDetailPage() {
                   </form>
                 )}
               </li>
-            ))}
-          </ul>
+                ))}
+              </ul>
+            )}
+          </>
         )}
         {user ? (
           <form className="form" onSubmit={handlePost}>
