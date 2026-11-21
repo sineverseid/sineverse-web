@@ -4,10 +4,17 @@ import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
+import AdminAnalyticsPage from './pages/AdminAnalyticsPage'
+import AdminAssignmentsPage from './pages/AdminAssignmentsPage'
+import AdminCertificatesPage from './pages/AdminCertificatesPage'
 import AdminDiscussionsPage from './pages/AdminDiscussionsPage'
+import AdminEnrollmentsPage from './pages/AdminEnrollmentsPage'
 import AdminEventsPage from './pages/AdminEventsPage'
 import AdminLibraryPage from './pages/AdminLibraryPage'
 import AdminPage from './pages/AdminPage'
+import AdminQuizzesPage from './pages/AdminQuizzesPage'
+import AdminResourcesPage from './pages/AdminResourcesPage'
+import AdminSectionsPage from './pages/AdminSectionsPage'
 import AdminSettingsPage from './pages/AdminSettingsPage'
 import AdminUsersPage from './pages/AdminUsersPage'
 import AboutPage from './pages/AboutPage'
@@ -33,7 +40,12 @@ import HomePage from './pages/HomePage'
 import LessonDetailPage from './pages/LessonDetailPage'
 import { LibraryDetailPage, LibraryPage } from './pages/LibraryPage'
 import LoginPage from './pages/LoginPage'
+import MentorAnnouncementsPage from './pages/MentorAnnouncementsPage'
+import MentorMaterialsPage from './pages/MentorMaterialsPage'
 import MentorPage from './pages/MentorPage'
+import MentorQuizzesPage from './pages/MentorQuizzesPage'
+import MentorRubricsPage from './pages/MentorRubricsPage'
+import MentorVideosPage from './pages/MentorVideosPage'
 import MentorAnalyticsPage from './pages/MentorAnalyticsPage'
 import MentorCourseBuilderPage from './pages/MentorCourseBuilderPage'
 import MentorDiscussionsPage from './pages/MentorDiscussionsPage'
@@ -193,6 +205,46 @@ export default function App() {
                 </RoleRoute>
               }
             />
+            <Route
+              path="mentor/materi"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorMaterialsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/video"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorVideosPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/kuis"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorQuizzesPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/rubrik"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorRubricsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="mentor/pengumuman"
+              element={
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorAnnouncementsPage />
+                </RoleRoute>
+              }
+            />
             {/* Admin Panel (Fase D) */}
             <Route
               path="admin"
@@ -255,6 +307,62 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin']}>
                   <AdminSettingsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/sections"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminSectionsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/enrollment"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminEnrollmentsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/tugas"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminAssignmentsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/kuis"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminQuizzesPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/sertifikat"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminCertificatesPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/materi"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminResourcesPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/analitik"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminAnalyticsPage />
                 </RoleRoute>
               }
             />
