@@ -10,7 +10,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
-import { fetchProfile, supabase } from '../lib/supabase'
+import { fetchProfile, supabase, appBaseUrl } from '../lib/supabase'
 import type { Profile } from '../lib/types'
 import {
   completePendingRegistration,
@@ -155,7 +155,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase.auth.signUp({
       email: input.email,
       password: input.password,
-      options: { data: { name: input.name, ...(input.metadata ?? {}) } },
+      options: {
+        data: { name: input.name, ...(input.metadata ?? {}) },
+        // Tujuan tautan konfirmasi: URL lengkap aplikasi. Tanpa ini
+        // Supabase mengembalikan ke origin saja (/sineverse-web/ hilang)
+        // dan pengguna tidak pernah kembali ke aplikasi.
+        emailRedirectTo: appBaseUrl(),
+      },
     })
     if (error) return { error: translateAuthError(error.message), needsConfirmation: false }
     // With email confirmation ON, there is no session until the user clicks
@@ -173,7 +179,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const resendConfirmation = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resend({ type: 'signup', email })
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: appBaseUrl() },
+    })
     return { error: error ? translateAuthError(error.message) : null }
   }, [])
 
