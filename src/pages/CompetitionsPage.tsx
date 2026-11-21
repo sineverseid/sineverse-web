@@ -17,34 +17,67 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 export function CompetitionsPage() {
+  const { user, profile } = useAuth()
   const [items, setItems] = useState<Competition[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [deadline, setDeadline] = useState('')
+
+  const canCreate = profile?.role === 'mentor' || profile?.role === 'admin'
+
+  async function load() {
+    try {
+      const { data, error: qErr } = await supabase.from('competitions').select('*').order('created_at', { ascending: false })
+      if (qErr) {
+        if (isMissingTableError(qErr)) {
+          setItems(null)
+          return
+        }
+        throw qErr
+      }
+      setItems((data ?? []) as Competition[])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat kompetisi.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
-    async function load() {
-      try {
-        const { data, error: qErr } = await supabase.from('competitions').select('*').order('created_at', { ascending: false })
-        if (qErr) {
-          if (isMissingTableError(qErr)) {
-            if (!cancelled) setItems(null)
-            return
-          }
-          throw qErr
-        }
-        if (!cancelled) setItems((data ?? []) as Competition[])
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat kompetisi.')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
+    void (async () => {
+      if (cancelled) return
+      await load()
+    })()
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !title.trim()) return
+    const { error: insErr } = await supabase.from('competitions').insert({
+      title: title.trim(),
+      description: description.trim() || null,
+      status: 'draft',
+      deadline: deadline ? new Date(deadline).toISOString() : null,
+      created_by: user.id,
+    })
+    if (insErr) {
+      setNotice(insErr.message)
+      return
+    }
+    setNotice('Kompetisi dibuat sebagai draf. Atur kategori, kriteria, dan juri dari halaman detail, lalu ubah status menjadi "dibuka".')
+    setTitle('')
+    setDescription('')
+    setDeadline('')
+    await load()
+  }
 
   if (loading) return <div className="page"><p className="muted">Memuat kompetisi…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -57,6 +90,31 @@ export function CompetitionsPage() {
         title="Kompetisi"
         subtitle="Kompetisi dan festival film pelajar — kirim karyamu dan menangkan sertifikat."
       />
+      {notice && <p className="notice-box">{notice}</p>}
+      {canCreate && (
+        <section className="section">
+          <h2>Buat Kompetisi</h2>
+          <p className="muted">
+            Mentor dan admin dapat membuat kompetisi. Kompetisi baru berstatus draf — kategori,
+            kriteria penilaian, dan panel juri diatur dari halaman detail sebelum dibuka.
+          </p>
+          <form className="form" onSubmit={handleCreate}>
+            <label>
+              Judul kompetisi
+              <input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Mis. Lomba Film Pendek SINEVERSE 2026" />
+            </label>
+            <label>
+              Deskripsi
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+            </label>
+            <label>
+              Tenggat pengiriman karya
+              <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            </label>
+            <button type="submit" className="btn btn-primary">Buat Kompetisi (Draf)</button>
+          </form>
+        </section>
+      )}
       {items.length === 0 ? (
         <EmptyState message="Belum ada kompetisi." />
       ) : (

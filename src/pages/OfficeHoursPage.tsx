@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchProfileNames, supabase } from '../lib/supabase'
 import type { OfficeHour, OfficeHourBooking } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { MENTOR_NAV } from '../lib/workspaceNav'
 
 export default function OfficeHoursPage() {
   const { user, profile } = useAuth()
@@ -111,6 +113,7 @@ export default function OfficeHoursPage() {
   return (
     <div className="page">
       <h1>Office Hours</h1>
+      <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
       {hours.length === 0 ? (
         <p className="empty">Belum ada office hour yang dijadwalkan.</p>

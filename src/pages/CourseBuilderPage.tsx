@@ -8,6 +8,8 @@ import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourse, fetchLessons, fetchModules, supabase } from '../lib/supabase'
 import type { Assignment, CompetencyExam, Lesson, LessonResource, Module, Quiz } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { MENTOR_NAV } from '../lib/workspaceNav'
 
 export default function CourseBuilderPage() {
   const { id } = useParams<{ id: string }>()
@@ -310,6 +312,7 @@ export default function CourseBuilderPage() {
     <div className="page">
       <Link to="/mentor" className="back-link">← Mentor Workspace</Link>
       <h1>Course Builder — {currentCourse.title}</h1>
+      <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">

@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchProfileNames, supabase } from '../lib/supabase'
 import type { AdminDiscussion, AdminDiscussionReply } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { ADMIN_NAV, MENTOR_NAV } from '../lib/workspaceNav'
 
 export default function AdminDiscussionsPage() {
   const { user, profile } = useAuth()
@@ -116,6 +118,7 @@ export default function AdminDiscussionsPage() {
   return (
     <div className="page">
       <h1>Diskusi Admin ↔ Mentor</h1>
+      <WorkspaceNav entries={isAdmin ? ADMIN_NAV : MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
       {isAdmin && (
         <form className="form" onSubmit={handleStart}>

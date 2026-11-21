@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { logAudit, supabase } from '../lib/supabase'
 import type { AuditLogRow, DiscussionReport, ModerationReport } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { ADMIN_NAV } from '../lib/workspaceNav'
 
 export default function ModerationPage() {
   const { user, profile } = useAuth()
@@ -86,6 +88,7 @@ export default function ModerationPage() {
   return (
     <div className="page">
       <h1>Moderasi &amp; Audit Log</h1>
+      <WorkspaceNav entries={ADMIN_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">

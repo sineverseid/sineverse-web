@@ -11,6 +11,8 @@ import { BRAND, GRADEBOOK_WEIGHTS, PASSING_GRADE } from '../lib/brand'
 import { isMissingTableError } from '../lib/guarded'
 import { logAudit, supabase } from '../lib/supabase'
 import type { Rps } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { ADMIN_NAV } from '../lib/workspaceNav'
 
 export default function RpsEditorPage() {
   const { user, profile } = useAuth()
@@ -111,6 +113,7 @@ export default function RpsEditorPage() {
   return (
     <div className="page page-narrow">
       <h1>Editor RPS — {BRAND.rpsCode}</h1>
+      <WorkspaceNav entries={ADMIN_NAV} />
       <p className="muted">Hanya admin yang bisa mengubah RPS. Mentor melihat versi read-only.</p>
       {notice && <p className="notice-box">{notice}</p>}
       <form className="form" onSubmit={handleSave}>

@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { fetchCourseLessons, fetchCourses, supabase } from '../lib/supabase'
 import type { Course, CourseClaim } from '../lib/types'
 import PageHeader from '../components/PageHeader'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { MENTOR_NAV } from '../lib/workspaceNav'
 
 interface MentorCourseRow {
   course: Course
@@ -123,6 +125,7 @@ export default function MentorPage() {
         title="Mentor Workspace"
         subtitle="Kursus yang kamu ampu, antrean penilaian, dan jadwal mentoring."
       />
+      <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
 
       {isSiswa && (

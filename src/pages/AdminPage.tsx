@@ -5,11 +5,12 @@
 // sekolah, usulan komunitas + hapus komunitas, pengumuman, progress lengkap.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
 import PageHeader from '../components/PageHeader'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { ADMIN_NAV } from '../lib/workspaceNav'
 
 interface ProgressRow {
   userId: string
@@ -293,14 +294,9 @@ export default function AdminPage() {
       <PageHeader
         icon="admin"
         title="Admin Panel"
-        subtitle={
-          <>
-            <Link to="/admin/moderasi">Moderasi &amp; Audit Log</Link> ·{' '}
-            <Link to="/admin/diskusi-mentor">Diskusi Admin ↔ Mentor</Link> ·{' '}
-            <Link to="/admin/rps">Editor RPS</Link>
-          </>
-        }
+        subtitle="Kelola pengguna, mentor, sekolah, course, komunitas, acara, dan platform."
       />
+      <WorkspaceNav entries={ADMIN_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">

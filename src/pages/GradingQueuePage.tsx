@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
 import { fetchCourseLessons, fetchCourses, sendNotification, supabase } from '../lib/supabase'
 import type { Assignment, Course, Submission } from '../lib/types'
+import WorkspaceNav from '../components/WorkspaceNav'
+import { MENTOR_NAV } from '../lib/workspaceNav'
 
 interface QueueRow {
   submission: Submission
@@ -126,6 +128,7 @@ export default function GradingQueuePage() {
   return (
     <div className="page">
       <h1>Antrean Penilaian</h1>
+      <WorkspaceNav entries={MENTOR_NAV} />
       <p className="muted">
         Diurutkan dari yang paling lama dikirim (tertua dulu). {rows.length} submission belum dinilai.
       </p>

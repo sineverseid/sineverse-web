@@ -13,34 +13,76 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 export function EventsPage() {
+  const { user, profile } = useAuth()
   const [events, setEvents] = useState<SineEvent[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [startsAt, setStartsAt] = useState('')
+  const [endsAt, setEndsAt] = useState('')
+  const [location, setLocation] = useState('')
+  const [capacity, setCapacity] = useState('')
+
+  const canCreate = profile?.role === 'mentor' || profile?.role === 'admin'
+
+  async function load() {
+    try {
+      const { data, error: qErr } = await supabase.from('events').select('*').order('starts_at', { ascending: true })
+      if (qErr) {
+        if (isMissingTableError(qErr)) {
+          setEvents(null)
+          return
+        }
+        throw qErr
+      }
+      setEvents((data ?? []) as SineEvent[])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat acara.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
-    async function load() {
-      try {
-        const { data, error: qErr } = await supabase.from('events').select('*').order('starts_at', { ascending: true })
-        if (qErr) {
-          if (isMissingTableError(qErr)) {
-            if (!cancelled) setEvents(null)
-            return
-          }
-          throw qErr
-        }
-        if (!cancelled) setEvents((data ?? []) as SineEvent[])
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat acara.')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
+    void (async () => {
+      if (cancelled) return
+      await load()
+    })()
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !title.trim()) return
+    const { error: insErr } = await supabase.from('events').insert({
+      title: title.trim(),
+      description: description.trim() || null,
+      kind: 'internal',
+      starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+      ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+      location: location.trim() || null,
+      capacity: capacity ? Number(capacity) : null,
+      created_by: user.id,
+    })
+    if (insErr) {
+      setNotice(insErr.message)
+      return
+    }
+    setNotice('Acara dibuat. Tambahkan sesi/rundown dari halaman detail acara.')
+    setTitle('')
+    setDescription('')
+    setStartsAt('')
+    setEndsAt('')
+    setLocation('')
+    setCapacity('')
+    await load()
+  }
 
   if (loading) return <div className="page"><p className="muted">Memuat acara…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -53,6 +95,40 @@ export function EventsPage() {
         title="Acara"
         subtitle="Workshop, screening, webinar, dan festival film pelajar."
       />
+      {notice && <p className="notice-box">{notice}</p>}
+      {canCreate && (
+        <section className="section">
+          <h2>Buat Acara</h2>
+          <p className="muted">Mentor dan admin dapat membuat acara internal (workshop, screening, webinar, festival).</p>
+          <form className="form" onSubmit={handleCreate}>
+            <label>
+              Judul acara
+              <input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Mis. Workshop Sinematografi Dasar" />
+            </label>
+            <label>
+              Deskripsi
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+            </label>
+            <label>
+              Mulai
+              <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+            </label>
+            <label>
+              Selesai
+              <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+            </label>
+            <label>
+              Lokasi
+              <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Kota / daring" />
+            </label>
+            <label>
+              Kapasitas peserta (kosong = tanpa batas)
+              <input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} placeholder="Mis. 50" />
+            </label>
+            <button type="submit" className="btn btn-primary">Buat Acara</button>
+          </form>
+        </section>
+      )}
       {events.length === 0 ? (
         <EmptyState message="Belum ada acara." />
       ) : (
