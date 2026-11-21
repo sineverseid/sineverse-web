@@ -4,12 +4,17 @@
 // berhasil menampilkan pemberitahuan konfirmasi email, bukan sesi langsung.
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function RegisterPage() {
   const { signUp, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // Jalur pendaftaran dari halaman login: siswa atau mentor. Ini hanya
+  // konteks tampilan — akun dibuat lewat alur yang sama, dan lamaran mentor
+  // diajukan setelah masuk lewat Mentor Workspace (admin yang menyetujui).
+  const isMentorPath = searchParams.get('role') === 'mentor'
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -75,8 +80,15 @@ export default function RegisterPage() {
 
   return (
     <div className="page page-narrow">
-      <h1>Daftar ke SINEVERSE</h1>
-      <p className="muted">Buat akun untuk mulai belajar filmmaking.</p>
+      <h1>{isMentorPath ? 'Daftar sebagai Mentor (Pengajar)' : 'Daftar ke SINEVERSE'}</h1>
+      {isMentorPath ? (
+        <p className="muted">
+          Buat akun dulu, lalu ajukan lamaran mentor dari Mentor Workspace setelah masuk. Mentor
+          baru aktif mengajar setelah diverifikasi admin.
+        </p>
+      ) : (
+        <p className="muted">Buat akun untuk mulai belajar filmmaking.</p>
+      )}
       <form className="form" onSubmit={handleSubmit}>
         <label>
           Nama Lengkap
