@@ -234,6 +234,10 @@ export interface Community {
   cover_url: string | null
   created_by: string | null
   is_approved: boolean
+  // 011: apakah community sedang mencari pembimbing/mentor.
+  // Opsional karena baris yang diambil sebelum migrasi 011 diterapkan
+  // belum punya kolom ini (select * tidak mengembalikannya).
+  seeking_mentor?: boolean
   created_at: string
 }
 
@@ -427,7 +431,13 @@ export interface Film {
   poster_url: string | null
   visibility: 'public' | 'private'
   show_school: boolean
-  status: 'draft' | 'published'
+  status: 'draft' | 'published' | 'rejected'
+  // 011: penilaian admin saat film ditolak (null bila belum dinilai).
+  // Opsional karena baris yang diambil sebelum migrasi 011 diterapkan
+  // belum punya kolom-kolom ini.
+  reviewed_by?: string | null
+  review_note?: string | null
+  reviewed_at?: string | null
   created_at: string
 }
 
