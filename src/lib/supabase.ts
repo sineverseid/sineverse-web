@@ -5,6 +5,7 @@
 // Security in the database is what protects user data — never embed the
 // secret / service_role key in this app.
 import { createClient } from '@supabase/supabase-js'
+import { RPS_COURSE_ORDER } from './brand'
 import { isMissingTableError } from './guarded'
 import type {
   Assignment,
@@ -49,7 +50,22 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
 
 export async function updateProfile(
   userId: string,
-  patch: Partial<Pick<Profile, 'name' | 'phone' | 'city' | 'bio'>>,
+  patch: Partial<
+    Pick<
+      Profile,
+      | 'name'
+      | 'phone'
+      | 'city'
+      | 'bio'
+      | 'birth_date'
+      | 'gender'
+      | 'address'
+      | 'school'
+      | 'kelas'
+      | 'interests'
+      | 'photo_url'
+    >
+  >,
 ): Promise<Profile> {
   const { data, error } = await supabase
     .from('profiles')
@@ -66,12 +82,23 @@ export async function updateProfile(
 // ---------------------------------------------------------------------------
 
 export async function fetchCourses(): Promise<Course[]> {
-  const { data, error } = await supabase
-    .from('courses')
-    .select('*')
-    .order('title', { ascending: true })
+  const { data, error } = await supabase.from('courses').select('*')
   if (error) throw error
-  return (data ?? []) as Course[]
+  const rows = (data ?? []) as Course[]
+  // Urutan tampil = urutan kurikulum RPS (Semester 1), BUKAN alfabetis.
+  // Course seed mengikuti urutan RPS; course baru (di luar seed) tampil
+  // setelahnya, diurutkan berdasarkan judul.
+  const order = new Map(
+    (RPS_COURSE_ORDER as readonly string[]).map((id, i) => [id, i] as const),
+  )
+  return rows.sort((a, b) => {
+    const ia = order.get(a.id)
+    const ib = order.get(b.id)
+    if (ia !== undefined && ib !== undefined) return ia - ib
+    if (ia !== undefined) return -1
+    if (ib !== undefined) return 1
+    return a.title.localeCompare(b.title, 'id')
+  })
 }
 
 export async function fetchCourse(id: string): Promise<Course | null> {

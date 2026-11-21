@@ -18,6 +18,9 @@ export interface Profile {
   birth_date?: string | null
   gender?: string | null
   address?: string | null
+  /** Migrasi 010 — data pendaftaran artefak (jalur Anggota). */
+  school?: string | null
+  kelas?: string | null
   // Migration 005 (Crew Finder) — public-safe fields only; never email.
   skills?: string[] | null
   interests?: string[] | null
