@@ -1,4 +1,4 @@
-// SINEVERSE — shared layout: top nav (desktop), bottom navigation
+// SINEVERSE, shared layout: top nav (desktop), bottom navigation
 // (handphone), footer. Menu mengikuti artefak persis (App.tsx navItems):
 // 12 menu utama + Penilaian/Workspace (mentor saja) + Admin (admin saja).
 // Bottom nav 4 item + Lainnya, berbeda per peran. Notifikasi menjadi lonceng
@@ -23,7 +23,7 @@ type NavEntry = {
   roles?: Role[]
 }
 
-// Menu utama — sama persis dengan navItems artefak (urutan dan label).
+// Menu utama, sama persis dengan navItems artefak (urutan dan label).
 const NAV_ITEMS: NavEntry[] = [
   { to: '/', label: 'Beranda', icon: 'home', end: true },
   { to: '/akademi', label: 'Academy', icon: 'academy' },
@@ -37,9 +37,9 @@ const NAV_ITEMS: NavEntry[] = [
   { to: '/pustaka', label: 'Library', icon: 'library' },
   { to: '/mentors', label: 'Mentors', icon: 'mentor' },
   { to: '/portofolio', label: 'Portofolio', icon: 'portfolio' },
-  // Menu khusus peran (artefak): Penilaian + Workspace hanya mentor.
-  { to: '/mentor/penilaian', label: 'Penilaian', icon: 'grade', roles: ['mentor'] },
-  { to: '/mentor', label: 'Workspace', icon: 'mentor', roles: ['mentor'] },
+  // Menu khusus peran (artefak): Penilaian + Workspace mentor dan admin.
+  { to: '/mentor/penilaian', label: 'Penilaian', icon: 'grade', roles: ['mentor', 'admin'] },
+  { to: '/mentor', label: 'Workspace', icon: 'mentor', roles: ['mentor', 'admin'] },
   // Admin hanya admin.
   { to: '/admin', label: 'Admin', icon: 'admin', roles: ['admin'] },
 ]
@@ -58,7 +58,7 @@ export default function Layout() {
   const [unread, setUnread] = useState<number | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
 
-  // (Lembar "Lainnya" ditutup lewat onClick di tiap tautan — tanpa effect.)
+  // (Lembar "Lainnya" ditutup lewat onClick di tiap tautan, tanpa effect.)
 
   useEffect(() => {
     if (!user) {
@@ -226,6 +226,23 @@ export default function Layout() {
                 <span>{e.label}</span>
               </NavLink>
             ))}
+          </div>
+          <div className="more-sheet-section">
+            <strong className="more-sheet-section-title">Tentang &amp; Ketentuan</strong>
+            <div className="more-sheet-grid">
+              <NavLink to="/tentang" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
+                <Icon name="book" size={20} />
+                <span>Tentang</span>
+              </NavLink>
+              <NavLink to="/privasi" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
+                <Icon name="book" size={20} />
+                <span>Privasi</span>
+              </NavLink>
+              <NavLink to="/syarat" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
+                <Icon name="book" size={20} />
+                <span>Syarat</span>
+              </NavLink>
+            </div>
           </div>
           <button type="button" className="btn btn-ghost btn-block" onClick={handleSignOut}>
             Keluar
