@@ -37,6 +37,7 @@ export type IconName =
   | 'crew'
   | 'book'
   | 'chart'
+  | 'growth'
 
 const PATHS: Record<IconName, ReactNode> = {
   home: (
@@ -242,6 +243,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <line x1="12" y1="20" x2="12" y2="10" />
       <line x1="18" y1="20" x2="18" y2="4" />
       <line x1="6" y1="20" x2="6" y2="16" />
+    </>
+  ),
+  growth: (
+    <>
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+      <polyline points="17 6 23 6 23 12" />
     </>
   ),
 }

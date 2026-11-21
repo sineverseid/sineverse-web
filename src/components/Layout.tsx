@@ -1,7 +1,10 @@
-// SINEVERSE — shared layout: top nav (desktop, berikon), bottom navigation
-// (handphone: 4–5 menu utama + Lainnya, sesuai artefak & master prompt),
-// footer. Bell notifikasi menampilkan jumlah belum dibaca (tabel
-// notifications, migrasi 008); bila tabel belum ada, lonceng tampil tanpa angka.
+// SINEVERSE — shared layout: top nav (desktop), bottom navigation
+// (handphone), footer. Menu mengikuti artefak persis (App.tsx navItems):
+// 12 menu utama + Penilaian/Workspace (mentor saja) + Admin (admin saja).
+// Bottom nav 4 item + Lainnya, berbeda per peran. Notifikasi menjadi lonceng
+// di header (bukan menu), Profil dijangkau dari header dan Portofolio.
+// Bell menampilkan jumlah belum dibaca (tabel notifications, migrasi 008);
+// bila tabel belum ada, lonceng tampil tanpa angka.
 // Saat belum login: header hanya logo + tombol Masuk (tanpa nav).
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -20,35 +23,33 @@ type NavEntry = {
   roles?: Role[]
 }
 
-// Menu utama (bottom navigation handphone + bagian depan top nav desktop).
-const NAV_MAIN: NavEntry[] = [
+// Menu utama — sama persis dengan navItems artefak (urutan dan label).
+const NAV_ITEMS: NavEntry[] = [
   { to: '/', label: 'Beranda', icon: 'home', end: true },
-  { to: '/akademi', label: 'Akademi', icon: 'academy' },
-  { to: '/proyek', label: 'Proyek', icon: 'project' },
-  { to: '/komunitas', label: 'Komunitas', icon: 'community' },
-  { to: '/acara', label: 'Acara', icon: 'event' },
-]
-
-// Menu lain (lembar "Lainnya" di handphone + lanjutan top nav desktop).
-const NAV_MORE: NavEntry[] = [
-  { to: '/showcase', label: 'Showcase', icon: 'showcase' },
-  { to: '/pustaka', label: 'Pustaka', icon: 'library' },
-  { to: '/kompetisi', label: 'Kompetisi', icon: 'trophy' },
-  { to: '/rps', label: 'RPS', icon: 'rps' },
-  { to: '/pengumuman', label: 'Pengumuman', icon: 'announcement' },
-  { to: '/portofolio', label: 'Portofolio', icon: 'portfolio' },
-  { to: '/mentors', label: 'Daftar Mentor', icon: 'mentor' },
+  { to: '/akademi', label: 'Academy', icon: 'academy' },
+  { to: '/proyek', label: 'Projects', icon: 'project' },
   { to: '/kru', label: 'Crew Finder', icon: 'crew' },
-  { to: '/sekolah', label: 'Sekolah & Klub', icon: 'school' },
-  { to: '/nilai', label: 'Nilai Saya', icon: 'grade' },
-  { to: '/tenggat', label: 'Tenggat Saya', icon: 'clock' },
-  { to: '/ujian', label: 'Ujian', icon: 'exam' },
-  { to: '/sertifikat', label: 'Sertifikat', icon: 'certificate' },
-  { to: '/notifikasi', label: 'Notifikasi', icon: 'bell' },
-  { to: '/profil', label: 'Profil', icon: 'user' },
-  { to: '/mentor', label: 'Mentor', icon: 'mentor', roles: ['mentor', 'admin'] },
+  { to: '/sekolah', label: 'Sekolah', icon: 'school' },
+  { to: '/komunitas', label: 'Community', icon: 'community' },
+  { to: '/showcase', label: 'Showcase', icon: 'showcase' },
+  { to: '/acara', label: 'Events', icon: 'event' },
+  { to: '/growth', label: 'Growth', icon: 'growth' },
+  { to: '/pustaka', label: 'Library', icon: 'library' },
+  { to: '/mentors', label: 'Mentors', icon: 'mentor' },
+  { to: '/portofolio', label: 'Portofolio', icon: 'portfolio' },
+  // Menu khusus peran (artefak): Penilaian + Workspace hanya mentor.
+  { to: '/mentor/penilaian', label: 'Penilaian', icon: 'grade', roles: ['mentor'] },
+  { to: '/mentor', label: 'Workspace', icon: 'mentor', roles: ['mentor'] },
+  // Admin hanya admin.
   { to: '/admin', label: 'Admin', icon: 'admin', roles: ['admin'] },
 ]
+
+// Bottom navigation handphone (artefak): 4 menu utama + Lainnya, per peran.
+const BOTTOM_NAV: Record<Role, string[]> = {
+  siswa: ['/', '/akademi', '/proyek', '/komunitas'],
+  mentor: ['/', '/akademi', '/mentor/penilaian', '/mentor'],
+  admin: ['/', '/akademi', '/admin', '/komunitas'],
+}
 
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
@@ -84,8 +85,10 @@ export default function Layout() {
 
   const role = (profile?.role ?? 'siswa') as Role
   const visible = (e: NavEntry) => !e.roles || e.roles.includes(role)
-  const moreEntries = NAV_MORE.filter(visible)
-  const allEntries = [...NAV_MAIN, ...moreEntries]
+  const allEntries = NAV_ITEMS.filter(visible)
+  const bottomEntries = BOTTOM_NAV[role]
+    .map((to) => NAV_ITEMS.find((e) => e.to === to))
+    .filter((e): e is NavEntry => !!e && visible(e))
 
   return (
     <div className={`app-shell${user ? ' has-bottomnav' : ''}`}>
@@ -95,17 +98,32 @@ export default function Layout() {
           <span className="brand-name">SINEVERSE</span>
         </Link>
         {user ? (
-          <nav className="topnav" aria-label="Navigasi utama">
-            {allEntries.map((e) => (
-              <NavLink key={e.to} to={e.to} end={e.end}>
-                <Icon name={e.icon} size={17} />
-                <span>{e.label}</span>
-                {e.to === '/notifikasi' && unread !== null && unread > 0 ? (
+          <>
+            <nav className="topnav" aria-label="Navigasi utama">
+              {allEntries.map((e) => (
+                <NavLink key={e.to} to={e.to} end={e.end}>
+                  <Icon name={e.icon} size={17} />
+                  <span>{e.label}</span>
+                </NavLink>
+              ))}
+            </nav>
+            <div className="header-actions">
+              <Link to="/notifikasi" className="header-bell" aria-label="Notifikasi">
+                <Icon name="bell" size={20} />
+                {unread !== null && unread > 0 ? (
                   <span className="nav-badge">{unread}</span>
                 ) : null}
-              </NavLink>
-            ))}
-          </nav>
+              </Link>
+              <Link to="/profil" className="header-profile" aria-label="Profil saya">
+                {profile?.photo_url ? (
+                  <img src={profile.photo_url} alt="" className="header-avatar" />
+                ) : (
+                  <Icon name="user" size={20} />
+                )}
+                <span className="header-profile-name">{profile?.name ?? 'Profil'}</span>
+              </Link>
+            </div>
+          </>
         ) : (
           <NavLink to="/login" className="nav-cta">
             Masuk
@@ -143,8 +161,9 @@ export default function Layout() {
           <Link to="/tentang">Tentang SINEVERSE</Link>
           <Link to="/akademi">Academy</Link>
           <Link to="/komunitas">Community</Link>
-          <Link to="/proyek">Film Projects</Link>
-          <Link to="/showcase">Showcase &amp; Events</Link>
+          <Link to="/proyek">Projects</Link>
+          <Link to="/showcase">Showcase</Link>
+          <Link to="/acara">Events</Link>
           <Link to="/privasi">Kebijakan Privasi</Link>
           <Link to="/syarat">Syarat dan Ketentuan</Link>
         </nav>
@@ -161,7 +180,7 @@ export default function Layout() {
 
       {user && (
         <nav className="bottomnav" aria-label="Navigasi bawah">
-          {NAV_MAIN.map((e) => (
+          {bottomEntries.map((e) => (
             <NavLink
               key={e.to}
               to={e.to}
@@ -207,7 +226,7 @@ export default function Layout() {
             </button>
           </div>
           <div className="more-sheet-grid">
-            {moreEntries.map((e) => (
+            {allEntries.map((e) => (
               <NavLink
                 key={e.to}
                 to={e.to}
@@ -217,9 +236,6 @@ export default function Layout() {
               >
                 <Icon name={e.icon} size={20} />
                 <span>{e.label}</span>
-                {e.to === '/notifikasi' && unread !== null && unread > 0 ? (
-                  <span className="nav-badge">{unread}</span>
-                ) : null}
               </NavLink>
             ))}
           </div>
