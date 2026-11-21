@@ -18,9 +18,14 @@ export const BRAND = {
   description:
     'Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.',
   gradebook: {
-    quizWeight: 0.2,
-    assignmentWeight: 0.5,
-    examWeight: 0.3,
+    // Tahap 3 (keputusan Arif 21 Nov 23:18, opsi 1): formula master prompt.
+    // Sama dengan weights baris RPS SVS-SEM1 di DB (migrasi 015) — keduanya
+    // harus selalu sama; GradebookPage membaca konstanta ini.
+    pretestWeight: 0.05,
+    posttestWeight: 0.15,
+    weeklyAssignmentWeight: 0.3,
+    finalPracticeWeight: 0.4,
+    discussionWeight: 0.1,
     passingGrade: 70,
   },
   rpsCode: 'SVS-SEM1',
@@ -75,10 +80,15 @@ export function courseCoverKey(title: string): string {
   return 'default'
 }
 
+// Bobot nilai akhir (Tahap 3, keputusan Arif 21 Nov 23:18, opsi 1 —
+// formula master prompt). Sama dengan weights baris RPS SVS-SEM1 di DB
+// (migrasi 015); GradebookPage membaca konstanta ini, RpsPage membaca DB.
 export const GRADEBOOK_WEIGHTS = {
-  kuis: 0.2,
-  tugas: 0.5,
-  ujian: 0.3,
+  pretest: 0.05,
+  posttest: 0.15,
+  tugasMingguan: 0.3,
+  tugasAkhir: 0.4,
+  diskusi: 0.1,
 } as const
 
 export const PASSING_GRADE = 70
