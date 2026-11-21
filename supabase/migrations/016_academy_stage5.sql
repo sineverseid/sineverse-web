@@ -171,9 +171,14 @@ begin
   -- nomor yang sama, coba nomor berikutnya (maks. 10 percobaan) dan gagal
   -- dengan jelas bila semuanya bentrok — jangan pernah mengembalikan
   -- serial yang tidak benar-benar ter-insert.
+  -- BUGFIX (22 Nov 2026, verifikasi live Tahap 5): kolom "serial" di bawah
+  -- ini AMBIGU karena RETURNS TABLE punya parameter output bernama "serial".
+  -- Postgres error 42702 membuat RPC gagal di SETIAP penerbitan. Kualifikasi
+  -- dengan nama tabel menyelesaikan konflik (juga untuk "type" sekalian).
   select count(*) into v_seq
   from public.certificates
-  where type = 'course' and serial like 'SVS-CRS-' || v_year || '-%';
+  where public.certificates.type = 'course'
+    and public.certificates.serial like 'SVS-CRS-' || v_year || '-%';
   v_serial := null;
   for i in 1..10 loop
     v_serial := 'SVS-CRS-' || v_year || '-' || lpad((v_seq + i)::text, 4, '0');
