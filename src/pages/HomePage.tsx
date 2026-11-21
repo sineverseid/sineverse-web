@@ -1,11 +1,14 @@
 // SINEVERSE — Beranda.
 // - Pengguna login: dashboard per peran (course saya, lanjutkan belajar,
 //   pengumuman) — dipertahankan dari versi sebelumnya.
-// - Pengunjung logout: landing page redesign (Master Prompt 21 Nov 2026):
-//   hero sinematik, Apa Itu SINEVERSE, Jelajahi Dunia Filmmaking
-//   (4 menu interaktif), ajakan bergabung.
+// - Pengunjung logout: landing page (ACUAN FINAL Arif 21 Nov 2026):
+//   hero foto + aksen diagonal mint + hanya tombol Daftar Gratis,
+//   Apa Itu 2 kolom (nilai LEARN/CREATE/COLLABORATE di dalam
+//   "Selengkapnya"), Jelajahi 2x2 sebagai kartu navigasi langsung,
+//   CTA horizontal (teks kiri, tombol kanan).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import '../index-homepage.css'
 import CourseCard from '../components/CourseCard'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
@@ -21,115 +24,76 @@ import {
 } from '../lib/supabase'
 import type { Announcement, Course, LessonProgress } from '../lib/types'
 
-// --- Data landing (teks dari Master Prompt redesign homepage) ---
+// --- Data landing ---
+
+// Slide carousel hero — path RELATIF './' dari public/.
+// (inline style & <img> tidak diproses Vite; path absolut '/...' salah
+// arah ke root domain. Yang butuh path absolut hanya url() di file CSS.)
+const HERO_SLIDES = [
+  { src: './home-hero-cinematic.webp', alt: 'Pelajar dengan kamera di tripod di lokasi syuting' },
+  { src: './home-hero-shoot.webp', alt: 'Pelajar SMA/SMK sedang syuting film pendek di luar ruangan' },
+  { src: './home-hero-screening.webp', alt: 'Pemutaran film malam di lapangan dengan layar besar' },
+]
 
 const VALUES = [
   {
+    img: './value-learn.webp',
     icon: 'book' as IconName,
     title: 'LEARN',
     desc: 'Akses pembelajaran perfilman gratis, mulai dari dasar hingga lanjutan.',
   },
   {
+    img: './value-create.webp',
     icon: 'film' as IconName,
     title: 'CREATE',
     desc: 'Kembangkan ide, kreativitas, dan kemampuan untuk menghasilkan karya film.',
   },
   {
+    img: './value-collaborate.webp',
     icon: 'community' as IconName,
     title: 'COLLABORATE',
     desc: 'Terhubung dengan filmmaker muda dari berbagai sekolah dan daerah.',
   },
 ]
 
-type ExploreId = 'academy' | 'community' | 'projects' | 'showcase'
-
+// Menu Jelajahi — kartu navigasi langsung ke halaman masing-masing
+// (sesuai acuan final: tanpa panel detail di bawah grid).
 const EXPLORE_MENUS: {
-  id: ExploreId
+  id: string
   icon: IconName
   name: string
   short: string
-  detail: string
-  features: string[]
-  ctaLabel: string
-  ctaTo: string
-  extraLink?: { label: string; to: string }
+  to: string
+  featured?: boolean
 }[] = [
   {
     id: 'academy',
     icon: 'book',
     name: 'Academy',
     short: 'Belajar filmmaking',
-    detail:
-      'Academy merupakan ruang pembelajaran SINEVERSE yang menyediakan materi edukasi mengenai berbagai aspek perfilman. Anggota dapat mempelajari teori, mengikuti pembelajaran, mengerjakan tugas praktik, dan berdiskusi bersama mentor.',
-    features: [
-      'Sinematografi dan videografi',
-      'Penulisan skenario',
-      'Penyutradaraan',
-      'Produksi film',
-      'Editing dan post-production',
-      'Video pembelajaran dan materi',
-      'Kuis dan tugas praktik',
-      'Diskusi setiap materi pembelajaran',
-    ],
-    ctaLabel: 'Mulai Belajar',
-    ctaTo: '/akademi',
+    to: '/akademi',
+    featured: true,
   },
   {
     id: 'community',
     icon: 'community',
     name: 'Community',
     short: 'Temukan komunitas',
-    detail:
-      'Community merupakan ruang interaksi bagi pelajar dan pecinta film untuk berdiskusi, berbagi pengalaman, bertukar ide, dan membangun jaringan dengan komunitas perfilman dari berbagai sekolah.',
-    features: [
-      'Forum diskusi perfilman',
-      'Komunitas berdasarkan minat',
-      'Klub film sekolah',
-      'Berbagi pengalaman dan pengetahuan',
-      'Tanya jawab',
-      'Membangun jaringan filmmaker muda',
-    ],
-    ctaLabel: 'Jelajahi Komunitas',
-    ctaTo: '/komunitas',
+    to: '/komunitas',
   },
   {
     id: 'projects',
     icon: 'project',
     name: 'Film Projects',
     short: 'Berkolaborasi membuat film',
-    detail:
-      'Film Projects merupakan ruang kolaborasi yang memungkinkan anggota SINEVERSE membangun proyek film bersama. Pelajar dapat mencari anggota kru, membentuk tim produksi, dan bekerja sama dengan anggota dari sekolah berbeda.',
-    features: [
-      'Membuat proyek film',
-      'Mencari anggota kru',
-      'Mencari sutradara, penulis, editor, sinematografer, dan peran lainnya',
-      'Kolaborasi lintas sekolah',
-      'Manajemen tugas produksi',
-      'Storyboard dan dokumen produksi',
-      'Pemantauan perkembangan proyek',
-    ],
-    ctaLabel: 'Temukan Proyek',
-    ctaTo: '/proyek',
+    to: '/proyek',
   },
   {
     id: 'showcase',
     icon: 'trophy',
     name: 'Showcase & Events',
     short: 'Pamerkan karya dan ikuti event',
-    detail:
-      'Showcase & Events merupakan ruang apresiasi bagi karya anggota SINEVERSE sekaligus pusat informasi berbagai kegiatan perfilman, seperti festival, kompetisi, workshop, dan kegiatan kreatif lainnya.',
-    features: [
-      'Galeri karya film anggota',
-      'Portofolio filmmaker',
-      'Informasi festival film',
-      'Kompetisi perfilman',
-      'Workshop dan kegiatan',
-      'Pendaftaran event',
-      'Sertifikat dan penghargaan',
-    ],
-    ctaLabel: 'Lihat Karya & Event',
-    ctaTo: '/showcase',
-    extraLink: { label: 'Lihat Acara', to: '/acara' },
+    to: '/showcase',
   },
 ]
 
@@ -143,7 +107,18 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
-  const [activeMenu, setActiveMenu] = useState<ExploreId>('academy')
+  // Carousel hero (landing logout): slide aktif + jeda saat hover/fokus.
+  const [slide, setSlide] = useState(0)
+  const [heroPaused, setHeroPaused] = useState(false)
+
+  useEffect(() => {
+    if (heroPaused) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const t = window.setInterval(() => {
+      setSlide((s) => (s + 1) % HERO_SLIDES.length)
+    }, 6000)
+    return () => window.clearInterval(t)
+  }, [heroPaused])
 
   useEffect(() => {
     let cancelled = false
@@ -238,11 +213,6 @@ export default function HomePage() {
   const myCourses = courses.filter((c) => enrolledIds.includes(c.id))
   const roleLabel =
     profile?.role === 'admin' ? 'Admin' : profile?.role === 'mentor' ? 'Mentor' : 'Siswa'
-  const active = EXPLORE_MENUS.find((m) => m.id === activeMenu) ?? EXPLORE_MENUS[0]
-
-  const scrollToExplore = () => {
-    document.getElementById('jelajahi')?.scrollIntoView({ behavior: 'smooth' })
-  }
 
   return (
     <div className="page">
@@ -340,30 +310,57 @@ export default function HomePage() {
         </>
       ) : (
         <>
-          {/* B. Hero — kartu navy dengan foto sinematik */}
-          <section className="landing-hero" aria-label="Perkenalan SINEVERSE">
-            <p className="landing-hero-eyebrow">YOUR WORLD OF FILMMAKING</p>
-            <h1 className="landing-hero-title">Temukan Dunia Kreatifmu di Balik Layar.</h1>
-            <p className="landing-hero-sub">
-              Platform belajar dan komunitas perfilman bagi pelajar SMA/SMK di seluruh Indonesia.
-            </p>
-            <div className="landing-hero-actions">
-              <Link to="/register" className="btn btn-hero">
-                Daftar Gratis
-                <span aria-hidden="true"> →</span>
-              </Link>
-              <button type="button" className="btn btn-hero-outline" onClick={scrollToExplore}>
-                Jelajahi SINEVERSE
-              </button>
+          {/* B. Hero — carousel sinematik 3 slide, aksen diagonal mint,
+              hanya tombol Daftar Gratis (sesuai acuan final). */}
+          <section
+            className="landing-hero landing-hero-carousel"
+            aria-label="Perkenalan SINEVERSE"
+            onMouseEnter={() => setHeroPaused(true)}
+            onMouseLeave={() => setHeroPaused(false)}
+            onFocus={() => setHeroPaused(true)}
+            onBlur={() => setHeroPaused(false)}
+          >
+            <div className="hero-slides" aria-hidden="true">
+              {HERO_SLIDES.map((s, i) => (
+                <div
+                  key={s.src}
+                  className={`hero-slide${i === slide ? ' active' : ''}`}
+                  style={{ backgroundImage: `url('${s.src}')` }}
+                />
+              ))}
             </div>
-            <div className="landing-hero-dots" aria-hidden="true">
-              <span className="dot active" />
-              <span className="dot" />
-              <span className="dot" />
+            <div className="hero-shade" aria-hidden="true" />
+            <div className="hero-accent" aria-hidden="true" />
+            <div className="hero-content">
+              <p className="landing-hero-eyebrow">YOUR WORLD OF FILMMAKING</p>
+              <h1 className="landing-hero-title">Temukan Dunia Kreatifmu di Balik Layar.</h1>
+              <p className="landing-hero-sub">
+                Platform belajar dan komunitas perfilman bagi pelajar SMA/SMK.
+              </p>
+              <div className="landing-hero-actions">
+                <Link to="/register" className="btn btn-hero">
+                  Daftar Gratis
+                  <span aria-hidden="true"> →</span>
+                </Link>
+              </div>
+            </div>
+            <div className="landing-hero-dots" role="group" aria-label="Pilih foto hero">
+              {HERO_SLIDES.map((s, i) => (
+                <button
+                  key={s.src}
+                  type="button"
+                  className={`dot${i === slide ? ' active' : ''}`}
+                  onClick={() => setSlide(i)}
+                  aria-label={`Foto ${i + 1}: ${s.alt}`}
+                  aria-current={i === slide}
+                />
+              ))}
             </div>
           </section>
 
-          {/* C. Apa Itu SINEVERSE? */}
+          {/* C. Apa Itu SINEVERSE? — 2 kolom (teks + ilustrasi) di semua
+              lebar, sesuai acuan. Nilai LEARN/CREATE/COLLABORATE pindah
+              ke dalam "Selengkapnya" agar tampilan awal sama seperti acuan. */}
           <section className="landing-about" aria-label="Apa Itu SINEVERSE?">
             <div className="landing-about-head">
               <h2>Apa Itu SINEVERSE?</h2>
@@ -388,17 +385,6 @@ export default function HomePage() {
                 className="landing-about-img"
               />
             </div>
-            <div className="landing-values">
-              {VALUES.map((v) => (
-                <div key={v.title} className="landing-value">
-                  <span className="landing-value-icon">
-                    <Icon name={v.icon} size={24} />
-                  </span>
-                  <h3>{v.title}</h3>
-                  <p>{v.desc}</p>
-                </div>
-              ))}
-            </div>
             {aboutOpen && (
               <div className="landing-about-more">
                 <p>
@@ -415,6 +401,20 @@ export default function HomePage() {
                   diceritakan. Melalui SINEVERSE, setiap pelajar memiliki kesempatan untuk
                   mengenal dunia perfilman dan mengembangkan potensinya.
                 </p>
+                <div className="landing-values">
+                  {VALUES.map((v) => (
+                    <div key={v.title} className="landing-value">
+                      <img
+                        className="landing-value-img"
+                        src={v.img}
+                        alt=""
+                        loading="lazy"
+                      />
+                      <h3>{v.title}</h3>
+                      <p>{v.desc}</p>
+                    </div>
+                  ))}
+                </div>
                 <h3>Latar Belakang</h3>
                 <p>
                   SINEVERSE dibangun dari keyakinan bahwa belajar film tidak seharusnya hanya
@@ -461,20 +461,16 @@ export default function HomePage() {
             )}
           </section>
 
-          {/* D. Jelajahi Dunia Filmmaking — 4 menu interaktif */}
+          {/* D. Jelajahi Dunia Filmmaking — grid 2x2 di semua lebar,
+              kartu navigasi langsung (sesuai acuan final). */}
           <section className="landing-explore" id="jelajahi" aria-label="Jelajahi Dunia Filmmaking">
             <h2>Jelajahi Dunia Filmmaking</h2>
-            <p className="muted">
-              Temukan ruang belajar, komunitas, dan kesempatan berkarya bersama SINEVERSE.
-            </p>
-            <div className="explore-grid" role="group" aria-label="Menu utama SINEVERSE">
+            <div className="explore-grid">
               {EXPLORE_MENUS.map((m) => (
-                <button
+                <Link
                   key={m.id}
-                  type="button"
-                  className={`explore-card${activeMenu === m.id ? ' active' : ''}`}
-                  onClick={() => setActiveMenu(m.id)}
-                  aria-pressed={activeMenu === m.id}
+                  to={m.to}
+                  className={`explore-card${m.featured ? ' featured' : ''}`}
                 >
                   <span className="explore-icon">
                     <Icon name={m.icon} size={28} />
@@ -484,45 +480,17 @@ export default function HomePage() {
                     <span className="explore-short">{m.short}</span>
                   </span>
                   <Icon name="chevronRight" size={20} className="explore-chevron" />
-                </button>
-              ))}
-            </div>
-            <div className="explore-detail" aria-live="polite">
-              <div className="explore-detail-head">
-                <span className="explore-icon">
-                  <Icon name={active.icon} size={28} />
-                </span>
-                <h3>{active.name}</h3>
-              </div>
-              <p>{active.detail}</p>
-              <ul className="explore-features">
-                {active.features.map((f) => (
-                  <li key={f}>
-                    <Icon name="check" size={16} />
-                    <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="explore-detail-actions">
-                <Link to={active.ctaTo} className="btn btn-primary">
-                  {active.ctaLabel}
                 </Link>
-                {active.extraLink && (
-                  <Link to={active.extraLink.to} className="btn btn-ghost">
-                    {active.extraLink.label}
-                  </Link>
-                )}
-              </div>
+              ))}
             </div>
           </section>
 
-          {/* E. Ajakan bergabung */}
+          {/* E. Ajakan bergabung — horizontal: teks kiri, tombol kanan. */}
           <section className="landing-cta" aria-label="Ajakan bergabung">
-            <h2>Satu Ruang, Banyak Cerita.</h2>
-            <p>
-              Bergabunglah bersama komunitas filmmaker muda Indonesia. Mulai perjalananmu untuk
-              belajar, berkarya, dan berkolaborasi bersama SINEVERSE.
-            </p>
+            <div className="landing-cta-text">
+              <h2>Satu Ruang, Banyak Cerita.</h2>
+              <p>Bergabunglah bersama komunitas filmmaker muda Indonesia.</p>
+            </div>
             <Link to="/register" className="btn btn-hero">
               Gabung Sekarang
               <span aria-hidden="true"> →</span>
