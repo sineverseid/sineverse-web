@@ -1,5 +1,7 @@
 // SINEVERSE — Growth (sama seperti artefak, GrowthView): 4 tab —
 // Rekomendasi, Kolaborasi Lanjutan, Integrasi, PWA & Kesiapan.
+// Tab Integrasi bersifat privat: hanya admin yang melihatnya
+// (siswa dan mentor tidak melihat tab itu sama sekali).
 // Semua isi dihitung dari data Supabase yang sebenarnya atau status
 // perangkat yang sebenarnya; tidak ada data karangan. Bila tidak ada
 // data, tampilkan empty state yang jujur.
@@ -32,6 +34,8 @@ function isStandalone(): boolean {
 
 export default function GrowthPage() {
   const { user, profile } = useAuth()
+  // Tab Integrasi bersifat privat: hanya admin yang melihatnya.
+  const isAdmin = profile?.role === 'admin'
   const [tab, setTab] = useState<GrowthTab>('rekomendasi')
   const [courses, setCourses] = useState<Course[]>([])
   const [enrolledIds, setEnrolledIds] = useState<Set<string>>(new Set())
@@ -141,11 +145,15 @@ export default function GrowthPage() {
       <PageHeader
         icon="growth"
         title="Growth"
-        subtitle="Rekomendasi belajar, kolaborasi lintas sekolah, integrasi, dan kesiapan aplikasi."
+        subtitle={
+          isAdmin
+            ? 'Rekomendasi belajar, kolaborasi lintas sekolah, integrasi, dan kesiapan aplikasi.'
+            : 'Rekomendasi belajar, kolaborasi lintas sekolah, dan kesiapan aplikasi.'
+        }
       />
 
       <div className="about-tabs" role="tablist" aria-label="Tab Growth">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.id !== 'integrasi' || isAdmin).map((t) => (
           <button
             key={t.id}
             type="button"
@@ -256,7 +264,7 @@ export default function GrowthPage() {
         </div>
       )}
 
-      {tab === 'integrasi' && (
+      {tab === 'integrasi' && isAdmin && (
         <div>
           <section className="section">
             <h2>Integrasi yang Terhubung</h2>
