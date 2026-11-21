@@ -6,7 +6,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { BRAND, RPS_COURSE_ORDER } from '../lib/brand'
+import { BRAND } from '../lib/brand'
+import { scoreCourses } from '../lib/recommendations'
 import { appBaseUrl, fetchCourses, fetchEnrollments, supabase } from '../lib/supabase'
 import type { Course, Project, School } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -20,17 +21,6 @@ const TABS: { id: GrowthTab; label: string }[] = [
   { id: 'integrasi', label: 'Integrasi' },
   { id: 'pwa', label: 'PWA & Kesiapan' },
 ]
-
-interface CourseRec {
-  course: Course
-  score: number
-  reason: string
-}
-
-function rpsIndex(courseId: string): number {
-  const idx = (RPS_COURSE_ORDER as readonly string[]).indexOf(courseId)
-  return idx === -1 ? 999 : idx
-}
 
 function isStandalone(): boolean {
   if (typeof window === 'undefined') return false
@@ -118,32 +108,18 @@ export default function GrowthPage() {
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
-  const recommendations = useMemo<CourseRec[]>(() => {
-    const interests = (profile?.interests ?? [])
-      .map((s) => s.toLowerCase())
-      .filter(Boolean)
-    const enrolledCategories = new Set(
-      courses.filter((c) => enrolledIds.has(c.id)).map((c) => (c.category ?? '').toLowerCase()),
-    )
-    return courses
-      .filter((c) => !enrolledIds.has(c.id))
-      .map((c) => {
-        let score = 0
-        let reason = 'Course Semester 1 — ikuti sesuai urutan kurikulum.'
-        const hay = `${c.title} ${c.description ?? ''} ${c.category ?? ''}`.toLowerCase()
-        const matched = interests.find((it) => it.length > 1 && hay.includes(it))
-        if (matched) {
-          score += 2
-          reason = `Sesuai minat kamu: ${matched}.`
-        } else if (enrolledCategories.has((c.category ?? '').toLowerCase()) && c.category) {
-          score += 1
-          reason = `Satu kategori dengan course yang sudah kamu ambil: ${c.category}.`
-        }
-        return { course: c, score, reason }
-      })
-      .sort((a, b) => b.score - a.score || rpsIndex(a.course.id) - rpsIndex(b.course.id))
-      .slice(0, 6)
-  }, [courses, enrolledIds, profile?.interests])
+  // Rekomendasi course — satu logika skor dengan Beranda siswa
+  // (lihat src/lib/recommendations.ts). Alasan dan urutannya sama seperti
+  // sebelumnya; Growth tidak menampilkan angka skornya.
+  const recommendations = useMemo(
+    () =>
+      scoreCourses(
+        courses,
+        enrolledIds,
+        (profile?.interests ?? []).map((s) => s.toLowerCase()).filter(Boolean),
+      ).slice(0, 6),
+    [courses, enrolledIds, profile?.interests],
+  )
 
   const openProjects = useMemo(
     () => projects.filter((p) => p.access_mode === 'open' && !myProjectIds.has(p.id)).slice(0, 4),

@@ -1,12 +1,16 @@
 // SINEVERSE — Beranda.
-// - Pengguna login: dashboard per peran (course saya, lanjutkan belajar,
-//   pengumuman) — dipertahankan dari versi sebelumnya.
+// - Pengguna login peran siswa: dashboard anggota seperti artefak
+//   (SiswaHome) — hero sapaan, Rekomendasi Untukmu, Kursus Aktifku,
+//   Feedback Terbaru, Tugas & Tenggat, Proyekku & Rekrutmen Kru,
+//   Event Mendatang. Semua data dari Supabase; empty state jujur.
+// - Pengguna login peran mentor/admin: dashboard lama dipertahankan
+//   (course saya, lanjutkan belajar, pengumuman).
 // - Pengunjung logout: landing page (ACUAN FINAL Arif 21 Nov 2026):
 //   hero foto + aksen diagonal mint + hanya tombol Daftar Gratis,
 //   Apa Itu 2 kolom (nilai LEARN/CREATE/COLLABORATE di dalam
 //   "Selengkapnya"), Jelajahi 2x2 sebagai kartu navigasi langsung,
 //   CTA horizontal (teks kiri, tombol kanan).
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import '../index-homepage.css'
 import CourseCard from '../components/CourseCard'
@@ -14,15 +18,27 @@ import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import { BRAND } from '../lib/brand'
-import { fmtDate, isMissingTableError } from '../lib/guarded'
+import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
+import { topRecommendations } from '../lib/recommendations'
 import {
+  fetchAssignmentsForLessons,
   fetchCourseLessons,
   fetchCourses,
   fetchEnrollments,
   fetchLessonProgress,
+  fetchSubmissions,
   supabase,
 } from '../lib/supabase'
-import type { Announcement, Course, LessonProgress } from '../lib/types'
+import type {
+  Announcement,
+  Assignment,
+  Course,
+  LessonProgress,
+  Project,
+  School,
+  SineEvent,
+  Submission,
+} from '../lib/types'
 
 // --- Data landing ---
 
@@ -110,6 +126,15 @@ export default function HomePage() {
   // Carousel hero (landing logout): slide aktif + jeda saat hover/fokus.
   const [slide, setSlide] = useState(0)
   const [heroPaused, setHeroPaused] = useState(false)
+  // Data dashboard siswa (diisi saat login; mentor/admin tidak memakainya).
+  const [projects, setProjects] = useState<Project[]>([])
+  const [myProjectIds, setMyProjectIds] = useState<Set<string>>(new Set())
+  const [schools, setSchools] = useState<School[]>([])
+  const [events, setEvents] = useState<SineEvent[]>([])
+  const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [lessonCourse, setLessonCourse] = useState<Map<string, string>>(new Map())
+  const [lessonTotals, setLessonTotals] = useState<Map<string, number>>(new Map())
 
   useEffect(() => {
     if (heroPaused) return
@@ -162,25 +187,67 @@ export default function HomePage() {
           if (cancelled) return
           setEnrolledIds(enr.map((e) => e.course_id))
           setProgress(prog)
-          // Lanjutkan belajar: lesson pertama yang belum selesai di course
-          // pertama yang sedang diambil.
+          // Lesson tiap course yang diambil: untuk "Lanjutkan belajar",
+          // hitung progres per course, dan daftar tugasnya.
+          const doneSet = new Set(
+            prog.filter((p) => p.status === 'completed').map((p) => p.lesson_id),
+          )
+          const lessonCourseMap = new Map<string, string>()
+          const lessonIds: string[] = []
+          const totals = new Map<string, number>()
+          let foundContinue = false
           for (const e of enr) {
             const lessons = await fetchCourseLessons(e.course_id)
-            const done = new Set(
-              prog.filter((p) => p.status === 'completed').map((p) => p.lesson_id),
-            )
-            const next = lessons.find((l) => !done.has(l.id))
-            if (next) {
-              if (cancelled) return
-              const course = all.find((c) => c.id === e.course_id)
-              setContinueTo({
-                courseId: e.course_id,
-                lessonId: next.id,
-                title: `${course?.title ?? 'Course'} — ${next.title}`,
-              })
-              break
+            totals.set(e.course_id, lessons.length)
+            for (const l of lessons) {
+              lessonCourseMap.set(l.id, e.course_id)
+              lessonIds.push(l.id)
+            }
+            if (!foundContinue) {
+              const next = lessons.find((l) => !doneSet.has(l.id))
+              if (next) {
+                foundContinue = true
+                const course = all.find((c) => c.id === e.course_id)
+                setContinueTo({
+                  courseId: e.course_id,
+                  lessonId: next.id,
+                  title: `${course?.title ?? 'Course'} — ${next.title}`,
+                })
+              }
             }
           }
+          if (cancelled) return
+          setLessonCourse(lessonCourseMap)
+          setLessonTotals(totals)
+          // Dashboard siswa: tugas, feedback, proyek, sekolah, event.
+          // Semua best-effort: tabel yang belum ada → daftar kosong.
+          const [assigns, subs, projRes, memRes, schRes, evRes] = await Promise.all([
+            fetchAssignmentsForLessons(lessonIds).catch(() => [] as Assignment[]),
+            fetchSubmissions(user.id).catch(() => [] as Submission[]),
+            supabase.from('projects').select('*').order('created_at', { ascending: false }),
+            supabase.from('project_members').select('project_id').eq('user_id', user.id),
+            supabase.from('schools').select('id,name').order('name'),
+            supabase.from('events').select('*').order('starts_at', { ascending: true }),
+          ])
+          if (cancelled) return
+          setAssignments(assigns)
+          setSubmissions(subs)
+          setProjects(
+            projRes.error && isMissingTableError(projRes.error)
+              ? []
+              : ((projRes.data ?? []) as Project[]),
+          )
+          setMyProjectIds(
+            new Set(
+              ((memRes.data ?? []) as { project_id: string }[]).map((m) => m.project_id),
+            ),
+          )
+          setSchools((schRes.data ?? []) as School[])
+          setEvents(
+            evRes.error && isMissingTableError(evRes.error)
+              ? []
+              : ((evRes.data ?? []) as SineEvent[]),
+          )
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat data.')
@@ -213,101 +280,123 @@ export default function HomePage() {
   const myCourses = courses.filter((c) => enrolledIds.includes(c.id))
   const roleLabel =
     profile?.role === 'admin' ? 'Admin' : profile?.role === 'mentor' ? 'Mentor' : 'Siswa'
+  const isSiswa = profile?.role !== 'mentor' && profile?.role !== 'admin'
 
   return (
     <div className="page">
       {user ? (
-        <>
-          <section className="hero">
-            <p className="hero-eyebrow">SINEVERSE</p>
-            <h1>Your World of Filmmaking</h1>
-            <p className="hero-sub">
-              Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
-            </p>
-            <p className="hero-slogan">{BRAND.slogan}</p>
-            <img
-              src="./home-hero-film-crew.webp"
-              alt="Kru film pelajar SINEVERSE di lokasi syuting"
-              className="hero-img"
-            />
-          </section>
-
-          <section className="section">
-            <h2>Selamat datang, {profile?.name ?? profile?.email ?? 'SINEVERSE'}</h2>
-            <p className="muted">
-              Peran: {roleLabel}
-              {profile?.city ? ` · ${profile.city}` : ''}
-            </p>
-            {continueTo && (
-              <div className="continue-card">
-                <p className="muted">Lanjutkan belajar</p>
-                <p className="continue-title">{continueTo.title}</p>
-                <Link to={`/lesson/${continueTo.lessonId}`} className="btn btn-primary">
-                  Lanjutkan
-                </Link>
-              </div>
-            )}
-            {enrolledIds.length > 0 && !continueTo && (
-              <p className="muted">Semua lesson di course kamu sudah selesai. Kerja bagus.</p>
-            )}
-          </section>
-
-          <section className="section">
-            <div className="section-head">
-              <h2>Course Saya</h2>
-              <Link to="/akademi">Lihat semua</Link>
-            </div>
-            {myCourses.length === 0 ? (
-              <p className="empty">
-                Kamu belum mengambil course apa pun.{' '}
-                <Link to="/akademi">Jelajahi Akademi</Link> untuk memulai.
+        isSiswa ? (
+          <SiswaHome
+            profileName={profile?.name ?? profile?.email ?? 'SINEVERSE'}
+            school={profile?.school ?? null}
+            kelas={profile?.kelas ?? null}
+            courses={courses}
+            myCourses={myCourses}
+            enrolledIds={enrolledIds}
+            progress={progress}
+            lessonCourse={lessonCourse}
+            lessonTotals={lessonTotals}
+            interests={profile?.interests ?? []}
+            projects={projects}
+            myProjectIds={myProjectIds}
+            schools={schools}
+            events={events}
+            submissions={submissions}
+            assignments={assignments}
+          />
+        ) : (
+          <>
+            <section className="hero">
+              <p className="hero-eyebrow">SINEVERSE</p>
+              <h1>Your World of Filmmaking</h1>
+              <p className="hero-sub">
+                Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
               </p>
-            ) : (
-              <ul className="course-list">
-                {myCourses.map((c) => (
-                  <CourseCard key={c.id} course={c} />
-                ))}
-              </ul>
-            )}
-          </section>
+              <p className="hero-slogan">{BRAND.slogan}</p>
+              <img
+                src="./home-hero-film-crew.webp"
+                alt="Kru film pelajar SINEVERSE di lokasi syuting"
+                className="hero-img"
+              />
+            </section>
 
-          <section className="section">
-            <div className="section-head">
-              <h2>Pengumuman</h2>
-              <Link to="/pengumuman">Lihat semua</Link>
-            </div>
-            {announcements === null ? (
-              <p className="empty">Pengumuman belum tersedia.</p>
-            ) : announcements.length === 0 ? (
-              <p className="empty">Belum ada pengumuman.</p>
-            ) : (
-              <ul className="discussion-list">
-                {announcements.map((a) => (
-                  <li key={a.id} className="discussion-item">
-                    <p className="discussion-meta">
-                      {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.created_at)}
-                    </p>
-                    <h3>{a.title}</h3>
-                    {a.body && <p>{a.body}</p>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+            <section className="section">
+              <h2>Selamat datang, {profile?.name ?? profile?.email ?? 'SINEVERSE'}</h2>
+              <p className="muted">
+                Peran: {roleLabel}
+                {profile?.city ? ` · ${profile.city}` : ''}
+              </p>
+              {continueTo && (
+                <div className="continue-card">
+                  <p className="muted">Lanjutkan belajar</p>
+                  <p className="continue-title">{continueTo.title}</p>
+                  <Link to={`/lesson/${continueTo.lessonId}`} className="btn btn-primary">
+                    Lanjutkan
+                  </Link>
+                </div>
+              )}
+              {enrolledIds.length > 0 && !continueTo && (
+                <p className="muted">Semua lesson di course kamu sudah selesai. Kerja bagus.</p>
+              )}
+            </section>
 
-          <section className="section">
-            <h2>Ringkasan</h2>
-            <p className="muted">
-              {myCourses.length} course diambil · {progress.filter((p) => p.status === 'completed').length}{' '}
-              lesson selesai
-            </p>
-            <p>
-              <Link to="/nilai">Lihat Nilai Saya</Link>
-              {' · '}
-              <Link to="/rps">Lihat RPS Semester 1</Link>
-            </p>
-          </section>
-        </>
+            <section className="section">
+              <div className="section-head">
+                <h2>Course Saya</h2>
+                <Link to="/akademi">Lihat semua</Link>
+              </div>
+              {myCourses.length === 0 ? (
+                <p className="empty">
+                  Kamu belum mengambil course apa pun.{' '}
+                  <Link to="/akademi">Jelajahi Akademi</Link> untuk memulai.
+                </p>
+              ) : (
+                <ul className="course-list">
+                  {myCourses.map((c) => (
+                    <CourseCard key={c.id} course={c} />
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="section">
+              <div className="section-head">
+                <h2>Pengumuman</h2>
+                <Link to="/pengumuman">Lihat semua</Link>
+              </div>
+              {announcements === null ? (
+                <p className="empty">Pengumuman belum tersedia.</p>
+              ) : announcements.length === 0 ? (
+                <p className="empty">Belum ada pengumuman.</p>
+              ) : (
+                <ul className="discussion-list">
+                  {announcements.map((a) => (
+                    <li key={a.id} className="discussion-item">
+                      <p className="discussion-meta">
+                        {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.created_at)}
+                      </p>
+                      <h3>{a.title}</h3>
+                      {a.body && <p>{a.body}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="section">
+              <h2>Ringkasan</h2>
+              <p className="muted">
+                {myCourses.length} course diambil · {progress.filter((p) => p.status === 'completed').length}{' '}
+                lesson selesai
+              </p>
+              <p>
+                <Link to="/nilai">Lihat Nilai Saya</Link>
+                {' · '}
+                <Link to="/rps">Lihat RPS Semester 1</Link>
+              </p>
+            </section>
+          </>
+        )
       ) : (
         <>
           {/* B. Hero — carousel sinematik 3 slide, aksen diagonal mint,
@@ -499,5 +588,331 @@ export default function HomePage() {
         </>
       )}
     </div>
+  )
+}
+
+// --- Dashboard anggota (siswa), seperti SiswaHome di artefak -----------
+
+interface SiswaHomeProps {
+  profileName: string
+  school: string | null
+  kelas: string | null
+  courses: Course[]
+  myCourses: Course[]
+  enrolledIds: string[]
+  progress: LessonProgress[]
+  lessonCourse: Map<string, string>
+  lessonTotals: Map<string, number>
+  interests: string[]
+  projects: Project[]
+  myProjectIds: Set<string>
+  schools: School[]
+  events: SineEvent[]
+  submissions: Submission[]
+  assignments: Assignment[]
+}
+
+function SiswaHome(props: SiswaHomeProps) {
+  const {
+    profileName,
+    school,
+    kelas,
+    courses,
+    myCourses,
+    enrolledIds,
+    progress,
+    lessonCourse,
+    lessonTotals,
+    interests,
+    projects,
+    myProjectIds,
+    schools,
+    events,
+    submissions,
+    assignments,
+  } = props
+
+  const firstName = profileName.trim().split(/\s+/)[0] || 'SINEVERSE'
+  const schoolParts: string[] = []
+  if (school) schoolParts.push(school)
+  if (kelas) schoolParts.push(`Kelas ${kelas}`)
+  const heroSub = schoolParts.length > 0
+    ? `${schoolParts.join(' • ')}. Hari ini mau belajar, berkarya, atau berkolaborasi apa?`
+    : 'Hari ini mau belajar, berkarya, atau berkolaborasi apa?'
+
+  const enrolledIdSet = useMemo(() => new Set(enrolledIds), [enrolledIds])
+
+  const recommendations = useMemo(
+    () => topRecommendations(courses, enrolledIdSet, projects, myProjectIds, interests, 3),
+    [courses, enrolledIdSet, projects, myProjectIds, interests],
+  )
+
+  const schoolName = useMemo(() => {
+    const byId = new Map(schools.map((s) => [s.id, s.name]))
+    return (id: string | null): string | null => (id ? (byId.get(id) ?? null) : null)
+  }, [schools])
+
+  const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses])
+  const assignmentById = useMemo(
+    () => new Map(assignments.map((a) => [a.id, a])),
+    [assignments],
+  )
+
+  // Feedback terbaru: submission yang sudah dinilai mentor.
+  const feedback = useMemo(
+    () =>
+      submissions
+        .filter((s) => s.feedback)
+        .sort((a, b) =>
+          (b.graded_at ?? b.submitted_at).localeCompare(a.graded_at ?? a.submitted_at),
+        )
+        .slice(0, 3),
+    [submissions],
+  )
+
+  // Tugas & tenggat: tugas dari course yang diikuti, tenggat terdekat dulu.
+  const tasks = useMemo(
+    () =>
+      [...assignments]
+        .sort((a, b) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999'))
+        .slice(0, 5),
+    [assignments],
+  )
+
+  // Proyekku (pemilik/anggota) + panggilan kru terbuka (bukan punyaku).
+  const myProjects = useMemo(
+    () => projects.filter((p) => myProjectIds.has(p.id)),
+    [projects, myProjectIds],
+  )
+  const openCrew = useMemo(
+    () =>
+      projects.filter((p) => p.access_mode === 'open' && !myProjectIds.has(p.id)).slice(0, 4),
+    [projects, myProjectIds],
+  )
+
+  // Event mendatang: starts_at ke depan, terdekat dulu.
+  // "Sekarang" ditangkap sekali saat komponen dipasang (bukan di useMemo).
+  const [now] = useState(() => Date.now())
+  const upcomingEvents = useMemo(() => {
+    return events
+      .filter((e) => e.starts_at && new Date(e.starts_at).getTime() >= now)
+      .sort((a, b) => (a.starts_at ?? '').localeCompare(b.starts_at ?? ''))
+      .slice(0, 3)
+  }, [events, now])
+
+  const doneCount = (courseId: string): number =>
+    progress.filter((p) => p.status === 'completed' && lessonCourse.get(p.lesson_id) === courseId)
+      .length
+
+  return (
+    <>
+      <section className="hero">
+        <p className="hero-eyebrow">YOUR WORLD OF FILMMAKING</p>
+        <h1>Halo, {firstName}!</h1>
+        <p className="hero-sub">{heroSub}</p>
+        <div className="hero-actions">
+          <Link to="/akademi" className="btn btn-primary">
+            Jelajahi Academy
+          </Link>
+          <Link to="/proyek" className="btn btn-outline-light">
+            Cari Proyek &amp; Kru
+          </Link>
+        </div>
+        {myCourses.length === 0 && (
+          <p className="hero-note">
+            Kamu belum mengikuti kursus. Mulai dari{' '}
+            <Link to="/akademi">katalog Academy</Link> — semua kursus inti gratis.
+          </p>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Rekomendasi Untukmu</h2>
+          <Link to="/growth">Buka Growth →</Link>
+        </div>
+        {recommendations.length === 0 ? (
+          <p className="empty">Tidak ada rekomendasi saat ini.</p>
+        ) : (
+          <ul className="rec-list">
+            {recommendations.map((r) => (
+              <li key={`${r.kind}-${r.id}`} className="rec-row">
+                <Link to={r.to}>
+                  <p className="rec-label">
+                    {r.kind === 'course' ? 'KURSUS' : 'PROYEK MENCARI KRU'} • SKOR {r.score}
+                  </p>
+                  <h3>{r.title}</h3>
+                  <p className="rec-desc">{r.description ?? r.reason}</p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Kursus Aktifku</h2>
+          <Link to="/akademi">Semua kursus →</Link>
+        </div>
+        {myCourses.length === 0 ? (
+          <div className="empty-card">
+            <h3>Belum ada kursus aktif</h3>
+            <p>Ikuti kursus pertamamu dari katalog Academy.</p>
+          </div>
+        ) : (
+          <ul className="course-list">
+            {myCourses.map((c) => {
+              const total = lessonTotals.get(c.id) ?? 0
+              const done = doneCount(c.id)
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0
+              return (
+                <li key={c.id} className="course-card">
+                  <Link to={`/course/${c.id}`}>
+                    <div className="course-card-body">
+                      <h3>{c.title}</h3>
+                      <p>
+                        {done}/{total} lesson selesai
+                      </p>
+                      <div
+                        className="progress-track"
+                        role="progressbar"
+                        aria-valuenow={pct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`Progres ${c.title}: ${pct} persen`}
+                      >
+                        <div className="progress-fill" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Feedback Terbaru</h2>
+        {feedback.length === 0 ? (
+          <div className="empty-card">
+            <h3>Belum ada feedback</h3>
+            <p>Feedback dan nilai dari mentor akan muncul di sini setelah tugasmu dinilai.</p>
+          </div>
+        ) : (
+          <ul className="discussion-list">
+            {feedback.map((s) => (
+              <li key={s.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {assignmentById.get(s.assignment_id)?.title ?? 'Tugas'}
+                  {s.score !== null ? ` · Nilai ${s.score}` : ''} ·{' '}
+                  {fmtDate(s.graded_at ?? s.submitted_at)}
+                </p>
+                <p>{s.feedback}</p>
+                <p>
+                  <Link to={`/tugas/${s.assignment_id}`}>Lihat tugas →</Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Tugas &amp; Tenggat</h2>
+        {tasks.length === 0 ? (
+          <div className="empty-card">
+            <h3>Tidak ada tugas</h3>
+            <p>Tugas dari kursus yang kamu ikuti akan tampil di sini.</p>
+          </div>
+        ) : (
+          <ul className="discussion-list">
+            {tasks.map((a) => {
+              const courseId = a.lesson_id ? lessonCourse.get(a.lesson_id) : undefined
+              const course = courseId ? courseById.get(courseId) : undefined
+              return (
+                <li key={a.id} className="discussion-item">
+                  <p className="discussion-meta">
+                    {course ? `${course.title} · ` : ''}
+                    {a.due_date ? `Tenggat ${fmtDateOnly(a.due_date)}` : 'Tanpa tenggat'}
+                  </p>
+                  <h3>{a.title}</h3>
+                  {a.description && <p>{a.description}</p>}
+                  <p>
+                    <Link to={`/tugas/${a.id}`}>Kerjakan tugas →</Link>
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Proyekku &amp; Rekrutmen Kru</h2>
+        {myProjects.length === 0 && openCrew.length === 0 ? (
+          <p className="empty">
+            Belum ada proyek atau panggilan kru.{' '}
+            <Link to="/proyek">Lihat Projects</Link>
+          </p>
+        ) : (
+          <ul className="discussion-list">
+            {myProjects.map((p) => (
+              <li key={p.id} className="discussion-item">
+                <p className="discussion-meta">
+                  Proyekku
+                  {schoolName(p.school_id) ? ` · ${schoolName(p.school_id)}` : ''}
+                </p>
+                <h3>{p.title}</h3>
+                {p.description && <p>{p.description}</p>}
+                <p>
+                  <Link to={`/proyek/${p.id}`}>Lihat Proyek →</Link>
+                </p>
+              </li>
+            ))}
+            {openCrew.map((p) => (
+              <li key={`crew-${p.id}`} className="discussion-item">
+                <p className="discussion-meta">
+                  Sedang mencari kru
+                  {schoolName(p.school_id) ? ` · ${schoolName(p.school_id)}` : ''}
+                </p>
+                <h3>{p.title} sedang mencari kru</h3>
+                {p.description && <p>{p.description}</p>}
+                <p>
+                  <Link to={`/proyek/${p.id}`}>Lihat Proyek →</Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Event Mendatang</h2>
+          <Link to="/acara">Semua event →</Link>
+        </div>
+        {upcomingEvents.length === 0 ? (
+          <p className="empty">Belum ada event mendatang.</p>
+        ) : (
+          <ul className="discussion-list">
+            {upcomingEvents.map((e) => (
+              <li key={e.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {e.starts_at ? fmtDate(e.starts_at) : ''}
+                  {e.location ? ` · ${e.location}` : ''}
+                </p>
+                <h3>{e.title}</h3>
+                {e.description && <p>{e.description}</p>}
+                <p>
+                  <Link to={`/acara/${e.id}`}>Lihat event →</Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
   )
 }
