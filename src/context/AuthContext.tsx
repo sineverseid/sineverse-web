@@ -7,7 +7,7 @@
 // (verifyOtp type 'signup'). Data pendaftaran lengkap dikirim lewat
 // user_metadata; foto file dan lamaran mentor diselesaikan setelah masuk
 // (lihat lib/registration.ts) karena butuh sesi terautentikasi.
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { fetchProfile, supabase, appBaseUrl } from '../lib/supabase'
@@ -90,9 +90,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [registrationNotice, setRegistrationNotice] = useState<string | null>(null)
 
+  // getSession() dan onAuthStateChange (INITIAL_SESSION) sama-sama
+  // terpanggil saat mount dan keduanya memuat profil — tanpa dedupe,
+  // fetchProfile jalan dua kali untuk user yang sama. Janji yang sedang
+  // berjalan dipakai bersama; setelah selesai, cache dihapus supaya
+  // refreshProfile() berikutnya tetap mengambil data baru.
+  const profileInFlight = useRef(new Map<string, Promise<Profile | null>>())
   const loadProfile = useCallback(async (userId: string) => {
+    let pending = profileInFlight.current.get(userId)
+    if (!pending) {
+      pending = fetchProfile(userId)
+      profileInFlight.current.set(userId, pending)
+      void pending.then(
+        () => {
+          profileInFlight.current.delete(userId)
+        },
+        () => {
+          profileInFlight.current.delete(userId)
+        },
+      )
+    }
     try {
-      const p = await fetchProfile(userId)
+      const p = await pending
       setProfile(p)
     } catch {
       setProfile(null)
