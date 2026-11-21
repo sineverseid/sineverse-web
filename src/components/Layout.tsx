@@ -8,7 +8,7 @@ import { fetchUnreadCount } from '../lib/supabase'
 import InstallPrompt from './InstallPrompt'
 
 export default function Layout() {
-  const { user, profile, signOut } = useAuth()
+  const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [unread, setUnread] = useState<number | null>(null)
@@ -93,6 +93,19 @@ export default function Layout() {
           </NavLink>
         )}
       </header>
+
+      {registrationNotice && (
+        <div className="notice-box registration-notice" role="status">
+          {registrationNotice}{' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={dismissRegistrationNotice}
+          >
+            Tutup
+          </button>
+        </div>
+      )}
 
       <main className="main">
         <Outlet />
