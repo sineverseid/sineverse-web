@@ -131,6 +131,16 @@ export default function LessonDetailPage() {
       setSequentialLocked(false)
       setPassedQuiz(false)
       setSubmittedAssignment(false)
+      // Reset status + konten lesson sebelumnya: tanpa ini, pindah lesson
+      // di komponen yang sama menampilkan status/konten lesson lama
+      // (mis. "Status: Selesai" padahal lesson baru belum selesai) sampai
+      // fetch progres lesson baru selesai.
+      setStatus('not_started')
+      setAssignments([])
+      setQuizzes([])
+      setDiscussions([])
+      setSiblings([])
+      setNotice(null)
 
       // 1. Lesson dulu. Hanya kegagalan di sini yang boleh menampilkan
       // error seluruh halaman.
