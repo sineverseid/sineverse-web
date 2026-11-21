@@ -44,6 +44,11 @@ export default defineConfig({
         // App shell only. Supabase API responses are never cached.
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         navigateFallback: 'index.html',
+        // Jangan layani app shell untuk URL gambar/font: navigasi langsung
+        // ke .jpg/.webp (mis. ilustrasi) harus mengembalikan gambarnya,
+        // bukan index.html. Tanpa ini, membuka tautan gambar langsung
+        // menampilkan halaman kosong berjudul SINEVERSE.
+        navigateFallbackDenylist: [/^.*\.(jpg|jpeg|png|webp|svg|ico|woff2)$/],
       },
       devOptions: {
         enabled: false,
