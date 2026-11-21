@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchUnreadCount } from '../lib/supabase'
+import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } from '../lib/supabase'
 import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
 
@@ -82,6 +82,13 @@ export default function Layout() {
       if (!document.hidden) refresh()
     }
     document.addEventListener('visibilitychange', onVisible)
+    // Panaskan cache katalog di latar belakang sekali per login, supaya
+    // menu Academy, Library, dan Community langsung tampil tanpa menunggu
+    // jaringan saat pertama kali dibuka. Gagal dimuat di sini tidak apa-apa
+    // — halaman tujuan akan mengambilnya sendiri.
+    void fetchCourses().catch(() => undefined)
+    void fetchLibraryItems().catch(() => undefined)
+    void fetchCommunities().catch(() => undefined)
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisible)
