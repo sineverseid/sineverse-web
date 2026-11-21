@@ -72,6 +72,40 @@ export default function AdminSettingsPage() {
       </section>
 
       <section className="section">
+        <h2>Pengaturan Academy</h2>
+        <ul>
+          <li>
+            <Link to="/admin/rps">Editor RPS</Link> — bobot penilaian dan passing grade (RPS SVS-SEM1).
+          </li>
+          <li>
+            <Link to="/admin/sections">Sections &amp; Lesson</Link> — kelola section dan lesson tiap course.
+          </li>
+          <li>
+            <Link to="/admin/enrollment">Enrollment</Link> — kelola pendaftaran siswa ke course.
+          </li>
+          <li>
+            <Link to="/admin/tugas">Tugas</Link> — kelola tugas dan penilaiannya.
+          </li>
+          <li>
+            <Link to="/admin/kuis">Kuis</Link> — kelola kuis, pretest, dan posttest.
+          </li>
+          <li>
+            <Link to="/admin/sertifikat">Sertifikat</Link> — kelola penerbitan sertifikat course.
+          </li>
+          <li>
+            <Link to="/admin/materi">Materi</Link> — kelola materi tambahan tiap lesson.
+          </li>
+          <li>
+            <Link to="/admin/analitik">Analytics &amp; Reports</Link> — laporan per course dan ringkasan platform.
+          </li>
+        </ul>
+        <p className="muted">
+          Tidak ada pengaturan Academy lain yang bisa diubah dari aplikasi — default akses course
+          (direct/sequential) diatur per course di Course Builder; bobot + passing grade di Editor RPS.
+        </p>
+      </section>
+
+      <section className="section">
         <h2>Catatan Keamanan</h2>
         <p className="muted">
           Hak akses ditegakkan di database (RLS), bukan hanya di tampilan. Peran mentor diubah

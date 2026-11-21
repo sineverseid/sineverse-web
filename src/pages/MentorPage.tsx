@@ -240,6 +240,11 @@ export default function MentorPage() {
               <Link to="/mentor/siswa" className="btn btn-secondary">Siswa</Link>{' '}
               <Link to="/mentor/diskusi" className="btn btn-secondary">Diskusi</Link>{' '}
               <Link to="/mentor/analitik" className="btn btn-secondary">Analitik</Link>{' '}
+              <Link to="/mentor/materi" className="btn btn-secondary">Materi</Link>{' '}
+              <Link to="/mentor/video" className="btn btn-secondary">Video</Link>{' '}
+              <Link to="/mentor/kuis" className="btn btn-secondary">Kuis</Link>{' '}
+              <Link to="/mentor/rubrik" className="btn btn-secondary">Rubrik</Link>{' '}
+              <Link to="/mentor/pengumuman" className="btn btn-secondary">Pengumuman</Link>{' '}
               <Link to="/jam-kantor" className="btn btn-secondary">Office Hours</Link>{' '}
               <Link to="/rps" className="btn btn-ghost">Lihat RPS (read-only)</Link>
             </p>

@@ -5,7 +5,7 @@
 // sekolah, usulan komunitas + hapus komunitas, pengumuman, progress lengkap.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
@@ -380,6 +380,19 @@ export default function AdminPage() {
           <div><dt>Lamaran mentor pending</dt><dd>{counts.pendingApps}</dd></div>
           <div><dt>Laporan diskusi terbuka</dt><dd>{counts.openReports}</dd></div>
         </dl>
+      </section>
+
+      <section className="section">
+        <h2>Kelola Academy</h2>
+        <p>
+          <Link to="/admin/sections" className="btn btn-secondary">Section &amp; Lesson</Link>{' '}
+          <Link to="/admin/enrollment" className="btn btn-secondary">Enrollment</Link>{' '}
+          <Link to="/admin/tugas" className="btn btn-secondary">Monitoring Tugas</Link>{' '}
+          <Link to="/admin/kuis" className="btn btn-secondary">Kelola Kuis</Link>{' '}
+          <Link to="/admin/sertifikat" className="btn btn-secondary">Sertifikat</Link>{' '}
+          <Link to="/admin/materi" className="btn btn-secondary">Materi</Link>{' '}
+          <Link to="/admin/analitik" className="btn btn-secondary">Analytics</Link>
+        </p>
       </section>
 
       <section className="section" id="lamaran-mentor">
