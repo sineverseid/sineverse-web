@@ -7,7 +7,7 @@
 // bila tabel belum ada, lonceng tampil tanpa angka.
 // Saat belum login: header hanya logo + tombol Masuk (tanpa nav).
 import { useEffect, useState } from 'react'
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchUnreadCount } from '../lib/supabase'
 import Icon, { type IconName } from './icons'
@@ -54,29 +54,39 @@ const BOTTOM_NAV: Record<Role, string[]> = {
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   const [unread, setUnread] = useState<number | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
 
   // (Lembar "Lainnya" ditutup lewat onClick di tiap tautan, tanpa effect.)
 
+  // Lonceng notifikasi: hitung sekali per login, lalu segarkan hanya saat
+  // aplikasi kembali ke foreground. Sebelumnya dependensi menyertakan
+  // location.pathname, sehingga satu request terkirim di SETIAP pindah menu.
   useEffect(() => {
     if (!user) {
       setUnread(null)
       return
     }
     let cancelled = false
-    fetchUnreadCount(user.id)
-      .then((n) => {
-        if (!cancelled) setUnread(n)
-      })
-      .catch(() => {
-        if (!cancelled) setUnread(null)
-      })
+    const refresh = () => {
+      fetchUnreadCount(user.id)
+        .then((n) => {
+          if (!cancelled) setUnread(n)
+        })
+        .catch(() => {
+          if (!cancelled) setUnread(null)
+        })
+    }
+    refresh()
+    const onVisible = () => {
+      if (!document.hidden) refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [user, location.pathname])
+  }, [user])
 
   const handleSignOut = async () => {
     await signOut()

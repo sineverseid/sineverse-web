@@ -14,10 +14,18 @@ export default function CourseCard({ course }: { course: Course }) {
   return (
     <li className="course-card">
       <Link to={`/course/${course.id}`}>
-        <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
-          {week && <span className="course-cover-week">{week}</span>}
-          <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
-        </div>
+        {course.cover_url ? (
+          <div className="course-cover course-cover-img" aria-hidden="true">
+            <img src={course.cover_url} alt="" loading="lazy" />
+            {week && <span className="course-cover-week">{week}</span>}
+            <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+          </div>
+        ) : (
+          <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
+            {week && <span className="course-cover-week">{week}</span>}
+            <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+          </div>
+        )}
         <div className="course-card-body">
           <h3>{course.title}</h3>
           <p>{course.description}</p>
