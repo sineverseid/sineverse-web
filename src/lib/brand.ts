@@ -10,6 +10,11 @@ export const BRAND = {
   },
   name: 'SINEVERSE',
   tagline: 'Your World of Filmmaking',
+  slogan: 'Learn. Create. Collaborate.',
+  // Versi web publik — mengikuti rilis artefak yang dicerminkan (v1.3,
+  // real-logo PWA, 21 Nov 2026). Satu rilis, dua penyaluran (artefak + web).
+  version: 'v1.3',
+  versionUpdated: '21 Nov 2026',
   description:
     'Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.',
   gradebook: {
@@ -20,6 +25,55 @@ export const BRAND = {
   },
   rpsCode: 'SVS-SEM1',
 } as const
+
+// Urutan kurikulum Semester 1 (RPS SVS-SEM1, 20 minggu, 10 course × 2 minggu).
+// Seed UUID course di Supabase dibuat berurutan mengikuti urutan ini, jadi
+// urutan ini adalah urutan tampil Akademi — BUKAN alfabetis.
+export const RPS_COURSE_ORDER = [
+  '10000000-0000-4000-8000-000000000001', // Dasar Sinematografi — Minggu 1–2
+  '10000000-0000-4000-8000-000000000002', // Penulisan Skenario — Minggu 3–4
+  '10000000-0000-4000-8000-000000000003', // Pembuatan Storyboard — Minggu 5–6
+  '10000000-0000-4000-8000-000000000004', // Penyutradaraan — Minggu 7–8
+  '10000000-0000-4000-8000-000000000005', // Editing Film — Minggu 9–10
+  '10000000-0000-4000-8000-000000000006', // Tata Suara & Musik Film — Minggu 11–12
+  '10000000-0000-4000-8000-000000000007', // Film Dokumenter — Minggu 13–14
+  '10000000-0000-4000-8000-000000000008', // Mengenal Jobdesk Crew Film — Minggu 15–16
+  '10000000-0000-4000-8000-000000000009', // Produksi & Manajemen Film — Minggu 17–18
+  '10000000-0000-4000-8000-00000000000a', // Akting untuk Kamera — Minggu 19–20
+] as const
+
+// Label minggu RPS untuk satu course, dari posisinya di urutan kurikulum.
+// Course di luar urutan seed (mis. dibuat admin belakangan) tidak punya label.
+export function rpsWeekLabel(courseId: string): string | null {
+  const idx = (RPS_COURSE_ORDER as readonly string[]).indexOf(courseId)
+  if (idx === -1) return null
+  return `Minggu ${idx * 2 + 1}–${idx * 2 + 2}`
+}
+
+// Warna sampul film di artefak (satu hue per film). Web publik menurunkan hue
+// secara deterministik dari id film, karena tabel films Supabase tidak
+// menyimpan kolom hue — sampul tetap berwarna dan konsisten per film.
+export const FILM_HUES = ['#3E6AE1', '#0F5C40', '#16865E', '#172438'] as const
+
+export function filmHue(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return FILM_HUES[h % FILM_HUES.length]
+}
+
+// Kunci motif sampul course, mengikuti coverKey di artefak SINEVERSE
+// (cinematography, screenwriting, directing, editing, sound, documentary;
+// course tanpa cover memakai motif default). Dipetakan dari judul course.
+export function courseCoverKey(title: string): string {
+  const t = title.toLowerCase()
+  if (t.includes('sinematografi')) return 'cinematography'
+  if (t.includes('skenario')) return 'screenwriting'
+  if (t.includes('sutradara') || t.includes('penyutradaraan')) return 'directing'
+  if (t.includes('editing')) return 'editing'
+  if (t.includes('suara') || t.includes('musik')) return 'sound'
+  if (t.includes('dokumenter')) return 'documentary'
+  return 'default'
+}
 
 export const GRADEBOOK_WEIGHTS = {
   kuis: 0.2,
