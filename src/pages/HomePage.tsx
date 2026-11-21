@@ -84,14 +84,14 @@ const EXPLORE_MENUS: {
   {
     id: 'projects',
     icon: 'project',
-    name: 'Film Projects',
+    name: 'Projects',
     short: 'Berkolaborasi membuat film',
     to: '/proyek',
   },
   {
     id: 'showcase',
     icon: 'trophy',
-    name: 'Showcase & Events',
+    name: 'Showcase',
     short: 'Pamerkan karya dan ikuti event',
     to: '/showcase',
   },

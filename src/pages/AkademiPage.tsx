@@ -1,13 +1,17 @@
 // SINEVERSE — Katalog Akademi: 10 course Semester 1 (data asli Supabase),
-// chip kategori + pencarian.
+// chip kategori + pencarian. Nilai, tenggat, dan ujian dijangkau dari sini
+// (bukan lagi menu utama) — sesuai artefak.
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import CourseCard from '../components/CourseCard'
+import { useAuth } from '../context/AuthContext'
 import { fetchCourses } from '../lib/supabase'
 import type { Course } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 export default function AkademiPage() {
+  const { user } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<string>('Semua')
@@ -68,9 +72,20 @@ export default function AkademiPage() {
     <div className="page">
       <PageHeader
         icon="academy"
-        title="Akademi"
+        title="Academy"
         subtitle={`Kurikulum Semester 1 — ${courses.length} course. Kategori → Course → Module → Lesson.`}
       />
+
+      {user && (
+        <p className="muted">
+          Perkembangan saya:{' '}
+          <Link to="/nilai">Nilai Saya</Link>
+          {' · '}
+          <Link to="/tenggat">Tenggat Saya</Link>
+          {' · '}
+          <Link to="/ujian">Ujian Kompetensi</Link>
+        </p>
+      )}
 
       <div className="filters">
         <input

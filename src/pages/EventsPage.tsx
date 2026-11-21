@@ -11,6 +11,8 @@ import { supabase } from '../lib/supabase'
 import type { EventRegistration, EventSession, SineEvent } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
+import { CompetitionsPage } from './CompetitionsPage'
+import { CertificatesPage } from './CertificatesPage'
 
 export function EventsPage() {
   const { user, profile } = useAuth()
@@ -24,8 +26,10 @@ export function EventsPage() {
   const [endsAt, setEndsAt] = useState('')
   const [location, setLocation] = useState('')
   const [capacity, setCapacity] = useState('')
+  const [tab, setTab] = useState<'kalender' | 'kompetisi' | 'sertifikat' | 'analitik'>('kalender')
 
   const canCreate = profile?.role === 'mentor' || profile?.role === 'admin'
+  const isStaff = canCreate
 
   async function load() {
     try {
@@ -84,17 +88,34 @@ export function EventsPage() {
     await load()
   }
 
-  if (loading) return <div className="page"><p className="muted">Memuat acara…</p></div>
-  if (error) return <div className="page"><p className="error-box">{error}</p></div>
-  if (events === null) return <div className="page"><h1>Acara</h1><MigrationNotice migration="007" /></div>
-
   return (
     <div className="page">
       <PageHeader
         icon="event"
-        title="Acara"
+        title="Events"
         subtitle="Workshop, screening, webinar, dan festival film pelajar."
       />
+      <div className="about-tabs" role="tablist" aria-label="Tab Events">
+        <button type="button" role="tab" aria-selected={tab === 'kalender'} className={`about-tab${tab === 'kalender' ? ' active' : ''}`} onClick={() => setTab('kalender')}>Kalender Acara</button>
+        <button type="button" role="tab" aria-selected={tab === 'kompetisi'} className={`about-tab${tab === 'kompetisi' ? ' active' : ''}`} onClick={() => setTab('kompetisi')}>Kompetisi &amp; Festival</button>
+        <button type="button" role="tab" aria-selected={tab === 'sertifikat'} className={`about-tab${tab === 'sertifikat' ? ' active' : ''}`} onClick={() => setTab('sertifikat')}>Sertifikat Saya</button>
+        {isStaff && (
+          <button type="button" role="tab" aria-selected={tab === 'analitik'} className={`about-tab${tab === 'analitik' ? ' active' : ''}`} onClick={() => setTab('analitik')}>Analitik</button>
+        )}
+      </div>
+      {tab === 'kalender' && (
+        <>
+          {loading ? (
+            <p className="muted">Memuat acara…</p>
+          ) : error ? (
+            <p className="error-box">{error}</p>
+          ) : events === null ? (
+            <>
+              <h1>Acara</h1>
+              <MigrationNotice migration="007" />
+            </>
+          ) : (
+            <>
       {notice && <p className="notice-box">{notice}</p>}
       {canCreate && (
         <section className="section">
@@ -149,6 +170,99 @@ export function EventsPage() {
           ))}
         </ul>
       )}
+            </>
+          )}
+        </>
+      )}
+      {tab === 'kompetisi' && <CompetitionsPage />}
+      {tab === 'sertifikat' && <CertificatesPage />}
+      {tab === 'analitik' && isStaff && <EventsAnalytics />}
+    </div>
+  )
+}
+
+// Analitik Events (tab ke-4, mentor/admin saja): angka nyata dari Supabase —
+// jumlah acara, pendaftaran, kompetisi per status, karya masuk, pemenang.
+function EventsAnalytics() {
+  const [stats, setStats] = useState<{
+    events: number
+    internal: number
+    external: number
+    registrations: number
+    competitions: number
+    compOpen: number
+    compJudging: number
+    compDone: number
+    submissions: number
+    winners: number
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const [ev, reg, comp, sub, win] = await Promise.all([
+          supabase.from('events').select('kind'),
+          supabase.from('event_registrations').select('id', { count: 'exact', head: true }),
+          supabase.from('competitions').select('status'),
+          supabase.from('competition_submissions').select('id', { count: 'exact', head: true }),
+          supabase.from('competition_winners').select('id', { count: 'exact', head: true }),
+        ])
+        if (cancelled) return
+        const evRows = (ev.data ?? []) as { kind: string }[]
+        const compRows = (comp.data ?? []) as { status: string }[]
+        setStats({
+          events: evRows.length,
+          internal: evRows.filter((e) => e.kind === 'internal').length,
+          external: evRows.filter((e) => e.kind === 'external').length,
+          registrations: reg.count ?? 0,
+          competitions: compRows.length,
+          compOpen: compRows.filter((c) => c.status === 'dibuka').length,
+          compJudging: compRows.filter((c) => c.status === 'penjurian').length,
+          compDone: compRows.filter((c) => c.status === 'selesai').length,
+          submissions: sub.count ?? 0,
+          winners: win.count ?? 0,
+        })
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat analitik.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (loading) return <p className="muted">Memuat analitik…</p>
+  if (error) return <p className="error-box">{error}</p>
+  if (!stats) return <p className="empty">Tidak ada data analitik.</p>
+
+  return (
+    <div>
+      <section className="section">
+        <h2>Acara</h2>
+        <dl className="profile-list">
+          <div><dt>Total acara</dt><dd>{stats.events}</dd></div>
+          <div><dt>Internal</dt><dd>{stats.internal}</dd></div>
+          <div><dt>Eksternal</dt><dd>{stats.external}</dd></div>
+          <div><dt>Total pendaftaran</dt><dd>{stats.registrations}</dd></div>
+        </dl>
+      </section>
+      <section className="section">
+        <h2>Kompetisi &amp; Festival</h2>
+        <dl className="profile-list">
+          <div><dt>Total kompetisi</dt><dd>{stats.competitions}</dd></div>
+          <div><dt>Dibuka</dt><dd>{stats.compOpen}</dd></div>
+          <div><dt>Penjurian</dt><dd>{stats.compJudging}</dd></div>
+          <div><dt>Selesai</dt><dd>{stats.compDone}</dd></div>
+          <div><dt>Karya masuk</dt><dd>{stats.submissions}</dd></div>
+          <div><dt>Pemenang</dt><dd>{stats.winners}</dd></div>
+        </dl>
+      </section>
     </div>
   )
 }

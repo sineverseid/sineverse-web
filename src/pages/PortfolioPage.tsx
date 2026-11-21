@@ -143,6 +143,12 @@ export default function PortfolioPage() {
       {owner?.photo_url && <img src={owner.photo_url} alt="Foto profil" className="avatar" />}
       {notice && <p className="notice-box">{notice}</p>}
 
+      {isOwner && (
+        <p>
+          <Link to="/profil" className="btn btn-ghost">Lihat / Edit Profil Saya →</Link>
+        </p>
+      )}
+
       {canSeePrivate && (
         <>
           <section className="section">

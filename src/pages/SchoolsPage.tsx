@@ -143,7 +143,7 @@ export default function SchoolsPage() {
 
   return (
     <div className="page">
-      <PageHeader icon="school" title="Sekolah & Klub Film" />
+      <PageHeader icon="school" title="Sekolah" />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">

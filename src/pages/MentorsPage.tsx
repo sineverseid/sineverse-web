@@ -60,7 +60,7 @@ export default function MentorsPage() {
     <div className="page">
       <PageHeader
         icon="mentor"
-        title="Direktori Mentor"
+        title="Mentors"
         subtitle="Mentor terverifikasi SINEVERSE — lihat course yang diampu dan sesi mentoring yang tersedia."
       />
       {loading && <p className="muted">Memuat mentor…</p>}

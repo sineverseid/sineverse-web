@@ -312,7 +312,13 @@ export default function CourseBuilderPage() {
     <div className="page">
       <Link to="/mentor" className="back-link">← Mentor Workspace</Link>
       <h1>Course Builder — {currentCourse.title}</h1>
-      <WorkspaceNav entries={MENTOR_NAV} />
+      <WorkspaceNav
+        entries={MENTOR_NAV.map((e) =>
+          e.to === '/mentor/course-builder'
+            ? { ...e, to: `/mentor/course/${currentCourse.id}` }
+            : e,
+        )}
+      />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">
