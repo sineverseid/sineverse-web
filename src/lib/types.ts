@@ -302,14 +302,16 @@ export interface Rps {
   title: string
   description: string | null
   // Tahap 3 (migrasi 015): pretest / posttest / tugas_mingguan /
-  // tugas_akhir / diskusi. Kunci lama (kuis/tugas/ujian) tetap opsional
-  // agar baris RPS yang belum dimigrasi masih bisa dibaca.
+  // tugas_akhir / diskusi. Semua kunci opsional: baris RPS lama hanya
+  // punya kuis/tugas/ujian, dan kode lama (RpsPage pra-Tahap 3) masih
+  // menyusun { kuis, tugas, ujian } — type ini harus menerima keduanya
+  // sampai deploy Tahap 3 selesai. Pembaca memakai ?? fallback.
   weights: {
-    pretest: number
-    posttest: number
-    tugas_mingguan: number
-    tugas_akhir: number
-    diskusi: number
+    pretest?: number
+    posttest?: number
+    tugas_mingguan?: number
+    tugas_akhir?: number
+    diskusi?: number
     kuis?: number
     tugas?: number
     ujian?: number
