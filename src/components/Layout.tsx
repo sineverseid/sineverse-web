@@ -12,6 +12,12 @@ export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [unread, setUnread] = useState<number | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Tutup menu mobile setiap kali pindah halaman.
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [location.pathname])
 
   useEffect(() => {
     if (!user) {
@@ -43,7 +49,16 @@ export default function Layout() {
           <img src="./pwa-192x192.png" alt="Logo SINEVERSE" className="brand-logo" />
           <span className="brand-name">SINEVERSE</span>
         </Link>
-        <nav className="topnav" aria-label="Navigasi utama">
+        <button
+          type="button"
+          className="menu-toggle"
+          aria-label={menuOpen ? 'Tutup menu' : 'Buka menu'}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          {menuOpen ? '✕' : '☰'}
+        </button>
+        <nav className={menuOpen ? 'topnav open' : 'topnav'} aria-label="Navigasi utama">
           <NavLink to="/" end>
             Beranda
           </NavLink>
