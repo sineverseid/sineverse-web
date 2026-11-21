@@ -459,6 +459,7 @@ p {
 
 .form input,
 .form textarea,
+.form select,
 .search-input {
   font-family: var(--font);
   font-size: 1rem;
@@ -472,6 +473,7 @@ p {
 
 .form input:focus,
 .form textarea:focus,
+.form select:focus,
 .search-input:focus {
   outline: 2px solid var(--film-green);
   outline-offset: 1px;
@@ -492,6 +494,33 @@ p {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+/* --- Pendaftaran (sama dengan artefak) --- */
+.photo-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.photo-preview {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--light-grey);
+}
+
+.otp-input {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.5em;
+  text-align: center;
+}
+
+.registration-notice {
+  margin: 0.75rem 1rem 0;
 }
 
 /* --- Courses --- */
