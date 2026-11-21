@@ -2,34 +2,62 @@
 // keluar + usulan komunitas baru dari anggota (004). Persetujuan admin
 // membuat komunitas + menggabungkan pengusul (ditangani admin di Admin
 // Panel; di sini usulan tercatat sebagai community_proposals 'pending').
+//
+// Per peran:
+// - Siswa: seperti semula — semua community yang disetujui + tombol Gabung.
+// - Mentor: community yang diikuti (status Anggota + tombol Buka) dan
+//   community lain yang bisa diikuti (tombol Gabung); bisa mengusulkan
+//   community baru. TIDAK ada data "community mencari pembimbing" di
+//   database — bagian itu tidak ditampilkan (bukan dikarang).
+// - Admin: TIDAK bergabung ke community. Tampilan moderasi: usulan
+//   menunggu persetujuan (Setujui & Buat / Tolak), laporan community
+//   (moderation_reports target community), semua community dengan status
+//   persetujuan + jumlah anggota + aksi Hapus.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
-import { isMissingTableError } from '../lib/guarded'
-import { supabase } from '../lib/supabase'
-import type { Community, CommunityMember } from '../lib/types'
+import { fmtDate, isMissingTableError } from '../lib/guarded'
+import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import type {
+  Community,
+  CommunityProposal,
+  ModerationReport,
+} from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
+function memberRoleLabel(role: string | null): string {
+  if (!role) return 'Anggota'
+  if (role === 'member') return 'Anggota'
+  return role
+}
+
 export default function CommunitiesPage() {
-  const { user } = useAuth()
+  const { user, profile, loading: authLoading } = useAuth()
   const [items, setItems] = useState<Community[] | null>(null)
   const [mine, setMine] = useState<Set<string>>(new Set())
+  const [myRoles, setMyRoles] = useState<Map<string, string>>(new Map())
+  const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map())
+  const [proposals, setProposals] = useState<CommunityProposal[]>([])
+  const [proposalNames, setProposalNames] = useState<Map<string, string>>(new Map())
+  const [modReports, setModReports] = useState<ModerationReport[] | null>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
 
+  const isAdmin = profile?.role === 'admin'
+  const isMentor = profile?.role === 'mentor'
+
   async function load() {
     try {
-      const { data, error: qErr } = await supabase
-        .from('communities')
-        .select('*')
-        .eq('is_approved', true)
-        .order('name')
+      const q = supabase.from('communities').select('*')
+      const { data, error: qErr } = isAdmin
+        ? await q.order('name')
+        : await q.eq('is_approved', true).order('name')
       if (qErr) {
         if (isMissingTableError(qErr)) setItems(null)
         else throw qErr
@@ -39,9 +67,52 @@ export default function CommunitiesPage() {
       if (user) {
         const { data: mem } = await supabase
           .from('community_members')
-          .select('community_id')
+          .select('community_id,role')
           .eq('user_id', user.id)
-        setMine(new Set(((mem ?? []) as CommunityMember[]).map((m) => m.community_id)))
+        const memRows = (mem ?? []) as { community_id: string; role: string | null }[]
+        setMine(new Set(memRows.map((m) => m.community_id)))
+        setMyRoles(new Map(memRows.map((m) => [m.community_id, m.role ?? 'member'])))
+      }
+      // Jumlah anggota per community (mentor + admin).
+      if (isAdmin || isMentor) {
+        const { data: allMem } = await supabase
+          .from('community_members')
+          .select('community_id')
+        const counts = new Map<string, number>()
+        for (const m of (allMem ?? []) as { community_id: string }[]) {
+          counts.set(m.community_id, (counts.get(m.community_id) ?? 0) + 1)
+        }
+        setMemberCounts(counts)
+      }
+      // Admin: usulan menunggu persetujuan + laporan community.
+      if (isAdmin) {
+        const { data: propData } = await supabase
+          .from('community_proposals')
+          .select('*')
+          .eq('status', 'pending')
+          .order('created_at')
+        const props = (propData ?? []) as CommunityProposal[]
+        setProposals(props)
+        setProposalNames(
+          await fetchProfileNames(props.map((p) => p.proposer_id)).catch(
+            () => new Map<string, string>(),
+          ),
+        )
+        const { data: repData, error: repErr } = await supabase
+          .from('moderation_reports')
+          .select('*')
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+        if (repErr) {
+          if (isMissingTableError(repErr)) setModReports(null)
+          else setModReports([])
+        } else {
+          setModReports(
+            ((repData ?? []) as ModerationReport[]).filter(
+              (r) => r.target_type === 'community' || r.target_type === 'community_post',
+            ),
+          )
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat komunitas.')
@@ -53,7 +124,7 @@ export default function CommunitiesPage() {
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
+  }, [user?.id, profile?.role])
 
   async function toggleJoin(id: string, joined: boolean) {
     if (!user) return
@@ -64,13 +135,27 @@ export default function CommunitiesPage() {
         .eq('community_id', id)
         .eq('user_id', user.id)
       if (error) setNotice(error.message)
-      else setMine((m) => { const n = new Set(m); n.delete(id); return n })
+      else {
+        setMine((m) => {
+          const n = new Set(m)
+          n.delete(id)
+          return n
+        })
+        setMyRoles((m) => {
+          const n = new Map(m)
+          n.delete(id)
+          return n
+        })
+      }
     } else {
       const { error } = await supabase
         .from('community_members')
         .insert({ community_id: id, user_id: user.id, role: 'member' })
       if (error) setNotice(error.message)
-      else setMine((m) => new Set(m).add(id))
+      else {
+        setMine((m) => new Set(m).add(id))
+        setMyRoles((m) => new Map(m).set(id, 'member'))
+      }
     }
   }
 
@@ -91,10 +176,296 @@ export default function CommunitiesPage() {
     }
   }
 
-  if (loading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
+  // --- Aksi admin (alur yang sama dengan Admin Panel / Moderasi) --------
+
+  async function decideProposal(p: CommunityProposal, approve: boolean) {
+    const { error: updErr } = await supabase
+      .from('community_proposals')
+      .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
+      .eq('id', p.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    if (approve) {
+      const { data: comm, error: cErr } = await supabase
+        .from('communities')
+        .insert({ name: p.name, description: p.description, created_by: p.proposer_id, is_approved: true })
+        .select()
+        .single()
+      if (cErr) {
+        setNotice(cErr.message)
+        return
+      }
+      await supabase.from('community_members').insert({
+        community_id: (comm as { id: string }).id,
+        user_id: p.proposer_id,
+        role: 'member',
+      })
+      await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
+      setNotice(`Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`)
+    } else {
+      setNotice('Usulan komunitas ditolak.')
+    }
+    await load()
+  }
+
+  async function handleDeleteCommunity(id: string, communityName: string) {
+    if (!window.confirm(`Hapus komunitas "${communityName}" beserta semua postingan dan keanggotaannya? Tindakan ini tidak bisa dibatalkan.`)) return
+    const { error: delErr } = await supabase.from('communities').delete().eq('id', id)
+    if (delErr) setNotice(delErr.message)
+    else {
+      await logAudit('community.deleted', 'communities', id, { name: communityName })
+      setNotice(`Komunitas "${communityName}" dihapus.`)
+      await load()
+    }
+  }
+
+  async function resolveModReport(r: ModerationReport, status: 'resolved' | 'dismissed') {
+    const { error: updErr } = await supabase
+      .from('moderation_reports')
+      .update({ status, resolved_by: user?.id ?? null, resolved_at: new Date().toISOString() })
+      .eq('id', r.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    await logAudit(`moderation_report.${status}`, 'moderation_reports', r.id, { target_type: r.target_type, target_id: r.target_id })
+    setNotice(`Laporan moderasi ${status === 'resolved' ? 'diselesaikan' : 'ditolak'}.`)
+    await load()
+  }
+
+  if (loading || authLoading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (items === null) return <div className="page"><h1>Komunitas</h1><MigrationNotice migration="004" /></div>
 
+  // --- Admin: moderasi (tidak bergabung ke community) ---------------------
+  if (isAdmin) {
+    return (
+      <div className="page">
+        <PageHeader
+          icon="community"
+          title="Community"
+          subtitle="Moderasi Community — admin tidak bergabung ke community."
+        />
+        {notice && <p className="notice-box">{notice}</p>}
+
+        <section className="section">
+          <h2>Usulan Komunitas Menunggu Persetujuan ({proposals.length})</h2>
+          {proposals.length === 0 ? (
+            <p className="empty">Tidak ada usulan komunitas yang menunggu.</p>
+          ) : (
+            <ul className="discussion-list">
+              {proposals.map((p) => (
+                <li key={p.id} className="discussion-item">
+                  <p>
+                    <strong>{p.name}</strong>
+                  </p>
+                  {p.description && <p>{p.description}</p>}
+                  <p className="muted">
+                    Pengusul: {proposalNames.get(p.proposer_id) ?? '—'} · {fmtDate(p.created_at)}
+                  </p>
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void decideProposal(p, true)}
+                    >
+                      Setujui &amp; Buat
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void decideProposal(p, false)}
+                    >
+                      Tolak
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="section">
+          <div className="section-head">
+            <h2>Laporan Community</h2>
+            <Link to="/admin/moderasi">Moderasi →</Link>
+          </div>
+          {modReports === null ? (
+            <p className="empty">
+              Tabel laporan belum tersedia.{' '}
+              <Link to="/admin/moderasi">Lihat Moderasi</Link>
+            </p>
+          ) : modReports.length === 0 ? (
+            <p className="empty">Tidak ada laporan community.</p>
+          ) : (
+            <ul className="discussion-list">
+              {modReports.map((r) => (
+                <li key={r.id} className="discussion-item">
+                  <p className="discussion-meta">
+                    {r.target_type}
+                    {r.target_id ? ` · ${r.target_id}` : ''} · {fmtDate(r.created_at)} · Status:{' '}
+                    {r.status}
+                  </p>
+                  <p>Alasan: {r.reason ?? '—'}</p>
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void resolveModReport(r, 'resolved')}
+                    >
+                      Selesaikan
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void resolveModReport(r, 'dismissed')}
+                    >
+                      Tolak Laporan
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="section">
+          <div className="section-head">
+            <h2>Semua Community ({items.length})</h2>
+            <Link to="/admin">Admin Panel →</Link>
+          </div>
+          {items.length === 0 ? (
+            <EmptyState message="Belum ada community." />
+          ) : (
+            <ul className="discussion-list">
+              {items.map((c) => (
+                <li key={c.id} className="discussion-item">
+                  <p className="discussion-meta">
+                    {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
+                    {memberCounts.get(c.id) ?? 0} anggota
+                  </p>
+                  <h3>
+                    <Link to={`/komunitas/${c.id}`}>{c.name}</Link>
+                  </h3>
+                  {c.description && <p>{c.description}</p>}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void handleDeleteCommunity(c.id, c.name)}
+                    >
+                      Hapus Komunitas
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    )
+  }
+
+  // --- Mentor: community yang diikuti + community lain --------------------
+  if (isMentor) {
+    const joined = items.filter((c) => mine.has(c.id))
+    const others = items.filter((c) => !mine.has(c.id))
+    return (
+      <div className="page">
+        <PageHeader
+          icon="community"
+          title="Community"
+          subtitle="Community yang kamu ikuti dan community lain yang bisa kamu ikuti."
+        />
+        {notice && <p className="notice-box">{notice}</p>}
+
+        <section className="section">
+          <h2>Community yang Kamu Ikuti ({joined.length})</h2>
+          {joined.length === 0 ? (
+            <p className="empty">Kamu belum mengikuti community apa pun.</p>
+          ) : (
+            <ul className="course-list">
+              {joined.map((c) => (
+                <li key={c.id} className="course-card">
+                  <Link to={`/komunitas/${c.id}`}>
+                    <h3>{c.name}</h3>
+                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                    <p className="muted">
+                      Status: {memberRoleLabel(myRoles.get(c.id) ?? 'member')} ·{' '}
+                      {memberCounts.get(c.id) ?? 0} anggota
+                    </p>
+                  </Link>
+                  <div style={{ padding: '0 1.25rem 1rem', display: 'flex', gap: '0.5rem' }}>
+                    <Link to={`/komunitas/${c.id}`} className="btn btn-primary btn-small">
+                      Buka
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => void toggleJoin(c.id, true)}
+                    >
+                      Keluar
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="section">
+          <h2>Community Lain ({others.length})</h2>
+          {others.length === 0 ? (
+            <p className="empty">Tidak ada community lain saat ini.</p>
+          ) : (
+            <ul className="course-list">
+              {others.map((c) => (
+                <li key={c.id} className="course-card">
+                  <Link to={`/komunitas/${c.id}`}>
+                    <h3>{c.name}</h3>
+                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                    <p className="muted">{memberCounts.get(c.id) ?? 0} anggota</p>
+                  </Link>
+                  {user && (
+                    <div style={{ padding: '0 1.25rem 1rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => void toggleJoin(c.id, false)}
+                      >
+                        Gabung
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {user && (
+          <section className="section">
+            <h2>Usulkan Komunitas Baru</h2>
+            <form className="form" onSubmit={handlePropose}>
+              <label>
+                Nama komunitas
+                <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Mis. Klub Film Bandung" />
+              </label>
+              <label>
+                Deskripsi
+                <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} placeholder="Komunitas ini tentang…" />
+              </label>
+              <button type="submit" className="btn btn-primary">Kirim Usulan</button>
+            </form>
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  // --- Siswa (dan pengunjung logout): seperti semula -----------------------
   return (
     <div className="page">
       <PageHeader

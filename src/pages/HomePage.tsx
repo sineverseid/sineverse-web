@@ -3,8 +3,14 @@
 //   (SiswaHome) — hero sapaan, Rekomendasi Untukmu, Kursus Aktifku,
 //   Feedback Terbaru, Tugas & Tenggat, Proyekku & Rekrutmen Kru,
 //   Event Mendatang. Semua data dari Supabase; empty state jujur.
-// - Pengguna login peran mentor/admin: dashboard lama dipertahankan
-//   (course saya, lanjutkan belajar, pengumuman).
+// - Pengguna login peran mentor: MentorHome — hero Mentor Workspace
+//   (course diampu, siswa, submission menunggu dinilai), Antrean
+//   Penilaian Terbaru, Kursus yang Kamu Ampu, Kursus Tanpa Pengampu
+//   (Ajukan untuk Mengampu), Baru Dinilai, Pesanan Mentoring Berikutnya
+//   (bila ada), Pengumuman. Semua data dari Supabase.
+// - Pengguna login peran admin: AdminHome — hero Ringkasan SINEVERSE,
+//   4 kartu statistik + daftar tindakan (lamaran mentor, sekolah belum
+//   terverifikasi, laporan terbuka), aktivitas terbaru, Pengumuman.
 // - Pengunjung logout: landing page (ACUAN FINAL Arif 21 Nov 2026):
 //   hero foto + aksen diagonal mint + hanya tombol Daftar Gratis,
 //   Apa Itu 2 kolom (nilai LEARN/CREATE/COLLABORATE di dalam
@@ -13,11 +19,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import '../index-homepage.css'
-import CourseCard from '../components/CourseCard'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../context/AuthContext'
-import { BRAND } from '../lib/brand'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
 import {
@@ -26,14 +30,24 @@ import {
   fetchCourses,
   fetchEnrollments,
   fetchLessonProgress,
+  fetchProfileNames,
   fetchSubmissions,
+  logAudit,
   supabase,
 } from '../lib/supabase'
 import type {
   Announcement,
   Assignment,
+  AuditLogRow,
   Course,
+  CourseClaim,
+  DiscussionReport,
+  Lesson,
   LessonProgress,
+  MentorApplication,
+  ModerationReport,
+  OfficeHour,
+  OfficeHourBooking,
   Project,
   School,
   SineEvent,
@@ -118,7 +132,6 @@ export default function HomePage() {
   const [courses, setCourses] = useState<Course[]>([])
   const [enrolledIds, setEnrolledIds] = useState<string[]>([])
   const [progress, setProgress] = useState<LessonProgress[]>([])
-  const [continueTo, setContinueTo] = useState<{ courseId: string; lessonId: string; title: string } | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -189,31 +202,15 @@ export default function HomePage() {
           setProgress(prog)
           // Lesson tiap course yang diambil: untuk "Lanjutkan belajar",
           // hitung progres per course, dan daftar tugasnya.
-          const doneSet = new Set(
-            prog.filter((p) => p.status === 'completed').map((p) => p.lesson_id),
-          )
           const lessonCourseMap = new Map<string, string>()
           const lessonIds: string[] = []
           const totals = new Map<string, number>()
-          let foundContinue = false
           for (const e of enr) {
             const lessons = await fetchCourseLessons(e.course_id)
             totals.set(e.course_id, lessons.length)
             for (const l of lessons) {
               lessonCourseMap.set(l.id, e.course_id)
               lessonIds.push(l.id)
-            }
-            if (!foundContinue) {
-              const next = lessons.find((l) => !doneSet.has(l.id))
-              if (next) {
-                foundContinue = true
-                const course = all.find((c) => c.id === e.course_id)
-                setContinueTo({
-                  courseId: e.course_id,
-                  lessonId: next.id,
-                  title: `${course?.title ?? 'Course'} — ${next.title}`,
-                })
-              }
             }
           }
           if (cancelled) return
@@ -278,8 +275,6 @@ export default function HomePage() {
   }
 
   const myCourses = courses.filter((c) => enrolledIds.includes(c.id))
-  const roleLabel =
-    profile?.role === 'admin' ? 'Admin' : profile?.role === 'mentor' ? 'Mentor' : 'Siswa'
   const isSiswa = profile?.role !== 'mentor' && profile?.role !== 'admin'
 
   return (
@@ -304,98 +299,20 @@ export default function HomePage() {
             submissions={submissions}
             assignments={assignments}
           />
+        ) : profile?.role === 'mentor' ? (
+          <MentorHome
+            userId={user.id}
+            profileName={profile?.name ?? profile?.email ?? 'Mentor'}
+            courses={courses}
+            announcements={announcements}
+          />
         ) : (
-          <>
-            <section className="hero">
-              <p className="hero-eyebrow">SINEVERSE</p>
-              <h1>Your World of Filmmaking</h1>
-              <p className="hero-sub">
-                Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
-              </p>
-              <p className="hero-slogan">{BRAND.slogan}</p>
-              <img
-                src="./home-hero-film-crew.webp"
-                alt="Kru film pelajar SINEVERSE di lokasi syuting"
-                className="hero-img"
-              />
-            </section>
-
-            <section className="section">
-              <h2>Selamat datang, {profile?.name ?? profile?.email ?? 'SINEVERSE'}</h2>
-              <p className="muted">
-                Peran: {roleLabel}
-                {profile?.city ? ` · ${profile.city}` : ''}
-              </p>
-              {continueTo && (
-                <div className="continue-card">
-                  <p className="muted">Lanjutkan belajar</p>
-                  <p className="continue-title">{continueTo.title}</p>
-                  <Link to={`/lesson/${continueTo.lessonId}`} className="btn btn-primary">
-                    Lanjutkan
-                  </Link>
-                </div>
-              )}
-              {enrolledIds.length > 0 && !continueTo && (
-                <p className="muted">Semua lesson di course kamu sudah selesai. Kerja bagus.</p>
-              )}
-            </section>
-
-            <section className="section">
-              <div className="section-head">
-                <h2>Course Saya</h2>
-                <Link to="/akademi">Lihat semua</Link>
-              </div>
-              {myCourses.length === 0 ? (
-                <p className="empty">
-                  Kamu belum mengambil course apa pun.{' '}
-                  <Link to="/akademi">Jelajahi Akademi</Link> untuk memulai.
-                </p>
-              ) : (
-                <ul className="course-list">
-                  {myCourses.map((c) => (
-                    <CourseCard key={c.id} course={c} />
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="section">
-              <div className="section-head">
-                <h2>Pengumuman</h2>
-                <Link to="/pengumuman">Lihat semua</Link>
-              </div>
-              {announcements === null ? (
-                <p className="empty">Pengumuman belum tersedia.</p>
-              ) : announcements.length === 0 ? (
-                <p className="empty">Belum ada pengumuman.</p>
-              ) : (
-                <ul className="discussion-list">
-                  {announcements.map((a) => (
-                    <li key={a.id} className="discussion-item">
-                      <p className="discussion-meta">
-                        {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.created_at)}
-                      </p>
-                      <h3>{a.title}</h3>
-                      {a.body && <p>{a.body}</p>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="section">
-              <h2>Ringkasan</h2>
-              <p className="muted">
-                {myCourses.length} course diambil · {progress.filter((p) => p.status === 'completed').length}{' '}
-                lesson selesai
-              </p>
-              <p>
-                <Link to="/nilai">Lihat Nilai Saya</Link>
-                {' · '}
-                <Link to="/rps">Lihat RPS Semester 1</Link>
-              </p>
-            </section>
-          </>
+          <AdminHome
+            userId={user.id}
+            profileName={profile?.name ?? profile?.email ?? 'Admin'}
+            courses={courses}
+            announcements={announcements}
+          />
         )
       ) : (
         <>
@@ -908,6 +825,908 @@ function SiswaHome(props: SiswaHomeProps) {
                 <p>
                   <Link to={`/acara/${e.id}`}>Lihat event →</Link>
                 </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  )
+}
+
+// --- Pembantu best-effort: kueri opsional gagal → nilai ganti, bukan crash.
+async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn()
+  } catch {
+    return fallback
+  }
+}
+
+// --- Dashboard mentor, seperti MentorHome di artefak ----------------------
+
+interface MentorQueueRow {
+  submission: Submission
+  assignment: Assignment
+  course: Course
+  studentName: string
+}
+
+interface MentorCourseRow {
+  course: Course
+  students: number
+  pending: number
+}
+
+interface MentorBookingRow {
+  hour: OfficeHour
+  booking: OfficeHourBooking
+  studentName: string
+}
+
+function MentorHome(props: {
+  userId: string
+  profileName: string
+  courses: Course[]
+  announcements: Announcement[] | null
+}) {
+  const { userId, profileName, courses, announcements } = props
+  const [rows, setRows] = useState<MentorCourseRow[]>([])
+  const [queue, setQueue] = useState<MentorQueueRow[]>([])
+  const [pendingTotal, setPendingTotal] = useState(0)
+  const [graded, setGraded] = useState<MentorQueueRow[]>([])
+  const [unassigned, setUnassigned] = useState<Course[]>([])
+  const [claims, setClaims] = useState<CourseClaim[]>([])
+  const [bookings, setBookings] = useState<MentorBookingRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  async function load() {
+    try {
+      const mine = courses.filter((c) => c.mentor_id === userId)
+      // Per course: jumlah siswa + submission menunggu dinilai; kumpulkan
+      // juga peta assignment → course untuk antrean dan riwayat nilai.
+      const out: MentorCourseRow[] = []
+      const assignmentCourse = new Map<string, { assignment: Assignment; course: Course }>()
+      for (const course of mine) {
+        const [enrRes, lessons] = await Promise.all([
+          supabase.from('enrollments').select('id').eq('course_id', course.id),
+          fetchCourseLessons(course.id).catch(() => [] as Lesson[]),
+        ])
+        const lessonIds = lessons.map((l) => l.id)
+        let pending = 0
+        if (lessonIds.length > 0) {
+          const assigns = await safe(
+            async () => {
+              const { data } = await supabase
+                .from('assignments')
+                .select('*')
+                .in('lesson_id', lessonIds)
+              return (data ?? []) as Assignment[]
+            },
+            [] as Assignment[],
+          )
+          for (const a of assigns) assignmentCourse.set(a.id, { assignment: a, course })
+          if (assigns.length > 0) {
+            const { count } = await supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: true })
+              .in('assignment_id', assigns.map((a) => a.id))
+              .is('score', null)
+            pending = count ?? 0
+          }
+        }
+        out.push({ course, students: (enrRes.data ?? []).length, pending })
+      }
+      setRows(out)
+      setUnassigned(courses.filter((c) => !c.mentor_id))
+
+      // Antrean penilaian (score null, terbaru dulu) + baru dinilai.
+      const allAIds = [...assignmentCourse.keys()]
+      if (allAIds.length > 0) {
+        const [{ data: pend }, { data: grd }] = await Promise.all([
+          supabase
+            .from('submissions')
+            .select('*')
+            .in('assignment_id', allAIds)
+            .is('score', null)
+            .order('submitted_at', { ascending: false }),
+          supabase
+            .from('submissions')
+            .select('*')
+            .in('assignment_id', allAIds)
+            .not('score', 'is', null)
+            .not('graded_at', 'is', null)
+            .order('graded_at', { ascending: false })
+            .limit(4),
+        ])
+        const pendRows = (pend ?? []) as Submission[]
+        const grdRows = (grd ?? []) as Submission[]
+        const studentIds = [
+          ...new Set([...pendRows, ...grdRows].map((s) => s.user_id)),
+        ]
+        const names = await fetchProfileNames(studentIds).catch(
+          () => new Map<string, string>(),
+        )
+        const toRow = (s: Submission): MentorQueueRow | null => {
+          const ac = assignmentCourse.get(s.assignment_id)
+          if (!ac) return null
+          return {
+            submission: s,
+            assignment: ac.assignment,
+            course: ac.course,
+            studentName: names.get(s.user_id) ?? 'Siswa',
+          }
+        }
+        setPendingTotal(pendRows.length)
+        setQueue(
+          pendRows
+            .map(toRow)
+            .filter((r): r is MentorQueueRow => !!r)
+            .slice(0, 4),
+        )
+        setGraded(grdRows.map(toRow).filter((r): r is MentorQueueRow => !!r))
+      }
+
+      // Klaim mengampu saya (course_claims).
+      const cl = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('course_claims')
+            .select('*')
+            .eq('mentor_id', userId)
+            .order('created_at', { ascending: false })
+          return (data ?? []) as CourseClaim[]
+        },
+        [] as CourseClaim[],
+      )
+      setClaims(cl)
+
+      // Pesanan mentoring berikutnya: office hour saya yang sudah dipesan
+      // dan waktunya masih di depan.
+      const hours = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('office_hours')
+            .select('*')
+            .eq('mentor_id', userId)
+          return (data ?? []) as OfficeHour[]
+        },
+        [] as OfficeHour[],
+      )
+      if (hours.length > 0) {
+        const bRows = await safe(
+          async () => {
+            const { data } = await supabase
+              .from('office_hour_bookings')
+              .select('*')
+              .in(
+                'office_hour_id',
+                hours.map((h) => h.id),
+              )
+              .eq('status', 'booked')
+            return (data ?? []) as OfficeHourBooking[]
+          },
+          [] as OfficeHourBooking[],
+        )
+        const hourById = new Map(hours.map((h) => [h.id, h]))
+        const now = Date.now()
+        const upcoming = bRows
+          .map((b) => ({ hour: hourById.get(b.office_hour_id), booking: b }))
+          .filter(
+            (
+              x,
+            ): x is { hour: OfficeHour; booking: OfficeHourBooking } =>
+              !!x.hour &&
+              !!x.hour.starts_at &&
+              new Date(x.hour.starts_at).getTime() >= now,
+          )
+          .sort((a, b) => (a.hour.starts_at ?? '').localeCompare(b.hour.starts_at ?? ''))
+          .slice(0, 3)
+        const bNames = await fetchProfileNames(
+          upcoming.map((x) => x.booking.user_id),
+        ).catch(() => new Map<string, string>())
+        setBookings(
+          upcoming.map((x) => ({
+            hour: x.hour,
+            booking: x.booking,
+            studentName: bNames.get(x.booking.user_id) ?? 'Siswa',
+          })),
+        )
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat Mentor Workspace.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, courses])
+
+  async function handleClaim(courseId: string) {
+    const { error: insErr } = await supabase.from('course_claims').insert({
+      course_id: courseId,
+      mentor_id: userId,
+      status: 'pending',
+    })
+    if (insErr) setNotice(insErr.message)
+    else {
+      setNotice(
+        'Pengajuan mengampu terkirim. Admin akan meninjau — setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).',
+      )
+      const { data } = await supabase
+        .from('course_claims')
+        .select('*')
+        .eq('mentor_id', userId)
+        .order('created_at', { ascending: false })
+      setClaims((data ?? []) as CourseClaim[])
+    }
+  }
+
+  if (loading) return <p className="muted">Memuat Mentor Workspace…</p>
+  if (error) return <p className="error-box">{error}</p>
+
+  const firstName = profileName.trim().split(/\s+/)[0] || 'Mentor'
+  const totalStudents = rows.reduce((n, r) => n + r.students, 0)
+
+  return (
+    <>
+      <section className="hero">
+        <p className="hero-eyebrow">MENTOR WORKSPACE</p>
+        <h1>Halo, {firstName}!</h1>
+        <p className="hero-sub">
+          {rows.length} course diampu · {totalStudents} siswa · {pendingTotal} submission
+          menunggu dinilai
+        </p>
+        <div className="hero-actions">
+          <Link to="/mentor/penilaian" className="btn btn-primary">
+            Buka Antrean Penilaian
+          </Link>
+          <Link to="/mentor/course-builder" className="btn btn-outline-light">
+            Course Builder
+          </Link>
+        </div>
+      </section>
+
+      {notice && <p className="notice-box">{notice}</p>}
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Antrean Penilaian Terbaru</h2>
+          <Link to="/mentor/penilaian">Lihat semua →</Link>
+        </div>
+        <p className="muted">{pendingTotal} submission menunggu dinilai.</p>
+        {queue.length === 0 ? (
+          <p className="empty">Tidak ada submission yang menunggu penilaian.</p>
+        ) : (
+          <ul className="discussion-list">
+            {queue.map((row) => (
+              <li key={row.submission.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {row.course.title} · {row.assignment.title} · {row.studentName} ·{' '}
+                  {fmtDate(row.submission.submitted_at)}
+                </p>
+                <p>{row.submission.content ?? '—'}</p>
+                <p>
+                  <Link to="/mentor/penilaian">Nilai →</Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Kursus yang Kamu Ampu</h2>
+        {rows.length === 0 ? (
+          <p className="empty">
+            Kamu belum mengampu course apa pun. Ajukan course tanpa mentor di bawah.
+          </p>
+        ) : (
+          <ul className="course-list">
+            {rows.map((r) => (
+              <li key={r.course.id} className="course-card">
+                <Link to={`/mentor/course/${r.course.id}`}>
+                  <h3>{r.course.title}</h3>
+                  <p className="muted">
+                    {r.students} siswa · {r.pending} submission menunggu penilaian
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p>
+          <Link to="/mentor/siswa" className="btn btn-secondary">
+            Siswa
+          </Link>{' '}
+          <Link to="/mentor/diskusi" className="btn btn-secondary">
+            Diskusi
+          </Link>{' '}
+          <Link to="/mentor/analitik" className="btn btn-secondary">
+            Analitik
+          </Link>{' '}
+          <Link to="/rps" className="btn btn-ghost">
+            Lihat RPS (read-only)
+          </Link>
+        </p>
+      </section>
+
+      <section className="section">
+        <h2>Kursus Tanpa Pengampu</h2>
+        {unassigned.length === 0 ? (
+          <p className="empty">Tidak ada course tanpa mentor saat ini.</p>
+        ) : (
+          <ul>
+            {unassigned.map((c) => {
+              const claim = claims.find((cl) => cl.course_id === c.id)
+              return (
+                <li key={c.id}>
+                  {c.title}{' '}
+                  {claim ? (
+                    <span className="muted">— pengajuan: {claim.status}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void handleClaim(c.id)}
+                    >
+                      Ajukan untuk Mengampu
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Baru Dinilai</h2>
+        {graded.length === 0 ? (
+          <p className="empty">Belum ada submission yang kamu nilai.</p>
+        ) : (
+          <ul className="discussion-list">
+            {graded.map((row) => (
+              <li key={row.submission.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {row.course.title} · {row.assignment.title} · {row.studentName}
+                  {row.submission.score !== null ? ` · Nilai ${row.submission.score}` : ''} ·{' '}
+                  {fmtDate(row.submission.graded_at ?? row.submission.submitted_at)}
+                </p>
+                <p>{row.submission.feedback ?? '—'}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {bookings.length > 0 && (
+        <section className="section">
+          <h2>Pesanan Mentoring Berikutnya</h2>
+          <ul className="discussion-list">
+            {bookings.map((b) => (
+              <li key={b.booking.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {b.hour.starts_at ? fmtDate(b.hour.starts_at) : ''}
+                </p>
+                <h3>{b.hour.title}</h3>
+                <p>{b.studentName}</p>
+                <p>
+                  <Link to="/jam-kantor">Lihat Office Hours →</Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Pengumuman</h2>
+          <Link to="/pengumuman">Lihat semua</Link>
+        </div>
+        {announcements === null ? (
+          <p className="empty">Pengumuman belum tersedia.</p>
+        ) : announcements.length === 0 ? (
+          <p className="empty">Belum ada pengumuman.</p>
+        ) : (
+          <ul className="discussion-list">
+            {announcements.map((a) => (
+              <li key={a.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.created_at)}
+                </p>
+                <h3>{a.title}</h3>
+                {a.body && <p>{a.body}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  )
+}
+
+// --- Dashboard admin, seperti AdminHome di artefak -------------------------
+
+interface AdminActivityRow {
+  id: string
+  actor: string
+  action: string
+  created_at: string
+}
+
+function AdminHome(props: {
+  userId: string
+  profileName: string
+  courses: Course[]
+  announcements: Announcement[] | null
+}) {
+  const { userId, profileName, courses, announcements } = props
+  const [counts, setCounts] = useState({
+    users: 0,
+    siswa: 0,
+    mentor: 0,
+    schools: 0,
+    films: 0,
+    enrollments: 0,
+    pendingApps: 0,
+    openReports: 0,
+    unverifiedSchools: 0,
+  })
+  const [apps, setApps] = useState<MentorApplication[]>([])
+  const [schools, setSchools] = useState<School[]>([])
+  const [discReports, setDiscReports] = useState<DiscussionReport[]>([])
+  const [modReports, setModReports] = useState<ModerationReport[]>([])
+  const [activity, setActivity] = useState<AdminActivityRow[]>([])
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  async function load() {
+    try {
+      const { data: profiles } = await supabase.from('profiles').select('id,name,role')
+      const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
+      const { count: filmCount } = await safe(
+        async () =>
+          supabase.from('films').select('id', { count: 'exact', head: true }),
+        { count: 0 } as { count: number | null },
+      )
+      const { count: enrCount } = await safe(
+        async () =>
+          supabase.from('enrollments').select('id', { count: 'exact', head: true }),
+        { count: 0 } as { count: number | null },
+      )
+      const appData = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('mentor_applications')
+            .select('*')
+            .eq('status', 'pending')
+            .order('created_at')
+          return (data ?? []) as MentorApplication[]
+        },
+        [] as MentorApplication[],
+      )
+      const schoolData = await safe(
+        async () => {
+          const { data } = await supabase.from('schools').select('*').order('name')
+          return (data ?? []) as School[]
+        },
+        [] as School[],
+      )
+      const dData = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('discussion_reports')
+            .select('*')
+            .eq('status', 'open')
+            .order('created_at', { ascending: false })
+          return (data ?? []) as DiscussionReport[]
+        },
+        [] as DiscussionReport[],
+      )
+      const mData = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('moderation_reports')
+            .select('*')
+            .eq('status', 'open')
+            .order('created_at', { ascending: false })
+          return (data ?? []) as ModerationReport[]
+        },
+        [] as ModerationReport[],
+      )
+      setNames(await fetchProfileNames(profs.map((p) => p.id)))
+      setCounts({
+        users: profs.length,
+        siswa: profs.filter((p) => p.role === 'siswa').length,
+        mentor: profs.filter((p) => p.role === 'mentor').length,
+        schools: schoolData.length,
+        films: filmCount ?? 0,
+        enrollments: enrCount ?? 0,
+        pendingApps: appData.length,
+        openReports: dData.length + mData.length,
+        unverifiedSchools: schoolData.filter((s) => !s.is_verified).length,
+      })
+      setApps(appData)
+      setSchools(schoolData)
+      setDiscReports(dData)
+      setModReports(mData)
+
+      // Aktivitas terbaru: audit log; bila tabel tidak ada, pakai
+      // pendaftaran terbaru sebagai gantinya (data asli saja).
+      const aRows = await safe(
+        async () => {
+          const { data } = await supabase
+            .from('audit_log')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(5)
+          return (data ?? []) as AuditLogRow[]
+        },
+        null as AuditLogRow[] | null,
+      )
+      if (aRows && aRows.length > 0) {
+        const actorNames = await fetchProfileNames(
+          aRows.map((r) => r.actor_id).filter((id): id is string => !!id),
+        ).catch(() => new Map<string, string>())
+        setActivity(
+          aRows.map((r) => ({
+            id: r.id,
+            actor: (r.actor_id && actorNames.get(r.actor_id)) ?? 'Sistem',
+            action: r.action,
+            created_at: r.created_at,
+          })),
+        )
+      } else {
+        const newest = await safe(
+          async () => {
+            const { data } = await supabase
+              .from('profiles')
+              .select('id,name,role,created_at')
+              .order('created_at', { ascending: false })
+              .limit(5)
+            return (data ?? []) as { id: string; name: string | null; role: string; created_at: string }[]
+          },
+          [] as { id: string; name: string | null; role: string; created_at: string }[],
+        )
+        setActivity(
+          newest.map((p) => ({
+            id: p.id,
+            actor: p.name ?? 'Anggota baru',
+            action: `Mendaftar sebagai ${p.role === 'mentor' ? 'mentor' : p.role === 'admin' ? 'admin' : 'siswa'}`,
+            created_at: p.created_at,
+          })),
+        )
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat Ringkasan SINEVERSE.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function decideApp(app: MentorApplication, approve: boolean) {
+    const { error: updErr } = await supabase
+      .from('mentor_applications')
+      .update({ status: approve ? 'approved' : 'rejected', decided_by: userId })
+      .eq('id', app.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    await logAudit(
+      approve ? 'mentor_application.approved' : 'mentor_application.rejected',
+      'mentor_applications',
+      app.id,
+      { user_id: app.user_id },
+    )
+    setNotice(
+      approve
+        ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
+        : 'Lamaran mentor ditolak.',
+    )
+    await load()
+  }
+
+  async function handleVerifySchool(school: School, verify: boolean) {
+    const { error: updErr } = await supabase
+      .from('schools')
+      .update({ is_verified: verify })
+      .eq('id', school.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    await logAudit(verify ? 'school.verified' : 'school.unverified', 'schools', school.id, {})
+    setNotice(`Sekolah ${school.name} ${verify ? 'diverifikasi' : 'batal diverifikasi'}.`)
+    await load()
+  }
+
+  async function resolveDiscussion(r: DiscussionReport, status: 'resolved' | 'dismissed') {
+    const { error: updErr } = await supabase
+      .from('discussion_reports')
+      .update({ status, resolved_by: userId, resolved_at: new Date().toISOString() })
+      .eq('id', r.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    await logAudit(
+      `discussion_report.${status}`,
+      'discussion_reports',
+      r.id,
+      { discussion_id: r.discussion_id },
+    )
+    setNotice(`Laporan diskusi ${status === 'resolved' ? 'diselesaikan' : 'ditolak'}.`)
+    await load()
+  }
+
+  async function resolveModeration(r: ModerationReport, status: 'resolved' | 'dismissed') {
+    const { error: updErr } = await supabase
+      .from('moderation_reports')
+      .update({ status, resolved_by: userId, resolved_at: new Date().toISOString() })
+      .eq('id', r.id)
+    if (updErr) {
+      setNotice(updErr.message)
+      return
+    }
+    await logAudit(
+      `moderation_report.${status}`,
+      'moderation_reports',
+      r.id,
+      { target_type: r.target_type, target_id: r.target_id },
+    )
+    setNotice(`Laporan moderasi ${status === 'resolved' ? 'diselesaikan' : 'ditolak'}.`)
+    await load()
+  }
+
+  if (loading) return <p className="muted">Memuat Ringkasan SINEVERSE…</p>
+  if (error) return <p className="error-box">{error}</p>
+
+  const firstName = profileName.trim().split(/\s+/)[0] || 'Admin'
+  const unverified = schools.filter((s) => !s.is_verified)
+
+  return (
+    <>
+      <section className="hero">
+        <p className="hero-eyebrow">ADMIN PANEL</p>
+        <h1>Ringkasan SINEVERSE</h1>
+        <p className="hero-sub">
+          Halo, {firstName}! {counts.users} pengguna · {counts.schools} sekolah ·{' '}
+          {courses.length} course · {counts.films} film · {counts.enrollments} enrollment
+        </p>
+        <div className="hero-actions">
+          <Link to="/admin" className="btn btn-primary">
+            Buka Admin Panel
+          </Link>
+        </div>
+      </section>
+
+      {notice && <p className="notice-box">{notice}</p>}
+
+      <section className="section" aria-label="Statistik platform">
+        <div className="stat-grid">
+          <div className="stat-card">
+            <span className="stat-num">{counts.pendingApps}</span>
+            <span className="stat-label">Mentor menunggu verifikasi</span>
+            <Link to="/admin#lamaran-mentor">Tinjau →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{counts.openReports}</span>
+            <span className="stat-label">Laporan terbuka</span>
+            <Link to="/admin/moderasi">Tinjau →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{counts.unverifiedSchools}</span>
+            <span className="stat-label">Sekolah belum terverifikasi</span>
+            <Link to="/admin#verifikasi-sekolah">Tinjau →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{counts.users}</span>
+            <span className="stat-label">
+              Total pengguna (Siswa {counts.siswa} · Mentor {counts.mentor})
+            </span>
+            <Link to="/admin/pengguna">Lihat →</Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Lamaran Mentor ({apps.length} pending)</h2>
+          <Link to="/admin#lamaran-mentor">Admin Panel →</Link>
+        </div>
+        {apps.length === 0 ? (
+          <p className="empty">Tidak ada lamaran mentor yang menunggu.</p>
+        ) : (
+          <ul className="discussion-list">
+            {apps.map((a) => (
+              <li key={a.id} className="discussion-item">
+                <p>
+                  <strong>{names.get(a.user_id) ?? 'Pelamar'}</strong>
+                </p>
+                <p>Keahlian: {a.expertise ?? '—'}</p>
+                <p>Pengalaman: {a.experience ?? '—'}</p>
+                {a.portfolio_link && (
+                  <p>
+                    <a href={a.portfolio_link} target="_blank" rel="noreferrer">
+                      Portofolio
+                    </a>
+                  </p>
+                )}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() => void decideApp(a, true)}
+                  >
+                    Setujui
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => void decideApp(a, false)}
+                  >
+                    Tolak
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Sekolah Belum Terverifikasi ({unverified.length})</h2>
+          <Link to="/admin#verifikasi-sekolah">Admin Panel →</Link>
+        </div>
+        {unverified.length === 0 ? (
+          <p className="empty">Semua sekolah sudah terverifikasi.</p>
+        ) : (
+          <ul className="discussion-list">
+            {unverified.map((s) => (
+              <li key={s.id} className="discussion-item">
+                <h3>{s.name}</h3>
+                {s.city && <p className="muted">{s.city}</p>}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() => void handleVerifySchool(s, true)}
+                  >
+                    Verifikasi
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Laporan Terbuka ({discReports.length + modReports.length})</h2>
+          <Link to="/admin/moderasi">Moderasi →</Link>
+        </div>
+        {discReports.length === 0 && modReports.length === 0 ? (
+          <p className="empty">Tidak ada laporan terbuka.</p>
+        ) : (
+          <ul className="discussion-list">
+            {discReports.map((r) => (
+              <li key={`d-${r.id}`} className="discussion-item">
+                <p className="discussion-meta">
+                  Laporan diskusi · {fmtDate(r.created_at)} · Status: {r.status}
+                </p>
+                <p>Alasan: {r.reason ?? '—'}</p>
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() => void resolveDiscussion(r, 'resolved')}
+                  >
+                    Selesaikan
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => void resolveDiscussion(r, 'dismissed')}
+                  >
+                    Tolak Laporan
+                  </button>
+                </div>
+              </li>
+            ))}
+            {modReports.map((r) => (
+              <li key={`m-${r.id}`} className="discussion-item">
+                <p className="discussion-meta">
+                  Laporan moderasi · {r.target_type}
+                  {r.target_id ? ` · ${r.target_id}` : ''} · {fmtDate(r.created_at)} · Status:{' '}
+                  {r.status}
+                </p>
+                <p>Alasan: {r.reason ?? '—'}</p>
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() => void resolveModeration(r, 'resolved')}
+                  >
+                    Selesaikan
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => void resolveModeration(r, 'dismissed')}
+                  >
+                    Tolak Laporan
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Aktivitas Terbaru</h2>
+        {activity.length === 0 ? (
+          <p className="empty">Belum ada aktivitas.</p>
+        ) : (
+          <ul className="discussion-list">
+            {activity.map((a) => (
+              <li key={a.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {a.actor} · {fmtDate(a.created_at)}
+                </p>
+                <p>{a.action}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p>
+          <Link to="/admin#pengumuman" className="btn btn-secondary">
+            Buat Pengumuman
+          </Link>{' '}
+          <Link to="/admin#buat-course" className="btn btn-secondary">
+            Buat Course
+          </Link>{' '}
+          <Link to="/admin#verifikasi-sekolah" className="btn btn-secondary">
+            Verifikasi Sekolah
+          </Link>
+        </p>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Pengumuman</h2>
+          <Link to="/pengumuman">Lihat semua</Link>
+        </div>
+        {announcements === null ? (
+          <p className="empty">Pengumuman belum tersedia.</p>
+        ) : announcements.length === 0 ? (
+          <p className="empty">Belum ada pengumuman.</p>
+        ) : (
+          <ul className="discussion-list">
+            {announcements.map((a) => (
+              <li key={a.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.created_at)}
+                </p>
+                <h3>{a.title}</h3>
+                {a.body && <p>{a.body}</p>}
               </li>
             ))}
           </ul>

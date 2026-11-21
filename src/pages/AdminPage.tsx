@@ -5,6 +5,7 @@
 // sekolah, usulan komunitas + hapus komunitas, pengumuman, progress lengkap.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
@@ -22,6 +23,7 @@ interface ProgressRow {
 
 export default function AdminPage() {
   const { user, profile } = useAuth()
+  const location = useLocation()
   const [counts, setCounts] = useState({ users: 0, siswa: 0, mentor: 0, courses: 0, enrollments: 0, pendingApps: 0, openReports: 0 })
   const [apps, setApps] = useState<MentorApplication[]>([])
   const [claims, setClaims] = useState<CourseClaim[]>([])
@@ -125,6 +127,14 @@ export default function AdminPage() {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Lompat ke section bila dibuka lewat tautan hash dari Beranda admin
+  // (mis. /admin#lamaran-mentor) — setelah data selesai dimuat.
+  useEffect(() => {
+    if (loading || !location.hash) return
+    const el = document.querySelector(location.hash)
+    if (el) el.scrollIntoView()
+  }, [loading, location.hash])
 
   if (profile?.role !== 'admin') {
     return (
@@ -310,7 +320,7 @@ export default function AdminPage() {
         </dl>
       </section>
 
-      <section className="section">
+      <section className="section" id="lamaran-mentor">
         <h2>Lamaran Mentor ({apps.length} pending)</h2>
         {apps.length === 0 ? <p className="empty">Tidak ada lamaran mentor yang menunggu.</p> : (
           <ul className="discussion-list">
@@ -345,7 +355,7 @@ export default function AdminPage() {
         )}
       </section>
 
-      <section className="section">
+      <section className="section" id="buat-course">
         <h2>Pembagian Mentor Kurikulum &amp; Buat Course</h2>
         <form className="form" onSubmit={handleAssignMentor}>
           <label>
@@ -372,7 +382,7 @@ export default function AdminPage() {
         </form>
       </section>
 
-      <section className="section">
+      <section className="section" id="verifikasi-sekolah">
         <h2>Verifikasi Sekolah</h2>
         {schools.length === 0 ? <p className="empty">Belum ada sekolah.</p> : (
           <ul>
@@ -412,7 +422,7 @@ export default function AdminPage() {
         </ul>
       </section>
 
-      <section className="section">
+      <section className="section" id="pengumuman">
         <h2>Pengumuman</h2>
         <form className="form" onSubmit={handleCreateAnnouncement}>
           <label>Judul<input value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} required /></label>
