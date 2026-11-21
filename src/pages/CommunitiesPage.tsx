@@ -99,7 +99,7 @@ export default function CommunitiesPage() {
     <div className="page">
       <PageHeader
         icon="community"
-        title="Komunitas"
+        title="Community"
         subtitle="Bergabung dengan komunitas filmmaker pelajar di seluruh Indonesia."
       />
       {notice && <p className="notice-box">{notice}</p>}

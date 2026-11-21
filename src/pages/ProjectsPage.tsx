@@ -98,7 +98,7 @@ export default function ProjectsPage() {
     <div className="page">
       <PageHeader
         icon="project"
-        title="Proyek"
+        title="Projects"
         subtitle="Buat film bareng kru dari berbagai sekolah."
       />
       {notice && <p className="notice-box">{notice}</p>}

@@ -79,7 +79,7 @@ export function LibraryPage() {
     <div className="page">
       <PageHeader
         icon="library"
-        title="Pustaka"
+        title="Library"
         subtitle="Naskah, glosarium, template, dan bacaan filmmaking — lengkap dengan dasar hukum dan atribusi."
       />
       {notice && <p className="notice-box">{notice}</p>}
