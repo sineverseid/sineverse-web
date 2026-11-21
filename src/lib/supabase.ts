@@ -34,6 +34,20 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   },
 })
 
+/**
+ * URL dasar aplikasi (dengan garis miring akhir) untuk pengalihan email
+ * autentikasi. Supabase memakai ini sebagai tujuan tautan konfirmasi.
+ * Tanpa emailRedirectTo eksplisit, tautan kembali ke origin saja dan
+ * kehilangan subpath /sineverse-web/ (atau ke localhost saat
+ * pengembangan), sehingga pengguna tidak pernah kembali ke aplikasi.
+ * Diturunkan dari URL saat ini agar benar di produksi maupun lokal.
+ */
+export function appBaseUrl(): string {
+  const { origin, pathname } = window.location
+  const firstSegment = pathname.split('/').filter(Boolean)[0]
+  return firstSegment ? `${origin}/${firstSegment}/` : `${origin}/`
+}
+
 // ---------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------
