@@ -1,4 +1,4 @@
-// SINEVERSE — Acara (007): daftar + detail + sesi/rundown + pendaftaran
+// SINEVERSE, Acara (007): daftar + detail + sesi/rundown + pendaftaran
 // berkapasitas (ditolak bila penuh). Acara eksternal: hanya penyelenggara
 // + tautan resmi, tanpa pendaftaran di aplikasi.
 import { useEffect, useState } from 'react'
@@ -26,6 +26,7 @@ export function EventsPage() {
   const [endsAt, setEndsAt] = useState('')
   const [location, setLocation] = useState('')
   const [capacity, setCapacity] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
   const [tab, setTab] = useState<'kalender' | 'kompetisi' | 'sertifikat' | 'analitik'>('kalender')
 
   const canCreate = profile?.role === 'mentor' || profile?.role === 'admin'
@@ -64,6 +65,16 @@ export function EventsPage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim()) return
+    const cap = capacity ? Number(capacity) : null
+    if (cap !== null && (Number.isNaN(cap) || cap < 0)) {
+      setFormError('Kapasitas tidak boleh negatif.')
+      return
+    }
+    if (startsAt && endsAt && new Date(endsAt) < new Date(startsAt)) {
+      setFormError('Waktu selesai tidak boleh lebih awal dari waktu mulai.')
+      return
+    }
+    setFormError(null)
     const { error: insErr } = await supabase.from('events').insert({
       title: title.trim(),
       description: description.trim() || null,
@@ -71,7 +82,7 @@ export function EventsPage() {
       starts_at: startsAt ? new Date(startsAt).toISOString() : null,
       ends_at: endsAt ? new Date(endsAt).toISOString() : null,
       location: location.trim() || null,
-      capacity: capacity ? Number(capacity) : null,
+      capacity: cap,
       created_by: user.id,
     })
     if (insErr) {
@@ -110,10 +121,7 @@ export function EventsPage() {
           ) : error ? (
             <p className="error-box">{error}</p>
           ) : events === null ? (
-            <>
-              <h1>Acara</h1>
-              <MigrationNotice migration="007" />
-            </>
+            <MigrationNotice migration="007" />
           ) : (
             <>
       {notice && <p className="notice-box">{notice}</p>}
@@ -122,6 +130,7 @@ export function EventsPage() {
           <h2>Buat Acara</h2>
           <p className="muted">Mentor dan admin dapat membuat acara internal (workshop, screening, webinar, festival).</p>
           <form className="form" onSubmit={handleCreate}>
+            {formError && <p className="error-box">{formError}</p>}
             <label>
               Judul acara
               <input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Mis. Workshop Sinematografi Dasar" />
@@ -157,6 +166,7 @@ export function EventsPage() {
           {events.map((e) => (
             <li key={e.id} className="course-card">
               <Link to={`/acara/${e.id}`}>
+                <div className="course-card-body">
                 <h3>{e.title}</h3>
                 <p>{e.description ?? ''}</p>
                 <p className="muted">
@@ -165,6 +175,7 @@ export function EventsPage() {
                   {e.location ? ` · ${e.location}` : ''}
                   {e.capacity !== null ? ` · Kapasitas: ${e.capacity}` : ''}
                 </p>
+                </div>
               </Link>
             </li>
           ))}
@@ -185,19 +196,21 @@ export function EventsPage() {
 // jumlah acara, pendaftaran, kompetisi per status, karya masuk, pemenang.
 function EventsAnalytics() {
   const [stats, setStats] = useState<{
-    events: number
-    internal: number
-    external: number
-    registrations: number
-    competitions: number
-    compOpen: number
-    compJudging: number
-    compDone: number
-    submissions: number
-    winners: number
+    events: number | null
+    internal: number | null
+    external: number | null
+    registrations: number | null
+    competitions: number | null
+    compOpen: number | null
+    compExpired: number | null
+    compJudging: number | null
+    compDone: number | null
+    submissions: number | null
+    winners: number | null
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [partialError, setPartialError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -206,24 +219,32 @@ function EventsAnalytics() {
         const [ev, reg, comp, sub, win] = await Promise.all([
           supabase.from('events').select('kind'),
           supabase.from('event_registrations').select('id', { count: 'exact', head: true }),
-          supabase.from('competitions').select('status'),
+          supabase.from('competitions').select('status,deadline'),
           supabase.from('competition_submissions').select('id', { count: 'exact', head: true }),
           supabase.from('competition_winners').select('id', { count: 'exact', head: true }),
         ])
         if (cancelled) return
-        const evRows = (ev.data ?? []) as { kind: string }[]
-        const compRows = (comp.data ?? []) as { status: string }[]
+        const failed = !!(ev.error || reg.error || comp.error || sub.error || win.error)
+        setPartialError(failed)
+        const evRows = ev.error ? null : ((ev.data ?? []) as { kind: string }[])
+        const compRows = comp.error
+          ? null
+          : ((comp.data ?? []) as { status: string; deadline: string | null }[])
+        const now = new Date()
+        const isExpired = (c: { status: string; deadline: string | null }) =>
+          c.status === 'dibuka' && !!c.deadline && new Date(c.deadline) < now
         setStats({
-          events: evRows.length,
-          internal: evRows.filter((e) => e.kind === 'internal').length,
-          external: evRows.filter((e) => e.kind === 'external').length,
-          registrations: reg.count ?? 0,
-          competitions: compRows.length,
-          compOpen: compRows.filter((c) => c.status === 'dibuka').length,
-          compJudging: compRows.filter((c) => c.status === 'penjurian').length,
-          compDone: compRows.filter((c) => c.status === 'selesai').length,
-          submissions: sub.count ?? 0,
-          winners: win.count ?? 0,
+          events: evRows ? evRows.length : null,
+          internal: evRows ? evRows.filter((e) => e.kind === 'internal').length : null,
+          external: evRows ? evRows.filter((e) => e.kind === 'external').length : null,
+          registrations: reg.error ? null : (reg.count ?? 0),
+          competitions: compRows ? compRows.length : null,
+          compOpen: compRows ? compRows.filter((c) => c.status === 'dibuka' && !isExpired(c)).length : null,
+          compExpired: compRows ? compRows.filter(isExpired).length : null,
+          compJudging: compRows ? compRows.filter((c) => c.status === 'penjurian').length : null,
+          compDone: compRows ? compRows.filter((c) => c.status === 'selesai').length : null,
+          submissions: sub.error ? null : (sub.count ?? 0),
+          winners: win.error ? null : (win.count ?? 0),
         })
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat analitik.')
@@ -241,26 +262,30 @@ function EventsAnalytics() {
   if (error) return <p className="error-box">{error}</p>
   if (!stats) return <p className="empty">Tidak ada data analitik.</p>
 
+  const show = (v: number | null) => (v === null ? '—' : v)
+
   return (
     <div>
+      {partialError && <p className="error-box">Analitik gagal dimuat sebagian.</p>}
       <section className="section">
         <h2>Acara</h2>
         <dl className="profile-list">
-          <div><dt>Total acara</dt><dd>{stats.events}</dd></div>
-          <div><dt>Internal</dt><dd>{stats.internal}</dd></div>
-          <div><dt>Eksternal</dt><dd>{stats.external}</dd></div>
-          <div><dt>Total pendaftaran</dt><dd>{stats.registrations}</dd></div>
+          <div><dt>Total acara</dt><dd>{show(stats.events)}</dd></div>
+          <div><dt>Internal</dt><dd>{show(stats.internal)}</dd></div>
+          <div><dt>Eksternal</dt><dd>{show(stats.external)}</dd></div>
+          <div><dt>Total pendaftaran</dt><dd>{show(stats.registrations)}</dd></div>
         </dl>
       </section>
       <section className="section">
         <h2>Kompetisi &amp; Festival</h2>
         <dl className="profile-list">
-          <div><dt>Total kompetisi</dt><dd>{stats.competitions}</dd></div>
-          <div><dt>Dibuka</dt><dd>{stats.compOpen}</dd></div>
-          <div><dt>Penjurian</dt><dd>{stats.compJudging}</dd></div>
-          <div><dt>Selesai</dt><dd>{stats.compDone}</dd></div>
-          <div><dt>Karya masuk</dt><dd>{stats.submissions}</dd></div>
-          <div><dt>Pemenang</dt><dd>{stats.winners}</dd></div>
+          <div><dt>Total kompetisi</dt><dd>{show(stats.competitions)}</dd></div>
+          <div><dt>Dibuka</dt><dd>{show(stats.compOpen)}</dd></div>
+          <div><dt>Tenggat lewat</dt><dd>{show(stats.compExpired)}</dd></div>
+          <div><dt>Penjurian</dt><dd>{show(stats.compJudging)}</dd></div>
+          <div><dt>Selesai</dt><dd>{show(stats.compDone)}</dd></div>
+          <div><dt>Karya masuk</dt><dd>{show(stats.submissions)}</dd></div>
+          <div><dt>Pemenang</dt><dd>{show(stats.winners)}</dd></div>
         </dl>
       </section>
     </div>
@@ -372,12 +397,14 @@ export function EventDetailPage() {
       {currentEvent.kind === 'external' && (
         <p className="notice-box">
           Acara ini diselenggarakan oleh {currentEvent.organizer ?? 'penyelenggara eksternal'}.
-          Pendaftaran hanya dilakukan di situs penyelenggara — SINEVERSE tidak membuka pendaftaran di aplikasi.
-          {currentEvent.official_link && (
+          Pendaftaran hanya dilakukan di situs penyelenggara. SINEVERSE tidak membuka pendaftaran di aplikasi.
+          {currentEvent.official_link ? (
             <>
               {' '}
               <a href={currentEvent.official_link} target="_blank" rel="noreferrer">Buka situs resmi penyelenggara</a>
             </>
+          ) : (
+            ' Tautan pendaftaran belum tersedia.'
           )}
         </p>
       )}
@@ -391,7 +418,7 @@ export function EventDetailPage() {
             {sessions.map((s) => (
               <li key={s.id}>
                 <strong>{s.title}</strong>
-                {s.starts_at ? ` — ${fmtDate(s.starts_at)}` : ''}
+                {s.starts_at ? `, ${fmtDate(s.starts_at)}` : ''}
                 {s.description ? <p className="muted">{s.description}</p> : null}
               </li>
             ))}
@@ -404,7 +431,7 @@ export function EventDetailPage() {
           <h2>Pendaftaran</h2>
           <p className="muted">
             Terdaftar: {count}{currentEvent.capacity !== null ? ` / ${currentEvent.capacity}` : ' (tanpa batas kapasitas)'}
-            {full ? ' — Kapasitas penuh.' : ''}
+            {full ? ', Kapasitas penuh.' : ''}
           </p>
           {user ? (
             registered ? (

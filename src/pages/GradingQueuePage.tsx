@@ -1,6 +1,6 @@
-// SINEVERSE — Antrean penilaian mentor: submission yang belum dinilai,
+// SINEVERSE, Antrean penilaian mentor: submission yang belum dinilai,
 // diurutkan dari yang paling lama (tertua dulu). Hanya course yang diampu
-// mentor (courses.mentor_id) — admin melihat semua course. Penilaian:
+// mentor (courses.mentor_id), admin melihat semua course. Penilaian:
 // skor langsung + umpan balik; submission yang dinilai masuk gradebook.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -28,12 +28,16 @@ export default function GradingQueuePage() {
   const [score, setScore] = useState('')
   const [feedback, setFeedback] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const isAdmin = profile?.role === 'admin'
   const isMentor = profile?.role === 'mentor' || isAdmin
 
   async function load() {
-    if (!user) return
+    if (!user) {
+      setLoading(false)
+      return
+    }
     const currentUser = user
     try {
       const courses = await fetchCourses()
@@ -83,6 +87,7 @@ export default function GradingQueuePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.role])
 
+  if (loading) return <div className="page"><p className="muted">Memuat antrean…</p></div>
   if (!isMentor) {
     return (
       <div className="page">
@@ -91,7 +96,6 @@ export default function GradingQueuePage() {
       </div>
     )
   }
-  if (loading) return <div className="page"><p className="muted">Memuat antrean…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
   async function handleGrade(e: FormEvent, row: QueueRow) {
@@ -106,9 +110,10 @@ export default function GradingQueuePage() {
       .update({ score: value, feedback: feedback.trim() || null, graded_at: new Date().toISOString() })
       .eq('id', row.submission.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal menyimpan nilai. Coba lagi sebentar lagi.')
       return
     }
+    setSaving(true)
     // Beri tahu siswa (best-effort; gagal kirim tidak membatalkan nilai).
     await sendNotification(
       row.submission.user_id,
@@ -121,8 +126,8 @@ export default function GradingQueuePage() {
     setGradingId(null)
     setScore('')
     setFeedback('')
-    setLoading(true)
     await load()
+    setSaving(false)
   }
 
   return (
@@ -133,6 +138,7 @@ export default function GradingQueuePage() {
         Diurutkan dari yang paling lama dikirim (tertua dulu). {rows.length} submission belum dinilai.
       </p>
       {notice && <p className="notice-box">{notice}</p>}
+      {saving && <p className="muted">Menyimpan nilai…</p>}
       {rows.length === 0 ? (
         <p className="empty">Tidak ada submission yang menunggu penilaian.</p>
       ) : (

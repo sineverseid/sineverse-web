@@ -1,4 +1,4 @@
-// SINEVERSE — Mentor Workspace (008 + 003): course yang diampu + jumlah
+// SINEVERSE, Mentor Workspace (008 + 003): course yang diampu + jumlah
 // siswa / penilaian tertunda, "Ajukan untuk Mengampu" course tanpa mentor,
 // lamaran mentor, office hours, RPS read-only.
 import { useEffect, useState } from 'react'
@@ -28,9 +28,17 @@ export default function MentorPage() {
   const [expertise, setExpertise] = useState('')
   const [experience, setExperience] = useState('')
   const [portfolioLink, setPortfolioLink] = useState('')
+  const [pendingApplication, setPendingApplication] = useState(false)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
+  const isAdmin = profile?.role === 'admin'
   const isSiswa = profile?.role === 'siswa'
+
+  function friendlyError(err: unknown): string {
+    const msg = err instanceof Error ? err.message : ''
+    if (/duplicate|unique|23505/i.test(msg)) return 'Lamaran kamu masih menunggu persetujuan.'
+    return 'Gagal mengirim. Coba lagi sebentar lagi.'
+  }
 
   useEffect(() => {
     if (!user) return
@@ -69,6 +77,13 @@ export default function MentorPage() {
         }
         const { data: cl } = await supabase.from('course_claims').select('*').eq('mentor_id', currentUser.id).order('created_at', { ascending: false })
         if (!cancelled) setClaims((cl ?? []) as CourseClaim[])
+        const { data: apps } = await supabase
+          .from('mentor_applications')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('status', 'pending')
+          .limit(1)
+        if (!cancelled) setPendingApplication(((apps ?? []) as { id: string }[]).length > 0)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat Mentor Workspace.')
       } finally {
@@ -88,9 +103,9 @@ export default function MentorPage() {
       mentor_id: user.id,
       status: 'pending',
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice(friendlyError(insErr))
     else {
-      setNotice('Pengajuan mengampu terkirim. Admin akan meninjau — setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).')
+      setNotice('Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).')
       const { data } = await supabase.from('course_claims').select('*').eq('mentor_id', user.id).order('created_at', { ascending: false })
       setClaims((data ?? []) as CourseClaim[])
     }
@@ -99,6 +114,10 @@ export default function MentorPage() {
   async function handleApply(e: FormEvent) {
     e.preventDefault()
     if (!user) return
+    if (pendingApplication) {
+      setNotice('Lamaran kamu masih menunggu persetujuan.')
+      return
+    }
     const { error: insErr } = await supabase.from('mentor_applications').insert({
       user_id: user.id,
       expertise: expertise.trim() || null,
@@ -106,9 +125,10 @@ export default function MentorPage() {
       portfolio_link: portfolioLink.trim() || null,
       status: 'pending',
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice(friendlyError(insErr))
     else {
-      setNotice('Lamaran mentor terkirim. Persetujuan admin mengubah peranmu menjadi mentor secara otomatis (trigger di database — bukan dari aplikasi).')
+      setNotice('Lamaran mentor terkirim. Persetujuan admin mengubah peranmu menjadi mentor secara otomatis (trigger di database, bukan dari aplikasi).')
+      setPendingApplication(true)
       setExpertise('')
       setExperience('')
       setPortfolioLink('')
@@ -131,6 +151,10 @@ export default function MentorPage() {
       {isSiswa && (
         <section className="section">
           <h2>Lamar Menjadi Mentor</h2>
+          {pendingApplication ? (
+            <p className="notice-box">Lamaran kamu masih menunggu persetujuan.</p>
+          ) : (
+          <>
           <p className="muted">Kamu saat ini terdaftar sebagai siswa. Kirim lamaran mentor di sini; admin yang menyetujui.</p>
           <form className="form" onSubmit={handleApply}>
             <label>
@@ -147,6 +171,8 @@ export default function MentorPage() {
             </label>
             <button type="submit" className="btn btn-primary">Kirim Lamaran Mentor</button>
           </form>
+          </>
+          )}
         </section>
       )}
 
@@ -155,7 +181,7 @@ export default function MentorPage() {
       {isMentor && (
         <>
           <section className="section">
-            <h2>Course Saya</h2>
+            <h2>{isAdmin ? 'Semua Course' : 'Course Saya'}</h2>
             {rows.length === 0 ? (
               <p className="empty">Kamu belum mengampu course apa pun. Ajukan course tanpa mentor di bawah.</p>
             ) : (

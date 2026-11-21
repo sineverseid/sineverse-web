@@ -1,4 +1,4 @@
-// SINEVERSE — Direktori Mentor.
+// SINEVERSE, Direktori Mentor.
 // SINEVERSE Mentors (master prompt §03: profil, kelas, sesi mentoring).
 // Semua anggota bisa melihat mentor terverifikasi, course yang diampu,
 // dan sesi office hour-nya. Hanya data publik yang aman yang ditampilkan
@@ -20,6 +20,9 @@ export default function MentorsPage() {
   const [rows, setRows] = useState<MentorRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [verifiedOnly, setVerifiedOnly] = useState(true)
+  const [hoursError, setHoursError] = useState(false)
+  const [brokenPhotos, setBrokenPhotos] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -32,16 +35,37 @@ export default function MentorsPage() {
           .order('name')
         if (qErr) throw qErr
         const mentors = (profs ?? []) as Profile[]
+        // Hanya mentor yang lamarannya disetujui yang boleh tampil dengan
+        // label terverifikasi. Bila query lamaran gagal, tampilkan semua
+        // mentor tanpa klaim terverifikasi.
+        let verifiedIds: Set<string> | null = null
+        const { data: apps, error: appErr } = await supabase
+          .from('mentor_applications')
+          .select('user_id')
+          .eq('status', 'approved')
+        if (appErr) {
+          verifiedIds = null
+        } else {
+          verifiedIds = new Set(((apps ?? []) as { user_id: string }[]).map((a) => a.user_id))
+        }
+        const visible = verifiedIds ? mentors.filter((m) => verifiedIds.has(m.id)) : mentors
+        if (!cancelled) setVerifiedOnly(verifiedIds !== null)
         const courses = await fetchCourses()
-        const { data: hours } = await supabase
+        const { data: hours, error: hoursErr } = await supabase
           .from('office_hours')
           .select('*')
           .order('starts_at', { ascending: true })
+        if (hoursErr) {
+          if (!cancelled) setHoursError(true)
+        }
         const hourRows = (hours ?? []) as OfficeHour[]
-        const out: MentorRow[] = mentors.map((m) => ({
+        const now = new Date()
+        const out: MentorRow[] = visible.map((m) => ({
           profile: m,
           courses: courses.filter((c: Course) => c.mentor_id === m.id).map((c: Course) => c.title),
-          officeHours: hourRows.filter((h) => h.mentor_id === m.id),
+          officeHours: hourRows.filter(
+            (h) => h.mentor_id === m.id && h.starts_at && new Date(h.starts_at) >= now,
+          ),
         }))
         if (!cancelled) setRows(out)
       } catch (err) {
@@ -56,18 +80,32 @@ export default function MentorsPage() {
     }
   }, [])
 
+  const initials = (name: string | null | undefined) => {
+    const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+    if (parts.length === 0) return 'M'
+    return (parts[0].charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : '')).toUpperCase()
+  }
+
   return (
     <div className="page">
       <PageHeader
         icon="mentor"
         title="Mentors"
-        subtitle="Mentor terverifikasi SINEVERSE — lihat course yang diampu dan sesi mentoring yang tersedia."
+        subtitle={
+          verifiedOnly
+            ? 'Mentor terverifikasi SINEVERSE. Lihat course yang diampu dan sesi mentoring yang tersedia.'
+            : 'Mentor SINEVERSE. Lihat course yang diampu dan sesi mentoring yang tersedia.'
+        }
       />
       {loading && <p className="muted">Memuat mentor…</p>}
       {error && <p className="error-box">{error}</p>}
       {!loading && !error && rows !== null && rows.length === 0 && (
         <EmptyState
-          message="Belum ada mentor. Belum ada mentor terverifikasi di platform."
+          message={
+            verifiedOnly
+              ? 'Belum ada mentor. Belum ada mentor terverifikasi di platform.'
+              : 'Belum ada mentor di platform.'
+          }
         />
       )}
       {!loading && !error && rows !== null && rows.length > 0 && (
@@ -75,13 +113,32 @@ export default function MentorsPage() {
           {rows.map((r) => (
             <li key={r.profile.id} className="discussion-item">
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                {r.profile.photo_url ? (
+                {r.profile.photo_url && !brokenPhotos.has(r.profile.id) ? (
                   <img
                     src={r.profile.photo_url}
                     alt={r.profile.name ?? 'Mentor'}
                     style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }}
+                    onError={() => setBrokenPhotos((prev) => new Set(prev).add(r.profile.id))}
                   />
-                ) : null}
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: '50%',
+                      background: 'var(--navy)',
+                      color: '#fff',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {initials(r.profile.name)}
+                  </span>
+                )}
                 <div>
                   <h3 style={{ margin: 0 }}>{r.profile.name ?? 'Mentor'}</h3>
                   {r.profile.city && <p className="muted" style={{ margin: 0 }}>{r.profile.city}</p>}
@@ -97,9 +154,11 @@ export default function MentorsPage() {
               </p>
               <p>
                 <strong>Sesi mentoring:</strong>{' '}
-                {r.officeHours.length === 0
-                  ? 'Belum ada jadwal office hour.'
-                  : `${r.officeHours.length} sesi tersedia.`}{' '}
+                {hoursError
+                  ? 'Jadwal gagal dimuat.'
+                  : r.officeHours.length === 0
+                    ? 'Belum ada jadwal office hour.'
+                    : `${r.officeHours.length} sesi tersedia.`}{' '}
                 <Link to="/jam-kantor">Lihat Office Hours</Link>
               </p>
             </li>

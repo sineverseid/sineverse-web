@@ -1,4 +1,4 @@
-// SINEVERSE — Portofolio (006).
+// SINEVERSE, Portofolio (006).
 // Item portofolio punya visibilitas public / members / community / private.
 // ATURAN PRIVASI: pembelajaran yang sedang berjalan (in-progress) dan
 // daftar sertifikat HANYA terlihat oleh pemilik portofolio dan admin —
@@ -22,6 +22,13 @@ const KINDS = [
   { value: 'achievement', label: 'Prestasi' },
 ] as const
 
+const VISIBILITY_LABELS: Record<string, string> = {
+  public: 'Publik',
+  members: 'Anggota',
+  community: 'Komunitas',
+  private: 'Privat',
+}
+
 export default function PortfolioPage() {
   const { userId } = useParams<{ userId?: string }>()
   const { user, profile } = useAuth()
@@ -31,6 +38,7 @@ export default function PortfolioPage() {
   const canSeePrivate = isOwner || isAdmin
 
   const [owner, setOwner] = useState<{ name: string | null; photo_url: string | null } | null>(null)
+  const [ownerFound, setOwnerFound] = useState<boolean | null>(null)
   const [items, setItems] = useState<PortfolioItem[] | null>(null)
   const [inProgress, setInProgress] = useState<string[]>([])
   const [certs, setCerts] = useState<Certificate[]>([])
@@ -49,7 +57,14 @@ export default function PortfolioPage() {
     async function load() {
       try {
         const prof = await fetchPublicProfile(targetId)
-        if (!cancelled) setOwner(prof ? { name: prof.name, photo_url: prof.photo_url } : null)
+        if (!cancelled) {
+          setOwner(prof ? { name: prof.name, photo_url: prof.photo_url } : null)
+          setOwnerFound(prof !== null)
+        }
+        if (!prof) {
+          if (!cancelled) setItems([])
+          return
+        }
         const { data, error: qErr } = await supabase
           .from('portfolio_items')
           .select('*')
@@ -65,34 +80,69 @@ export default function PortfolioPage() {
         if (cancelled) return
         // Visibilitas ditegakkan di UI sesuai peran pengunjung (RLS juga
         // membatasi di server; private tidak pernah tampil untuk orang lain).
+        // Item 'community' tampil bila pengunjung adalah anggota salah satu
+        // komunitas milik pemilik portofolio.
+        let sharesCommunity = false
+        if (!canSeePrivate && user && user.id !== targetId) {
+          const [{ data: owned }, { data: ownerMems }] = await Promise.all([
+            supabase.from('communities').select('id').eq('created_by', targetId),
+            supabase.from('community_members').select('community_id').eq('user_id', targetId),
+          ])
+          const ownerCommunityIds = new Set<string>([
+            ...(((owned ?? []) as { id: string }[]).map((c) => c.id)),
+            ...(((ownerMems ?? []) as { community_id: string }[]).map((m) => m.community_id)),
+          ])
+          if (ownerCommunityIds.size > 0) {
+            const { data: myMems } = await supabase
+              .from('community_members')
+              .select('community_id')
+              .eq('user_id', user.id)
+              .in('community_id', [...ownerCommunityIds])
+            sharesCommunity = ((myMems ?? []) as { community_id: string }[]).length > 0
+          }
+        }
         const rows = (data ?? []) as PortfolioItem[]
         const visible = rows.filter((it) => {
           if (canSeePrivate) return true
           if (it.visibility === 'public') return true
           if (it.visibility === 'members' && user) return true
+          if (it.visibility === 'community' && sharesCommunity) return true
           return false
         })
         setItems(visible)
         if (canSeePrivate) {
-          const [progress, courses, enrollments] = await Promise.all([
+          const [progress, courses, enrollments, mods, less] = await Promise.all([
             fetchLessonProgress(targetId),
             fetchCourses(),
             fetchEnrollments(targetId),
+            supabase.from('modules').select('id,course_id'),
+            supabase.from('lessons').select('id,module_id'),
           ])
           if (cancelled) return
+          // Petakan tiap lesson ke course-nya lewat module, lalu hanya
+          // course yang benar-benar berisi lesson in_progress yang tampil.
+          const moduleCourse = new Map(
+            ((mods.data ?? []) as { id: string; course_id: string }[]).map((m) => [m.id, m.course_id]),
+          )
+          const lessonCourse = new Map(
+            ((less.data ?? []) as { id: string; module_id: string }[]).map((l) => [
+              l.id,
+              moduleCourse.get(l.module_id) ?? '',
+            ]),
+          )
           const inProgCourseIds = new Set<string>()
-          // lesson_progress tidak menyimpan course_id; tandai course yang
-          // diambil dan masih punya lesson berstatus in_progress lewat
-          // daftar enrollment + progress yang belum selesai.
-          const inProgressLessonIds = new Set(progress.filter((p) => p.status === 'in_progress').map((p) => p.lesson_id))
-          if (inProgressLessonIds.size > 0) {
-            const byId = new Map(courses.map((c) => [c.id, c]))
-            for (const e of enrollments) {
-              const c = byId.get(e.course_id)
-              if (c) inProgCourseIds.add(c.title)
-            }
+          for (const p of progress) {
+            if (p.status !== 'in_progress') continue
+            const cid = lessonCourse.get(p.lesson_id)
+            if (cid) inProgCourseIds.add(cid)
           }
-          setInProgress([...inProgCourseIds])
+          const byId = new Map(courses.map((c) => [c.id, c]))
+          const enrolledIds = new Set(enrollments.map((e) => e.course_id))
+          const titles = [...inProgCourseIds]
+            .filter((cid) => enrolledIds.has(cid))
+            .map((cid) => byId.get(cid)?.title)
+            .filter((t): t is string => !!t)
+          setInProgress(titles)
           const myCerts = await fetchMyCertificates(targetId)
           if (!cancelled) setCerts(myCerts)
         }
@@ -107,11 +157,12 @@ export default function PortfolioPage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerId, user?.id])
+  }, [ownerId, user?.id, profile?.role])
 
   if (!ownerId) return <div className="page"><p className="empty">Masuk untuk melihat portofoliomu.</p><Link to="/login">Masuk</Link></div>
   if (loading) return <div className="page"><p className="muted">Memuat portofolio…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
+  if (ownerFound === false) return <div className="page"><p className="empty">Pengguna tidak ditemukan.</p><Link to="/">Kembali ke Beranda</Link></div>
   if (items === null) return <div className="page"><h1>Portofolio</h1><MigrationNotice migration="006" /></div>
 
   async function handleAdd(e: FormEvent) {
@@ -138,7 +189,7 @@ export default function PortfolioPage() {
     <div className="page">
       <PageHeader
         icon="portfolio"
-        title={`Portofolio ${isOwner ? 'Saya' : owner?.name ?? ''}`}
+        title={isOwner ? 'Portofolio Saya' : owner?.name ? `Portofolio ${owner.name}` : 'Portofolio'}
       />
       {owner?.photo_url && <img src={owner.photo_url} alt="Foto profil" className="avatar" />}
       {notice && <p className="notice-box">{notice}</p>}
@@ -161,18 +212,18 @@ export default function PortfolioPage() {
             )}
           </section>
           <section className="section">
-            <h2>Sertifikat Saya</h2>
+            <h2>{isOwner ? 'Sertifikat Saya' : owner?.name ? `Sertifikat ${owner.name}` : 'Sertifikat'}</h2>
             <p className="muted">Bagian ini hanya terlihat oleh pemilik portofolio dan admin.</p>
             {certs.length === 0 ? (
               <p className="empty">Belum ada sertifikat.</p>
             ) : (
               <ul>
                 {certs.map((c) => (
-                  <li key={c.id}>{c.serial} — {c.type} · Nilai: {c.score ?? '—'}</li>
+                  <li key={c.id}>{c.serial}, {c.type} · Nilai: {c.score ?? '—'}</li>
                 ))}
               </ul>
             )}
-            <p><Link to="/sertifikat">Buka halaman Sertifikat Saya →</Link></p>
+            {isOwner && <p><Link to="/sertifikat">Buka halaman Sertifikat Saya →</Link></p>}
           </section>
         </>
       )}
@@ -186,7 +237,7 @@ export default function PortfolioPage() {
             {items.map((it) => (
               <li key={it.id} className="discussion-item">
                 <p className="discussion-meta">
-                  {KINDS.find((k) => k.value === it.kind)?.label ?? it.kind} · {it.visibility}
+                  {KINDS.find((k) => k.value === it.kind)?.label ?? it.kind} · {VISIBILITY_LABELS[it.visibility] ?? it.visibility}
                 </p>
                 <h3>{it.title}</h3>
                 {it.description && <p>{it.description}</p>}
@@ -217,10 +268,10 @@ export default function PortfolioPage() {
             <label>
               Visibilitas
               <select value={visibility} onChange={(e) => setVisibility(e.target.value as PortfolioItem['visibility'])} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-                <option value="public">Publik — semua orang</option>
-                <option value="members">Anggota — pengguna yang masuk</option>
-                <option value="community">Komunitas — anggota komunitasku</option>
-                <option value="private">Privat — hanya saya (dan admin)</option>
+                <option value="public">Publik, semua orang</option>
+                <option value="members">Anggota, pengguna yang masuk</option>
+                <option value="community">Komunitas, anggota komunitasku</option>
+                <option value="private">Privat, hanya saya (dan admin)</option>
               </select>
             </label>
             <button type="submit" className="btn btn-primary">Tambah Item</button>

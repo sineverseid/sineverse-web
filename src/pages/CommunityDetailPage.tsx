@@ -1,4 +1,4 @@
-// SINEVERSE — Feed komunitas: postingan + balasan + sematkan (004).
+// SINEVERSE, Feed komunitas: postingan + balasan + sematkan (004).
 // Hanya anggota komunitas yang bisa membaca/menulis feed (RLS); pin oleh
 // pembuat komunitas atau admin. Pembuat/admin juga bisa menghidupkan/
 // mematikan penanda "Mencari pembimbing" (011).
@@ -8,8 +8,14 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { logAudit, supabase } from '../lib/supabase'
+import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { Community, CommunityPost, CommunityPostReply } from '../lib/types'
+
+interface MemberRow {
+  user_id: string
+  role: string
+  name: string
+}
 
 export default function CommunityDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -18,6 +24,10 @@ export default function CommunityDetailPage() {
   const [posts, setPosts] = useState<CommunityPost[] | null>(null)
   const [replies, setReplies] = useState<CommunityPostReply[]>([])
   const [isMember, setIsMember] = useState(false)
+  const [myRole, setMyRole] = useState<string | null>(null)
+  const [members, setMembers] = useState<MemberRow[]>([])
+  const [postsError, setPostsError] = useState<string | null>(null)
+  const [joining, setJoining] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -77,19 +87,60 @@ export default function CommunityDetailPage() {
           throw qErr
         }
         if (cancelled) return
-        setCommunity(data as Community | null)
+        const comm = data as Community | null
+        setCommunity(comm)
+        let member = false
+        let role: string | null = null
         if (user) {
           const { data: mem } = await supabase
             .from('community_members')
-            .select('id')
+            .select('id,role')
             .eq('community_id', communityId)
             .eq('user_id', user.id)
             .maybeSingle()
-          if (!cancelled) setIsMember(mem !== null)
+          member = mem !== null
+          role = (mem as { role: string | null } | null)?.role ?? null
+          if (!cancelled) {
+            setIsMember(member)
+            setMyRole(role)
+          }
         }
-        await loadPosts(communityId)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat komunitas.')
+        // Daftar anggota + jumlah anggota.
+        const { data: memRows } = await supabase
+          .from('community_members')
+          .select('user_id,role')
+          .eq('community_id', communityId)
+        const memList = (memRows ?? []) as { user_id: string; role: string | null }[]
+        const names = await fetchProfileNames(memList.map((m) => m.user_id)).catch(
+          () => new Map<string, string>(),
+        )
+        if (!cancelled) {
+          setMembers(
+            memList.map((m) => ({
+              user_id: m.user_id,
+              role: m.role ?? 'member',
+              name: names.get(m.user_id) ?? 'Anggota',
+            })),
+          )
+        }
+        // Feed hanya boleh dibaca anggota, pembuat, dan admin. Bila query
+        // post diblokir RLS, tampilkan pesan terkunci, bukan halaman error.
+        const canRead =
+          member || comm?.created_by === user?.id || profile?.role === 'admin'
+        if (canRead) {
+          try {
+            await loadPosts(communityId)
+          } catch {
+            if (!cancelled) {
+              setPosts([])
+              setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+            }
+          }
+        } else if (!cancelled) {
+          setPosts([])
+        }
+      } catch {
+        if (!cancelled) setError('Gagal memuat komunitas. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -99,7 +150,7 @@ export default function CommunityDetailPage() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, user?.id])
+  }, [id, user?.id, profile?.role])
 
   if (loading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -107,9 +158,41 @@ export default function CommunityDetailPage() {
   if (!community) return <div className="page"><p className="empty">Komunitas tidak ditemukan.</p><Link to="/komunitas">Kembali</Link></div>
 
   const canPin = profile?.role === 'admin' || community.created_by === user?.id
-  // Pembuat community (atau admin) boleh menghidupkan/mematikan penanda
-  // "Mencari pembimbing" (011).
-  const canManageSeeking = canPin
+  // Pembuat community, admin, DAN mentor yang sudah menjadi anggota boleh
+  // menghidupkan/mematikan penanda "Mencari pembimbing" (011).
+  const canManageSeeking = canPin || myRole === 'mentor'
+  // Feed hanya untuk anggota, pembuat, dan admin.
+  const canReadFeed =
+    isMember || profile?.role === 'admin' || community.created_by === user?.id
+
+  async function handleJoin() {
+    if (!user || !community) return
+    setJoining(true)
+    const { error: insErr } = await supabase.from('community_members').insert({
+      community_id: community.id,
+      user_id: user.id,
+      role: 'member',
+    })
+    setJoining(false)
+    if (insErr) {
+      setNotice('Gagal bergabung ke community ini. Coba lagi nanti.')
+      return
+    }
+    setIsMember(true)
+    setMyRole('member')
+    setMembers((m) => [
+      ...m,
+      { user_id: user.id, role: 'member', name: profile?.name ?? 'Anggota' },
+    ])
+    await logAudit('community.joined', 'communities', community.id, { name: community.name })
+    try {
+      await loadPosts(community.id)
+    } catch {
+      setPosts([])
+      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+    }
+    setNotice(`Kamu kini menjadi anggota community "${community.name}".`)
+  }
 
   async function handleToggleSeeking() {
     if (!community || !canManageSeeking) return
@@ -119,14 +202,14 @@ export default function CommunityDetailPage() {
       .update({ seeking_mentor: next })
       .eq('id', community.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal mengubah penanda "Mencari pembimbing". Coba lagi nanti.')
       return
     }
     setCommunity({ ...community, seeking_mentor: next })
     await logAudit('community.seeking_mentor', 'communities', community.id, { seeking_mentor: next })
     setNotice(
       next
-        ? 'Community ini sekarang ditandai sedang mencari pembimbing — mentor akan melihatnya di halaman Community.'
+        ? 'Community ini sekarang ditandai sedang mencari pembimbing. Mentor akan melihatnya di halaman Community.'
         : 'Penanda "Mencari pembimbing" dimatikan untuk community ini.',
     )
   }
@@ -140,7 +223,7 @@ export default function CommunityDetailPage() {
       user_id: user.id,
       body: body.trim(),
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mengirim postingan. Coba lagi nanti.')
     else {
       setBody('')
       await loadPosts(currentCommunity.id)
@@ -156,7 +239,7 @@ export default function CommunityDetailPage() {
       user_id: user.id,
       body: replyBody.trim(),
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mengirim balasan. Coba lagi nanti.')
     else {
       setReplyBody('')
       setReplyTo(null)
@@ -171,7 +254,7 @@ export default function CommunityDetailPage() {
       .from('community_posts')
       .update({ is_pinned: !post.is_pinned })
       .eq('id', post.id)
-    if (updErr) setNotice(updErr.message)
+    if (updErr) setNotice('Gagal mengubah sematan. Coba lagi nanti.')
     else await loadPosts(currentCommunity.id)
   }
 
@@ -179,7 +262,11 @@ export default function CommunityDetailPage() {
     <div className="page">
       <Link to="/komunitas" className="back-link">← Semua Komunitas</Link>
       <h1>{community.name}</h1>
-      <p className="muted">{community.description ?? ''}</p>
+      {community.description ? (
+        <p className="muted">{community.description}</p>
+      ) : (
+        <p className="muted">Belum ada deskripsi.</p>
+      )}
       {canManageSeeking && (
         <p>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -191,32 +278,64 @@ export default function CommunityDetailPage() {
             Mencari pembimbing
           </label>
           <span className="muted">
-            {' '}— bila aktif, community ini tampil di "Community Mencari Pembimbing" untuk mentor.
+            {' '}Bila aktif, community ini tampil di "Community Mencari Pembimbing" untuk mentor.
           </span>
         </p>
       )}
       {notice && <p className="notice-box">{notice}</p>}
-      {!isMember && (
-        <p className="empty">
-          Kamu belum menjadi anggota komunitas ini. Gabung dari halaman{' '}
-          <Link to="/komunitas">Komunitas</Link> untuk membaca dan menulis di feed.
-        </p>
+
+      <section className="section">
+        <h2>Anggota ({members.length})</h2>
+        {members.length === 0 ? (
+          <p className="empty">Belum ada anggota.</p>
+        ) : (
+          <ul className="discussion-list">
+            {members.map((m) => (
+              <li key={m.user_id} className="discussion-item">
+                <p>
+                  {m.name}
+                  {m.role === 'mentor' ? ' · Pembimbing' : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {!canReadFeed && (
+        <div>
+          <p className="empty">Gabung untuk membaca dan menulis di feed.</p>
+          {user && profile?.role !== 'admin' && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={joining}
+              onClick={() => void handleJoin()}
+            >
+              {joining ? 'Bergabung…' : 'Gabung'}
+            </button>
+          )}
+          {!user && <p className="muted">Masuk dulu untuk bergabung ke community ini.</p>}
+        </div>
       )}
-      {isMember && (
-        <form className="form" onSubmit={handlePost}>
-          <label>
-            Tulis postingan
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} required placeholder="Bagikan kabar, karya, atau ajakan…" />
-          </label>
-          <button type="submit" className="btn btn-primary">Kirim Postingan</button>
-        </form>
-      )}
-      {(posts ?? []).length === 0 ? (
-        <p className="empty">Belum ada postingan di komunitas ini.</p>
-      ) : (
-        <ul className="discussion-list">
-          {posts.map((p) => (
-            <li key={p.id} className="discussion-item">
+      {canReadFeed && (
+        <>
+          {postsError && <p className="notice-box">{postsError}</p>}
+          {isMember && (
+            <form className="form" onSubmit={handlePost}>
+              <label>
+                Tulis postingan
+                <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} required placeholder="Bagikan kabar, karya, atau ajakan…" />
+              </label>
+              <button type="submit" className="btn btn-primary">Kirim Postingan</button>
+            </form>
+          )}
+          {(posts ?? []).length === 0 ? (
+            <p className="empty">Belum ada postingan di komunitas ini.</p>
+          ) : (
+            <ul className="discussion-list">
+              {posts.map((p) => (
+                <li key={p.id} className="discussion-item">
               <p className="discussion-meta">
                 {p.author?.name ?? 'Anggota'} · {fmtDate(p.created_at)}
                 {p.is_pinned ? ' · Disematkan' : ''}
@@ -254,9 +373,11 @@ export default function CommunityDetailPage() {
                   </div>
                 </form>
               )}
-            </li>
-          ))}
-        </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )

@@ -1,10 +1,10 @@
-// SINEVERSE — Katalog Akademi: 10 course Semester 1 (data asli Supabase),
+// SINEVERSE, Katalog Akademi: 10 course Semester 1 (data asli Supabase),
 // chip kategori + pencarian. Nilai, tenggat, dan ujian dijangkau dari sini
-// (bukan lagi menu utama) — sesuai artefak.
+// (bukan lagi menu utama), sesuai artefak.
 //
 // Blok Kurikulum Semester 1 di atas katalog: 10 course wajib sesuai
 // SVS-SEM1 (20 minggu) dalam urutan RPS, lengkap dengan status mentor.
-// Status mentor tampil di barisnya sendiri di bawah judul — judul tidak
+// Status mentor tampil di barisnya sendiri di bawah judul, judul tidak
 // pernah terpotong di layar HP (tidak seperti artefak yang memadatkan
 // judul + pil status dalam satu baris).
 import { useEffect, useMemo, useState } from 'react'
@@ -18,12 +18,13 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 const KURIKULUM_INTRO =
-  'Sepuluh course wajib sesuai SVS-SEM1 (20 minggu) — semuanya sudah muncul di kurikulum. Course yang belum memiliki mentor belum dapat dimulai, tetapi kamu dapat mengikuti untuk bergabung dan akan diberi tahu begitu mentor ditetapkan.'
+  'Sepuluh course wajib sesuai SVS-SEM1 (20 minggu), semuanya sudah muncul di kurikulum. Course yang belum memiliki mentor belum dapat dimulai, tetapi kamu dapat mengikuti untuk bergabung dan akan diberi tahu begitu mentor ditetapkan.'
 
 export default function AkademiPage() {
   const { user, profile, loading: authLoading } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
   const [mentorNames, setMentorNames] = useState<Map<string, string>>(new Map())
+  const [mentorNamesLoaded, setMentorNamesLoaded] = useState(false)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<string>('Semua')
   const [loading, setLoading] = useState(true)
@@ -47,7 +48,12 @@ export default function AkademiPage() {
         const mentorIds = data.map((c) => c.mentor_id).filter((id): id is string => !!id)
         if (mentorIds.length > 0) {
           const names = await fetchProfileNames(mentorIds).catch(() => new Map<string, string>())
-          if (!cancelled) setMentorNames(names)
+          if (!cancelled) {
+            setMentorNames(names)
+            setMentorNamesLoaded(true)
+          }
+        } else if (!cancelled) {
+          setMentorNamesLoaded(true)
         }
       })
       .catch((err: unknown) => {
@@ -62,7 +68,7 @@ export default function AkademiPage() {
   }, [])
 
   // Progres Academy untuk admin: siswa, lesson selesai, dan total lesson
-  // per course — dihitung dari enrollments + lesson_progress asli.
+  // per course, dihitung dari enrollments + lesson_progress asli.
   // Hanya progres siswa dan mentor yang dihitung: sebuah lesson selesai
   // dihitung bila yang menyelesaikannya terdaftar di course itu (siswa)
   // atau mengampu course itu (mentor). Admin hanya memantau dan tidak
@@ -168,12 +174,15 @@ export default function AkademiPage() {
     return visibleCourses.filter((c) => {
       if (category !== 'Semua' && (c.category ?? 'Lainnya') !== category) return false
       if (!q) return true
+      const mentorName = c.mentor_id ? (mentorNames.get(c.mentor_id) ?? '') : ''
       return (
         c.title.toLowerCase().includes(q) ||
-        (c.description ?? '').toLowerCase().includes(q)
+        (c.description ?? '').toLowerCase().includes(q) ||
+        (c.category ?? '').toLowerCase().includes(q) ||
+        mentorName.toLowerCase().includes(q)
       )
     })
-  }, [visibleCourses, query, category])
+  }, [visibleCourses, query, category, mentorNames])
 
   if (loading || authLoading) {
     return (
@@ -198,10 +207,12 @@ export default function AkademiPage() {
         title="Academy"
         subtitle={
           isAdmin
-            ? `Progres Academy — ${courses.length} course · ${adminTotals.enrollments} enrollment · ${adminTotals.withoutMentor} tanpa mentor.`
+            ? adminStats === null
+              ? 'Progres Academy, Memuat statistik…'
+              : `Progres Academy, ${courses.length} course · ${adminTotals.enrollments} enrollment · ${adminTotals.withoutMentor} tanpa mentor.`
             : isMentor
-              ? `Course yang kamu ampu — ${myCourses.length} course. Kategori → Course → Module → Lesson.`
-              : `Kurikulum Semester 1 — ${courses.length} course. Kategori → Course → Module → Lesson.`
+              ? `Course yang kamu ampu, ${myCourses.length} course. Kategori → Course → Module → Lesson.`
+              : `Kurikulum Semester 1, ${courses.length} course. Kategori → Course → Module → Lesson.`
         }
       />
 
@@ -277,17 +288,20 @@ export default function AkademiPage() {
 
       {!isAdmin && kurikulumCourses.length > 0 && (
         <section className="section kurikulum" aria-label="Kurikulum Semester 1">
-          <h2>Kurikulum Semester 1 — Dasar-Dasar Perfilman</h2>
+          <h2>Kurikulum Semester 1, Dasar-Dasar Perfilman</h2>
           <p className="muted">{KURIKULUM_INTRO}</p>
           <ol className="kurikulum-list">
             {kurikulumCourses.map((c, i) => {
               const week = rpsWeekLabel(c.id)
               const mentorName = c.mentor_id ? mentorNames.get(c.mentor_id) : undefined
+              const isMine = isMentor && c.mentor_id === user?.id
               const status = c.mentor_id
                 ? mentorName
-                  ? `Mentor: ${mentorName} — bisa dimulai`
-                  : 'Mentor sudah ditetapkan — bisa dimulai'
-                : 'Belum ada mentor — ikuti untuk bergabung'
+                  ? `Mentor: ${mentorName}, bisa dimulai`
+                  : mentorNamesLoaded
+                    ? 'Mentor: tidak diketahui'
+                    : 'Memuat info mentor…'
+                : 'Belum ada mentor, ikuti untuk bergabung'
               return (
                 <li key={c.id} className="kurikulum-row">
                   <span className="kurikulum-num" aria-hidden="true">
@@ -295,14 +309,21 @@ export default function AkademiPage() {
                   </span>
                   <div className="kurikulum-main">
                     <p className="kurikulum-title">
-                      <Link to={`/course/${c.id}`}>{c.title}</Link>
+                      {isMentor && !isMine ? (
+                        <span>{c.title}</span>
+                      ) : (
+                        <Link to={`/course/${c.id}`}>{c.title}</Link>
+                      )}
                       {week && <span className="muted"> · {week}</span>}
                     </p>
                     <p className="kurikulum-status">{status}</p>
-                    {isMentor && c.mentor_id === user?.id && (
+                    {isMentor && isMine && (
                       <p className="kurikulum-status">
                         <strong>Kamu mengampu course ini</strong>
                       </p>
+                    )}
+                    {isMentor && !isMine && (
+                      <p className="kurikulum-status">Bukan course kamu</p>
                     )}
                   </div>
                 </li>

@@ -1,6 +1,6 @@
-// SINEVERSE — Sekolah + Klub Film (004).
+// SINEVERSE, Sekolah + Klub Film (004).
 // Sekolah: daftar + gabung/keluar; roster (daftar anggota) hanya terlihat
-// oleh anggota sekolah itu — RLS membatasi school_members, dan UI hanya
+// oleh anggota sekolah itu, RLS membatasi school_members, dan UI hanya
 // memuat roster bila pengguna sudah menjadi anggota. Klub film: buat,
 // gabung/keluar, aktivitas klub.
 import { useEffect, useState } from 'react'
@@ -21,6 +21,8 @@ export default function SchoolsPage() {
   const [activities, setActivities] = useState<ClubActivity[]>([])
   const [mySchools, setMySchools] = useState<Set<string>>(new Set())
   const [roster, setRoster] = useState<Record<string, string[]>>({})
+  const [rosterLoading, setRosterLoading] = useState<Set<string>>(new Set())
+  const [rosterError, setRosterError] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -92,10 +94,27 @@ export default function SchoolsPage() {
   }
 
   async function loadRoster(schoolId: string) {
-    const { data } = await supabase.from('school_members').select('user_id').eq('school_id', schoolId)
-    const ids = ((data ?? []) as { user_id: string }[]).map((m) => m.user_id)
-    const names = await fetchProfileNames(ids)
-    setRoster((r) => ({ ...r, [schoolId]: ids.map((id) => names.get(id) ?? 'Anggota') }))
+    setRosterLoading((prev) => new Set(prev).add(schoolId))
+    setRosterError((prev) => {
+      const next = new Set(prev)
+      next.delete(schoolId)
+      return next
+    })
+    try {
+      const { data, error: qErr } = await supabase.from('school_members').select('user_id').eq('school_id', schoolId)
+      if (qErr) throw qErr
+      const ids = ((data ?? []) as { user_id: string }[]).map((m) => m.user_id)
+      const names = await fetchProfileNames(ids)
+      setRoster((r) => ({ ...r, [schoolId]: ids.map((id) => names.get(id) ?? 'Anggota') }))
+    } catch {
+      setRosterError((prev) => new Set(prev).add(schoolId))
+    } finally {
+      setRosterLoading((prev) => {
+        const next = new Set(prev)
+        next.delete(schoolId)
+        return next
+      })
+    }
   }
 
   async function handleCreateClub(e: FormEvent) {
@@ -139,7 +158,9 @@ export default function SchoolsPage() {
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (schools === null) return <div className="page"><h1>Sekolah & Klub Film</h1><MigrationNotice migration="004" /></div>
 
-  const myClubs = (clubs ?? []).filter((c) => clubMembers.has(c.id) || c.created_by === user?.id)
+  const isAdmin = profile?.role === 'admin'
+  // Tambah aktivitas hanya untuk pembuat klub atau admin.
+  const activityClubs = (clubs ?? []).filter((c) => isAdmin || c.created_by === user?.id)
 
   return (
     <div className="page">
@@ -158,8 +179,12 @@ export default function SchoolsPage() {
                 <li key={s.id} className="course-card">
                   <div style={{ padding: '1.1rem 1.25rem' }}>
                     <h3>{s.name}</h3>
-                    <p>{s.city ?? ''}{s.description ? ` — ${s.description}` : ''}</p>
+                    {s.city && <p>{s.city}</p>}
+                    {s.description && <p>{s.description}</p>}
                     <p className="muted">{s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
+                    {!s.is_verified && (
+                      <p className="muted">Sekolah ini belum terverifikasi oleh admin.</p>
+                    )}
                     {user && (
                       <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleSchool(s.id, joined)}>
                         {joined ? 'Keluar' : 'Gabung'}
@@ -172,6 +197,12 @@ export default function SchoolsPage() {
                         </button>
                       </p>
                     )}
+                    {joined && rosterError.has(s.id) && (
+                      <p className="error-box">Daftar anggota gagal dimuat.</p>
+                    )}
+                    {joined && rosterLoading.has(s.id) && (
+                      <p className="muted">Memuat anggota…</p>
+                    )}
                     {joined && roster[s.id] && (
                       <ul>
                         {roster[s.id].map((n, i) => (
@@ -179,8 +210,8 @@ export default function SchoolsPage() {
                         ))}
                       </ul>
                     )}
-                    {joined && !roster[s.id] && (
-                      <p className="muted">Daftar anggota hanya terlihat oleh anggota sekolah ini.</p>
+                    {joined && !roster[s.id] && !rosterLoading.has(s.id) && !rosterError.has(s.id) && (
+                      <p className="muted">Lihat daftar anggota.</p>
                     )}
                   </div>
                 </li>
@@ -204,7 +235,7 @@ export default function SchoolsPage() {
                   Aktivitas:{' '}
                   {activities.filter((a) => a.club_id === c.id).length === 0
                     ? 'belum ada'
-                    : activities.filter((a) => a.club_id === c.id).map((a) => `${a.title} (${fmtDate(a.starts_at)})`).join(' · ')}
+                    : activities.filter((a) => a.club_id === c.id).map((a) => (a.starts_at ? `${a.title} (${fmtDate(a.starts_at)})` : a.title)).join(' · ')}
                 </p>
                 {user && (
                   <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleClub(c.id, clubMembers.has(c.id))}>
@@ -242,7 +273,7 @@ export default function SchoolsPage() {
               <button type="submit" className="btn btn-primary">Buat Klub</button>
             </form>
           </section>
-          {myClubs.length > 0 && (
+          {activityClubs.length > 0 ? (
             <section className="section">
               <h2>Tambah Aktivitas Klub</h2>
               <form className="form" onSubmit={handleCreateActivity}>
@@ -250,7 +281,7 @@ export default function SchoolsPage() {
                   Klub
                   <select value={actClub} onChange={(e) => setActClub(e.target.value)} required style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
                     <option value="">— Pilih klub —</option>
-                    {myClubs.map((c) => (
+                    {activityClubs.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
@@ -267,6 +298,8 @@ export default function SchoolsPage() {
               </form>
               <p className="muted">Hanya pembuat klub / admin yang bisa menambah aktivitas (ditegakkan RLS).</p>
             </section>
+          ) : (
+            <p className="muted">Hanya pembuat klub / admin yang bisa menambah aktivitas.</p>
           )}
         </>
       )}

@@ -1,10 +1,16 @@
-// SINEVERSE — Detail course: deskripsi, mentor, level, modul + lesson,
+// SINEVERSE, Detail course: deskripsi, mentor, level, modul + lesson,
 // progress, dan pendaftaran ("Ambil Course").
 //
 // Aturan pendaftaran:
 // - Course tanpa mentor → waitlist "Ikuti untuk Bergabung", bukan enrol.
+//   Mentor juga bisa "Ajukan untuk Mengampu" lewat course_claims.
 // - Course dengan enrollment_key → minta kode (case-insensitive), tolak kode salah.
 // - Selain itu → enrol langsung.
+// - Mentor tidak mengambil course mentor lain; admin hanya memantau.
+// - Lesson terbuka untuk peserta, mentor pengampu, dan admin.
+//
+// Course dimuat dulu; nama mentor dan modul dimuat independen agar
+// kegagalannya tidak menenggelamkan halaman course.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -20,6 +26,8 @@ import {
   fetchModules,
   fetchWaitlistEntry,
   joinWaitlist,
+  logAudit,
+  supabase,
 } from '../lib/supabase'
 import type { Course, Lesson, LessonProgress, Module } from '../lib/types'
 
@@ -28,12 +36,14 @@ export default function CourseDetailPage() {
   const { user, profile } = useAuth()
   const navigate = useNavigate()
 
-  // Admin hanya memantau — admin tidak mengambil course.
+  // Admin hanya memantau, admin tidak mengambil course.
   const isAdmin = profile?.role === 'admin'
 
   const [course, setCourse] = useState<Course | null>(null)
   const [mentorName, setMentorName] = useState<string | null>(null)
+  const [mentorFailed, setMentorFailed] = useState(false)
   const [modules, setModules] = useState<(Module & { lessons: Lesson[] })[]>([])
+  const [modulesError, setModulesError] = useState<string | null>(null)
   const [progress, setProgress] = useState<LessonProgress[]>([])
   const [enrolled, setEnrolled] = useState(false)
   const [onWaitlist, setOnWaitlist] = useState(false)
@@ -45,6 +55,8 @@ export default function CourseDetailPage() {
   const [askCode, setAskCode] = useState(false)
   const [codeError, setCodeError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [claimBusy, setClaimBusy] = useState(false)
+  const [claimed, setClaimed] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -58,26 +70,68 @@ export default function CourseDetailPage() {
           return
         }
         setCourse(c)
-        setMentorName(await fetchMentorName(c.mentor_id))
-        const mods = await fetchModules(c.id)
-        const withLessons = await Promise.all(
-          mods.map(async (m) => ({ ...m, lessons: await fetchLessons(m.id) })),
-        )
-        if (cancelled) return
-        setModules(withLessons)
-        if (user) {
-          const [enr, prog, wl] = await Promise.all([
-            fetchEnrollment(user.id, c.id),
-            fetchLessonProgress(user.id),
-            c.mentor_id === null ? fetchWaitlistEntry(user.id, c.id) : Promise.resolve(false),
-          ])
-          if (cancelled) return
-          setEnrolled(enr !== null)
-          setProgress(prog)
-          setOnWaitlist(wl)
+
+        // Nama mentor: gagal tidak boleh mengosongkan halaman.
+        try {
+          setMentorName(await fetchMentorName(c.mentor_id))
+        } catch {
+          if (!cancelled) setMentorFailed(true)
         }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat course.')
+
+        // Modul + lesson per modul: gagal tidak boleh mengosongkan halaman.
+        try {
+          const mods = await fetchModules(c.id)
+          const withLessons = await Promise.all(
+            mods.map(async (m) => {
+              try {
+                return { ...m, lessons: await fetchLessons(m.id) }
+              } catch {
+                return { ...m, lessons: [] as Lesson[] }
+              }
+            }),
+          )
+          if (!cancelled) setModules(withLessons)
+        } catch {
+          if (!cancelled) setModulesError('Modul gagal dimuat. Coba muat ulang halaman.')
+        }
+
+        if (user) {
+          try {
+            const enr = await fetchEnrollment(user.id, c.id)
+            if (!cancelled) setEnrolled(enr !== null)
+          } catch {
+            // Enrollment gagal dibaca: perlakukan sebagai belum terdaftar.
+          }
+          try {
+            const prog = await fetchLessonProgress(user.id)
+            if (!cancelled) setProgress(prog)
+          } catch {
+            // Progres gagal dibaca: tampilkan course tanpa progres.
+          }
+          if (c.mentor_id === null) {
+            try {
+              const wl = await fetchWaitlistEntry(user.id, c.id)
+              if (!cancelled) setOnWaitlist(wl)
+            } catch {
+              // Status daftar tunggu gagal dibaca: tampilkan tombol apa adanya.
+            }
+          }
+          if (profile?.role === 'mentor') {
+            try {
+              const { data } = await supabase
+                .from('course_claims')
+                .select('id')
+                .eq('mentor_id', user.id)
+                .eq('course_id', c.id)
+                .maybeSingle()
+              if (!cancelled && data) setClaimed(true)
+            } catch {
+              // Pengajuan lama gagal dibaca: tombol tetap bisa dikirim.
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) setError('Gagal memuat course. Periksa koneksi lalu coba lagi.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -86,7 +140,8 @@ export default function CourseDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [id, user])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, user, profile?.role])
 
   if (loading) {
     return (
@@ -114,6 +169,9 @@ export default function CourseDetailPage() {
   const noMentor = course.mentor_id === null
   const week = rpsWeekLabel(course.id)
   const coverKey = courseCoverKey(course.title)
+  const isCourseMentor = user !== null && course.mentor_id !== null && course.mentor_id === user.id
+  const isOtherMentor =
+    profile?.role === 'mentor' && course.mentor_id !== null && course.mentor_id !== user?.id
 
   async function doEnroll() {
     if (!user || !course) return
@@ -124,8 +182,8 @@ export default function CourseDetailPage() {
       await enrollInCourse(user.id, c.id)
       setEnrolled(true)
       setNotice('Kamu berhasil mengambil course ini. Selamat belajar.')
-    } catch (err) {
-      setCodeError(err instanceof Error ? err.message : 'Gagal mendaftar ke course.')
+    } catch {
+      setCodeError('Gagal mendaftar ke course. Periksa koneksi lalu coba lagi.')
     } finally {
       setBusy(false)
     }
@@ -172,6 +230,30 @@ export default function CourseDetailPage() {
     }
   }
 
+  async function handleClaim() {
+    if (!user || !course) return
+    const c = course
+    setClaimBusy(true)
+    try {
+      const { error: insErr } = await supabase.from('course_claims').insert({
+        course_id: c.id,
+        mentor_id: user.id,
+        status: 'pending',
+      })
+      if (insErr) throw insErr
+      await logAudit('course_claim.created', 'course_claims', null, {
+        course_id: c.id,
+        mentor_id: user.id,
+      })
+      setClaimed(true)
+      setNotice('Pengajuan mengampu terkirim. Admin akan meninjau pengajuan kamu.')
+    } catch {
+      setNotice('Gagal mengirim pengajuan mengampu. Periksa koneksi lalu coba lagi.')
+    } finally {
+      setClaimBusy(false)
+    }
+  }
+
   return (
     <div className="page">
       <Link to="/akademi" className="back-link">
@@ -184,7 +266,8 @@ export default function CourseDetailPage() {
       <h1>{course.title}</h1>
       <p className="muted">
         {course.category ?? 'Lainnya'} · {course.level ?? 'Semua level'}
-        {week ? ` · ${week}` : ''} · Mentor: {mentorName ?? 'Belum ditugaskan'}
+        {week ? ` · ${week}` : ''} · Mentor:{' '}
+        {mentorFailed ? 'gagal dimuat' : (mentorName ?? 'Belum ditugaskan')}
       </p>
       {course.description && <p>{course.description}</p>}
 
@@ -198,10 +281,17 @@ export default function CourseDetailPage() {
           <div className="progress-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
             <div className="progress-fill" style={{ width: `${percent}%` }} />
           </div>
-          {nextLesson && (
-            <Link to={`/lesson/${nextLesson.id}`} className="btn btn-primary">
-              Lanjutkan: {nextLesson.title}
-            </Link>
+          {percent === 100 ? (
+            <p>
+              Course selesai.{' '}
+              <Link to="/sertifikat">Lihat sertifikat kamu.</Link>
+            </p>
+          ) : (
+            nextLesson && (
+              <Link to={`/lesson/${nextLesson.id}`} className="btn btn-primary">
+                Lanjutkan: {nextLesson.title}
+              </Link>
+            )
           )}
         </div>
       )}
@@ -210,24 +300,46 @@ export default function CourseDetailPage() {
         <div className="enroll-block">
           {isAdmin ? (
             <p className="muted">
-              Kamu masuk sebagai admin. Admin hanya memantau progres course — admin tidak
+              Kamu masuk sebagai admin. Admin hanya memantau progres course, admin tidak
               mengambil course.
+            </p>
+          ) : isCourseMentor ? (
+            <p className="muted">
+              Kamu mengampu course ini. Lesson sudah terbuka untukmu.
             </p>
           ) : noMentor ? (
             <>
               <p className="muted">
-                Course ini belum memiliki mentor. Ikuti daftar tunggu — kamu akan diberi tahu
+                Course ini belum memiliki mentor. Ikuti daftar tunggu, kamu akan diberi tahu
                 saat mentor ditugaskan.
               </p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleWaitlist}
-                disabled={busy || onWaitlist}
-              >
-                {onWaitlist ? 'Sudah di Daftar Tunggu' : 'Ikuti untuk Bergabung'}
-              </button>
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleWaitlist}
+                  disabled={busy || onWaitlist}
+                >
+                  {onWaitlist ? 'Sudah di Daftar Tunggu' : 'Ikuti untuk Bergabung'}
+                </button>
+                {profile?.role === 'mentor' && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleClaim}
+                    disabled={claimBusy || claimed}
+                  >
+                    {claimed
+                      ? 'Pengajuan Mengampu Terkirim'
+                      : claimBusy
+                        ? 'Mengirim…'
+                        : 'Ajukan untuk Mengampu'}
+                  </button>
+                )}
+              </div>
             </>
+          ) : isOtherMentor ? (
+            <p className="notice-box">Course ini diampu mentor lain.</p>
           ) : (
             <>
               <button type="button" className="btn btn-primary" onClick={handleEnrollClick} disabled={busy}>
@@ -259,6 +371,7 @@ export default function CourseDetailPage() {
 
       <section className="section">
         <h2>Kurikulum</h2>
+        {modulesError && <p className="error-box">{modulesError}</p>}
         {modules.length === 0 ? (
           <p className="empty">Belum ada modul di course ini.</p>
         ) : (
@@ -274,17 +387,18 @@ export default function CourseDetailPage() {
                 <ol className="lesson-list">
                   {m.lessons.map((l) => {
                     const done = doneIds.has(l.id)
-                    const locked = !enrolled
+                    const locked =
+                      !enrolled && course.mentor_id !== user?.id && profile?.role !== 'admin'
                     return (
                       <li key={l.id}>
                         {locked ? (
                           <span className="lesson-locked">
-                            {l.lesson_code ? `${l.lesson_code} — ` : ''}
+                            {l.lesson_code ? `${l.lesson_code}, ` : ''}
                             {l.title} (daftar dulu untuk membuka)
                           </span>
                         ) : (
                           <Link to={`/lesson/${l.id}`}>
-                            {l.lesson_code ? `${l.lesson_code} — ` : ''}
+                            {l.lesson_code ? `${l.lesson_code}, ` : ''}
                             {l.title}
                             {done ? ' ✓' : ''}
                           </Link>

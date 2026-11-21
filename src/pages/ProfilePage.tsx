@@ -1,4 +1,4 @@
-// SINEVERSE — Profil: foto (bila ada), data diri, ganti kata sandi.
+// SINEVERSE, Profil: foto (bila ada), data diri, ganti kata sandi.
 // Upload foto profil: bucket profile-photos, replace-only (tidak bisa hapus).
 import { useState } from 'react'
 import type { FormEvent } from 'react'
@@ -9,6 +9,7 @@ import PageHeader from '../components/PageHeader'
 
 export default function ProfilePage() {
   const { user, profile, changePassword, refreshProfile } = useAuth()
+  const [photoBroken, setPhotoBroken] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [pwMessage, setPwMessage] = useState<string | null>(null)
@@ -31,7 +32,7 @@ export default function ProfilePage() {
     const { error } = await changePassword(newPassword)
     setPwBusy(false)
     if (error) {
-      setPwError(error)
+      setPwError('Gagal mengubah kata sandi. Coba lagi.')
       return
     }
     setPwMessage('Kata sandi berhasil diubah.')
@@ -42,8 +43,13 @@ export default function ProfilePage() {
   return (
     <div className="page page-narrow">
       <PageHeader icon="user" title="Profil Saya" />
-      {profile?.photo_url ? (
-        <img src={profile.photo_url} alt="Foto profil" className="avatar" />
+      {profile?.photo_url && !photoBroken ? (
+        <img
+          src={profile.photo_url}
+          alt="Foto profil"
+          className="avatar"
+          onError={() => setPhotoBroken(true)}
+        />
       ) : (
         <div className="avatar avatar-placeholder" aria-label="Belum ada foto profil">
           {(profile?.name ?? '?').charAt(0).toUpperCase()}
@@ -61,6 +67,39 @@ export default function ProfilePage() {
         <div>
           <dt>Peran</dt>
           <dd>{profile?.role ?? 'siswa'}</dd>
+        </div>
+        <div>
+          <dt>Sekolah</dt>
+          <dd>{profile?.school ?? '—'}</dd>
+        </div>
+        <div>
+          <dt>Kelas</dt>
+          <dd>{profile?.kelas ?? '—'}</dd>
+        </div>
+        <div>
+          <dt>Minat</dt>
+          <dd>
+            {profile?.interests && profile.interests.length > 0
+              ? profile.interests.join(', ')
+              : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt>Tanggal Lahir</dt>
+          <dd>
+            {profile?.birth_date
+              ? (() => {
+                  const d = new Date(profile.birth_date)
+                  return Number.isNaN(d.getTime())
+                    ? profile.birth_date
+                    : d.toLocaleDateString('id-ID', { dateStyle: 'long' })
+                })()
+              : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt>Jenis Kelamin</dt>
+          <dd>{profile?.gender ?? '—'}</dd>
         </div>
         <div>
           <dt>Telepon / WA</dt>

@@ -1,4 +1,4 @@
-// SINEVERSE — Growth (sama seperti artefak, GrowthView): 4 tab —
+// SINEVERSE, Growth (sama seperti artefak, GrowthView): 4 tab —
 // Rekomendasi, Kolaborasi Lanjutan, Integrasi, PWA & Kesiapan.
 // Tab Integrasi bersifat privat: hanya admin yang melihatnya
 // (siswa dan mentor tidak melihat tab itu sama sekali).
@@ -44,6 +44,8 @@ export default function GrowthPage() {
   const [schools, setSchools] = useState<School[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [coursesError, setCoursesError] = useState(false)
+  const [collabError, setCollabError] = useState(false)
 
   // PWA & kesiapan (status perangkat + file aplikasi, dicek langsung).
   const [standalone] = useState(() => isStandalone())
@@ -60,11 +62,15 @@ export default function GrowthPage() {
     async function load() {
       try {
         const [courseList, projectRes, schoolRes] = await Promise.all([
-          fetchCourses(),
+          fetchCourses().catch(() => {
+            setCoursesError(true)
+            return [] as Course[]
+          }),
           supabase.from('projects').select('*').order('created_at', { ascending: false }),
           supabase.from('schools').select('*').order('name'),
         ])
         if (cancelled) return
+        if (projectRes.error || schoolRes.error) setCollabError(true)
         setCourses(courseList)
         setProjects(((projectRes.data ?? []) as Project[]))
         setSchools(((schoolRes.data ?? []) as School[]))
@@ -112,7 +118,7 @@ export default function GrowthPage() {
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
-  // Rekomendasi course — satu logika skor dengan Beranda siswa
+  // Rekomendasi course, satu logika skor dengan Beranda siswa
   // (lihat src/lib/recommendations.ts). Alasan dan urutannya sama seperti
   // sebelumnya; Growth tidak menampilkan angka skornya.
   const recommendations = useMemo(
@@ -135,7 +141,13 @@ export default function GrowthPage() {
     [projects],
   )
 
-  const schoolName = (id: string | null) => schools.find((s) => s.id === id)?.name ?? 'Sekolah'
+  const schoolName = (id: string | null) => schools.find((s) => s.id === id)?.name ?? '—'
+
+  const recommendationEmptyMessage = coursesError
+    ? 'Rekomendasi gagal dimuat.'
+    : courses.length === 0
+      ? 'Belum ada course tersedia.'
+      : 'Kamu sudah mengambil semua course yang tersedia.'
 
   if (loading) return <div className="page"><p className="muted">Memuat Growth…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -178,15 +190,17 @@ export default function GrowthPage() {
           <section className="section">
             <h2>Course yang Direkomendasikan</h2>
             {recommendations.length === 0 ? (
-              <EmptyState message="Kamu sudah mengambil semua course yang tersedia." />
+              <EmptyState message={recommendationEmptyMessage} />
             ) : (
               <ul className="course-list">
                 {recommendations.map((r) => (
                   <li key={r.course.id} className="course-card">
                     <Link to={`/course/${r.course.id}`}>
+                      <div className="course-card-body">
                       <h3>{r.course.title}</h3>
                       <p>{r.course.description ?? ''}</p>
                       <p className="muted">{r.reason}</p>
+                      </div>
                     </Link>
                   </li>
                 ))}
@@ -206,9 +220,11 @@ export default function GrowthPage() {
                 {openProjects.map((p) => (
                   <li key={p.id} className="course-card">
                     <Link to={`/proyek/${p.id}`}>
+                      <div className="course-card-body">
                       <h3>{p.title}</h3>
                       <p>{p.description ?? ''}</p>
-                      <p className="muted">Proyek terbuka — bisa langsung bergabung.</p>
+                      <p className="muted">Proyek terbuka, bisa langsung bergabung.</p>
+                      </div>
                     </Link>
                   </li>
                 ))}
@@ -223,18 +239,22 @@ export default function GrowthPage() {
           <section className="section">
             <h2>Proyek Lintas Sekolah</h2>
             <p className="muted">
-              Proyek yang terafiliasi dengan sekolah — kolaborasi antar sekolah dan klub film.
+              Proyek yang terafiliasi dengan sekolah, kolaborasi antar sekolah dan klub film.
             </p>
-            {crossSchoolProjects.length === 0 ? (
+            {collabError ? (
+              <p className="error-box">Kolaborasi gagal dimuat. Coba muat ulang halaman ini.</p>
+            ) : crossSchoolProjects.length === 0 ? (
               <EmptyState message="Belum ada proyek lintas sekolah. Proyek yang dibuat dengan afiliasi sekolah akan tampil di sini." />
             ) : (
               <ul className="course-list">
                 {crossSchoolProjects.map((p) => (
                   <li key={p.id} className="course-card">
                     <Link to={`/proyek/${p.id}`}>
+                      <div className="course-card-body">
                       <h3>{p.title}</h3>
                       <p>{p.description ?? ''}</p>
                       <p className="muted">Sekolah: {schoolName(p.school_id)}</p>
+                      </div>
                     </Link>
                   </li>
                 ))}
@@ -243,14 +263,16 @@ export default function GrowthPage() {
           </section>
           <section className="section">
             <h2>Sekolah &amp; Klub Terdaftar</h2>
-            {schools.length === 0 ? (
+            {collabError ? (
+              <p className="error-box">Daftar sekolah gagal dimuat. Coba muat ulang halaman ini.</p>
+            ) : schools.length === 0 ? (
               <p className="empty">Belum ada sekolah yang terdaftar.</p>
             ) : (
               <ul>
                 {schools.map((s) => (
                   <li key={s.id}>
                     <Link to="/sekolah">{s.name}</Link>
-                    {s.city ? ` — ${s.city}` : ''}
+                    {s.city ? `, ${s.city}` : ''}
                     {s.is_verified ? ' · Terverifikasi' : ''}
                   </li>
                 ))}
@@ -270,15 +292,15 @@ export default function GrowthPage() {
             <h2>Integrasi yang Terhubung</h2>
             <ul className="discussion-list">
               <li className="discussion-item">
-                <h3>Supabase — Database, Auth &amp; Storage</h3>
+                <h3>Supabase, Database, Auth &amp; Storage</h3>
                 <p className="muted">Terhubung. Semua data SINEVERSE (course, proyek, komunitas, sertifikat) tersimpan di Supabase.</p>
               </li>
               <li className="discussion-item">
-                <h3>GitHub Pages — Hosting</h3>
+                <h3>GitHub Pages, Hosting</h3>
                 <p className="muted">Terhubung. Situs ini ditayangkan dari GitHub Pages.</p>
               </li>
               <li className="discussion-item">
-                <h3>Email (SMTP Gmail) — Email Konfirmasi</h3>
+                <h3>Email (SMTP Gmail), Email Konfirmasi</h3>
                 <p className="muted">Terhubung. Email konfirmasi pendaftaran dikirim lewat SMTP Gmail akun SINEVERSE.</p>
               </li>
             </ul>
@@ -288,15 +310,15 @@ export default function GrowthPage() {
             <ul className="discussion-list">
               <li className="discussion-item">
                 <h3>Pembayaran</h3>
-                <p className="muted">Belum dikonfigurasi — SINEVERSE saat ini gratis, tidak ada pembayaran di aplikasi.</p>
+                <p className="muted">Belum dikonfigurasi, SINEVERSE saat ini gratis, tidak ada pembayaran di aplikasi.</p>
               </li>
               <li className="discussion-item">
                 <h3>Analitik Pihak Ketiga</h3>
-                <p className="muted">Belum dikonfigurasi — tidak ada pelacak analitik eksternal.</p>
+                <p className="muted">Belum dikonfigurasi, tidak ada pelacak analitik eksternal.</p>
               </li>
               <li className="discussion-item">
                 <h3>Login Google / Media Sosial</h3>
-                <p className="muted">Belum dikonfigurasi — masuk hanya memakai email dan kata sandi.</p>
+                <p className="muted">Belum dikonfigurasi, masuk hanya memakai email dan kata sandi.</p>
               </li>
             </ul>
             <p className="muted">Belum ada integrasi lain yang dikonfigurasi di SINEVERSE.</p>
@@ -317,8 +339,8 @@ export default function GrowthPage() {
                 <h3>Terpasang di Perangkat</h3>
                 <p className="muted">
                   {standalone
-                    ? 'Ya — aplikasi sedang berjalan sebagai aplikasi terpasang (mode standalone).'
-                    : 'Belum — aplikasi sedang dibuka lewat browser.'}
+                    ? 'Ya, aplikasi sedang berjalan sebagai aplikasi terpasang (mode standalone).'
+                    : 'Belum, aplikasi sedang dibuka lewat browser.'}
                 </p>
               </li>
               <li className="discussion-item">
@@ -327,8 +349,8 @@ export default function GrowthPage() {
                   {swActive === null
                     ? 'Memeriksa…'
                     : swActive
-                      ? 'Aktif — service worker mengendalikan halaman ini (dukungan offline).'
-                      : 'Tidak aktif — service worker belum mengendalikan halaman ini.'}
+                      ? 'Aktif, service worker mengendalikan halaman ini (dukungan offline).'
+                      : 'Tidak aktif, service worker belum mengendalikan halaman ini.'}
                 </p>
               </li>
               <li className="discussion-item">
@@ -337,8 +359,8 @@ export default function GrowthPage() {
                   {manifestOk === null
                     ? 'Memeriksa…'
                     : manifestOk
-                      ? 'Ditemukan — manifest PWA tersedia.'
-                      : 'Tidak ditemukan — manifest PWA tidak termuat.'}
+                      ? 'Ditemukan, manifest PWA tersedia.'
+                      : 'Tidak ditemukan, manifest PWA tidak termuat.'}
                 </p>
               </li>
               <li className="discussion-item">
@@ -347,8 +369,8 @@ export default function GrowthPage() {
                   {offlineOk === null
                     ? 'Memeriksa…'
                     : offlineOk
-                      ? 'Tersedia — halaman offline siap ditampilkan saat tidak ada koneksi.'
-                      : 'Tidak tersedia — halaman offline tidak termuat.'}
+                      ? 'Tersedia, halaman offline siap ditampilkan saat tidak ada koneksi.'
+                      : 'Tidak tersedia, halaman offline tidak termuat.'}
                 </p>
               </li>
               <li className="discussion-item">
@@ -357,7 +379,7 @@ export default function GrowthPage() {
                   {standalone
                     ? 'Aplikasi sudah terpasang di perangkat ini.'
                     : installReady
-                      ? 'Siap dipasang — browser menawarkan pemasangan aplikasi.'
+                      ? 'Siap dipasang, browser menawarkan pemasangan aplikasi.'
                       : 'Browser belum menawarkan pemasangan di sesi ini (mis. sudah pernah ditolak, atau tidak didukung).'}
                 </p>
                 {!standalone && deferredPrompt && (

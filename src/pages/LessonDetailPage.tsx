@@ -1,18 +1,26 @@
-// SINEVERSE — Halaman lesson: strip WATCH → READ → CHECK → DO,
+// SINEVERSE, Halaman lesson: strip WATCH → READ → CHECK → DO,
 // embed video (YouTube/Vimeo) atau kartu tautan eksternal, navigasi
 // prev/next, "Tandai Selesai", dan diskusi lesson (baca + kirim, balasan
 // bersarang via parent_id).
+//
+// Akses: lesson hanya untuk peserta course, mentor pengampu, atau admin.
+// Companion fetch (tugas, kuis, diskusi, progres) dimuat independen:
+// satu gagal tidak boleh menenggelamkan lesson.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchAssignmentsForLessons,
+  fetchCourse,
   fetchCourseLessons,
   fetchDiscussions,
+  fetchEnrollment,
   fetchLesson,
   fetchLessonProgressFor,
+  fetchQuizAttempts,
   fetchQuizzesForLessons,
+  fetchSubmissions,
   markLessonCompleted,
   markLessonStarted,
   postDiscussion,
@@ -50,6 +58,13 @@ export default function LessonDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [access, setAccess] = useState<'checking' | 'allowed' | 'locked'>('checking')
+  const [assignError, setAssignError] = useState<string | null>(null)
+  const [quizError, setQuizError] = useState<string | null>(null)
+  const [discussionError, setDiscussionError] = useState<string | null>(null)
+  const [passedQuiz, setPassedQuiz] = useState(false)
+  const [submittedAssignment, setSubmittedAssignment] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   const [newPost, setNewPost] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -83,7 +98,7 @@ export default function LessonDetailPage() {
         setHelpfulCounts(counts)
         setHelpfulMine(mine)
       } catch {
-        // Tabel belum ada — abaikan, diskusi tetap tampil.
+        // Tabel belum ada, abaikan, diskusi tetap tampil.
       }
     }
     void loadReactions()
@@ -97,65 +112,165 @@ export default function LessonDetailPage() {
     if (!id) return
     let cancelled = false
     async function load() {
+      setLoading(true)
+      setError(null)
+      setAccess('checking')
+      setAssignError(null)
+      setQuizError(null)
+      setDiscussionError(null)
+      setPassedQuiz(false)
+      setSubmittedAssignment(false)
+
+      // 1. Lesson dulu. Hanya kegagalan di sini yang boleh menampilkan
+      // error seluruh halaman.
+      let l: Lesson
       try {
-        const l = await fetchLesson(id as string)
-        if (cancelled) return
-        if (!l) {
-          setError('Lesson tidak ditemukan.')
+        const fetched = await fetchLesson(id as string)
+        if (!fetched) {
+          if (!cancelled) {
+            setError('Lesson tidak ditemukan.')
+            setLoading(false)
+          }
           return
         }
-        setLesson(l)
-        const [assigns, quizList, threads] = await Promise.all([
-          fetchAssignmentsForLessons([l.id]),
-          fetchQuizzesForLessons([l.id]),
-          fetchDiscussions(l.id),
-        ])
-        if (cancelled) return
-        setAssignments(assigns)
-        setQuizzes(quizList)
-        setDiscussions(threads)
-        if (user) {
-          const prog = await fetchLessonProgressFor(user.id, l.id)
-          if (cancelled) return
-          if (prog) setStatus(prog.status)
-          if (!prog || prog.status === 'not_started') {
-            await markLessonStarted(user.id, l.id)
-            if (!cancelled) setStatus('in_progress')
+        l = fetched
+      } catch {
+        if (!cancelled) {
+          setError('Gagal memuat lesson. Periksa koneksi lalu coba lagi.')
+          setLoading(false)
+        }
+        return
+      }
+      if (cancelled) return
+      setLesson(l)
+
+      // 2. Resolve course (module → course), lalu cek akses. Tamu dan
+      // pengguna yang tidak terdaftar tidak boleh melihat isi lesson.
+      let courseInfo: { courseId: string; courseTitle: string } | null = null
+      try {
+        courseInfo = await fetchModulesByLessonModule(l.module_id)
+      } catch {
+        courseInfo = null
+      }
+      if (cancelled) return
+      if (!courseInfo) {
+        setAccess('locked')
+        setLoading(false)
+        return
+      }
+      setCourseId(courseInfo.courseId)
+      setCourseTitle(courseInfo.courseTitle)
+
+      let allowed = false
+      if (user) {
+        if (profile?.role === 'admin') {
+          allowed = true
+        } else {
+          try {
+            const course = await fetchCourse(courseInfo.courseId)
+            if (course && course.mentor_id === user.id) {
+              allowed = true
+            } else {
+              try {
+                const enr = await fetchEnrollment(user.id, courseInfo.courseId)
+                if (enr) allowed = true
+              } catch {
+                allowed = false
+              }
+            }
+          } catch {
+            allowed = false
           }
         }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat lesson.')
-      } finally {
-        if (!cancelled) setLoading(false)
       }
+      if (cancelled) return
+      if (!allowed) {
+        setAccess('locked')
+        setLoading(false)
+        return
+      }
+      setAccess('allowed')
+
+      // 3. Companion fetch, masing-masing independen. Satu gagal hanya
+      // menampilkan notice kecil di seksinya, bukan error halaman.
+      try {
+        const sibs = await fetchCourseLessons(courseInfo.courseId)
+        if (!cancelled) setSiblings(sibs)
+      } catch {
+        if (!cancelled) setSiblings([])
+      }
+
+      let assigns: Assignment[] = []
+      try {
+        assigns = await fetchAssignmentsForLessons([l.id])
+        if (!cancelled) setAssignments(assigns)
+      } catch {
+        if (!cancelled) setAssignError('Tugas gagal dimuat. Coba muat ulang halaman.')
+      }
+
+      let qs: Quiz[] = []
+      try {
+        qs = await fetchQuizzesForLessons([l.id])
+        if (!cancelled) setQuizzes(qs)
+      } catch {
+        if (!cancelled) setQuizError('Kuis gagal dimuat. Coba muat ulang halaman.')
+      }
+
+      try {
+        const threads = await fetchDiscussions(l.id)
+        if (!cancelled) setDiscussions(threads)
+      } catch {
+        if (!cancelled) setDiscussionError('Diskusi gagal dimuat. Coba muat ulang halaman.')
+      }
+
+      if (user) {
+        try {
+          const prog = await fetchLessonProgressFor(user.id, l.id)
+          if (!cancelled && prog) setStatus(prog.status)
+          if (!prog || prog.status === 'not_started') {
+            try {
+              await markLessonStarted(user.id, l.id)
+              if (!cancelled) setStatus('in_progress')
+            } catch {
+              // Gagal menandai mulai: lesson tetap tampil, status apa adanya.
+            }
+          }
+        } catch {
+          // Progres gagal dimuat: lesson tetap tampil tanpa status.
+        }
+        try {
+          const attempts = await fetchQuizAttempts(user.id)
+          if (!cancelled) {
+            setPassedQuiz(
+              attempts.some((a) =>
+                qs.some((q) => q.id === a.quiz_id && a.score != null && a.score >= q.passing_score),
+              ),
+            )
+          }
+        } catch {
+          if (!cancelled) setPassedQuiz(false)
+        }
+        try {
+          const subs = await fetchSubmissions(user.id)
+          if (!cancelled) {
+            const assignIds = new Set(assigns.map((a) => a.id))
+            setSubmittedAssignment(subs.some((s) => assignIds.has(s.assignment_id)))
+          }
+        } catch {
+          if (!cancelled) setSubmittedAssignment(false)
+        }
+      }
+
+      if (!cancelled) setLoading(false)
     }
     void load()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, user?.id])
+  }, [id, user?.id, profile?.role])
 
-  // Resolve course + siblings once the lesson is known.
-  useEffect(() => {
-    if (!lesson) return
-    const currentLesson = lesson
-    let cancelled = false
-    async function resolveCourse() {
-      const mods = await fetchModulesByLessonModule(currentLesson.module_id)
-      if (cancelled || !mods) return
-      setCourseId(mods.courseId)
-      setCourseTitle(mods.courseTitle)
-      const all = await fetchCourseLessons(mods.courseId)
-      if (!cancelled) setSiblings(all)
-    }
-    void resolveCourse()
-    return () => {
-      cancelled = true
-    }
-  }, [lesson])
-
-  if (loading) {
+  if (loading || access === 'checking') {
     return (
       <div className="page">
         <p className="muted">Memuat lesson…</p>
@@ -172,6 +287,21 @@ export default function LessonDetailPage() {
     )
   }
 
+  if (access === 'locked') {
+    return (
+      <div className="page">
+        <p className="error-box">Lesson ini hanya untuk peserta course.</p>
+        {courseId ? (
+          <Link to={`/course/${courseId}`}>
+            Buka halaman course{courseTitle ? `: ${courseTitle}` : ''}
+          </Link>
+        ) : (
+          <Link to="/akademi">Kembali ke Akademi</Link>
+        )}
+      </div>
+    )
+  }
+
   const idx = siblings.findIndex((l) => l.id === lesson.id)
   const prev = idx > 0 ? siblings[idx - 1] : null
   const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null
@@ -181,12 +311,30 @@ export default function LessonDetailPage() {
   )
   const replies = (parentId: string) => discussions.filter((d) => d.parent_id === parentId)
 
+  // Strip mencerminkan penyelesaian nyata, bukan sekadar konten ada:
+  // WATCH/READ menyala saat lesson sudah dimulai (in_progress/completed;
+  // in_progress dipakai sebagai proksi "sudah dibaca" karena pembacaan
+  // tidak dilacak per baris). CHECK hanya saat ada percobaan kuis lulus,
+  // DO hanya saat tugas sudah dikirim. Bila percobaan/submission gagal
+  // dimuat, strip tampil belum selesai, bukan menyala.
+  const watchDone = status === 'in_progress' || status === 'completed'
+  const readDone = watchDone
+  const checkDone = passedQuiz
+  const doDone = submittedAssignment
+
   async function handleComplete() {
     if (!user || !lesson) return
     const l = lesson
-    await markLessonCompleted(user.id, l.id)
-    setStatus('completed')
-    setNotice('Lesson ditandai selesai.')
+    setSaving(true)
+    try {
+      await markLessonCompleted(user.id, l.id)
+      setStatus('completed')
+      setNotice('Lesson ditandai selesai.')
+    } catch {
+      setNotice('Gagal menandai lesson selesai. Periksa koneksi lalu coba lagi.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function toggleHelpful(discussionId: string) {
@@ -212,8 +360,8 @@ export default function LessonDetailPage() {
       }
     } catch (err) {
       setNotice(isMissingTableError(err)
-        ? 'Reaksi bermanfaat aktif setelah migrasi 003 dijalankan — lihat supabase/README.md.'
-        : err instanceof Error ? err.message : 'Gagal menyimpan reaksi.')
+        ? 'Reaksi bermanfaat aktif setelah migrasi 003 dijalankan, lihat supabase/README.md.'
+        : 'Gagal menyimpan reaksi. Periksa koneksi lalu coba lagi.')
     }
   }
 
@@ -225,8 +373,8 @@ export default function LessonDetailPage() {
       setNotice(okMsg)
     } catch (err) {
       setNotice(isMissingTableError(err)
-        ? 'Fitur ini aktif setelah migrasi 003 dijalankan — lihat supabase/README.md.'
-        : err instanceof Error ? err.message : 'Gagal memperbarui diskusi.')
+        ? 'Fitur ini aktif setelah migrasi 003 dijalankan, lihat supabase/README.md.'
+        : 'Gagal memperbarui diskusi. Periksa koneksi lalu coba lagi.')
     }
   }
 
@@ -246,8 +394,8 @@ export default function LessonDetailPage() {
       setReportReason('')
     } catch (err) {
       setNotice(isMissingTableError(err)
-        ? 'Pelaporan aktif setelah migrasi 003 dijalankan — lihat supabase/README.md.'
-        : err instanceof Error ? err.message : 'Gagal mengirim laporan.')
+        ? 'Pelaporan aktif setelah migrasi 003 dijalankan, lihat supabase/README.md.'
+        : 'Gagal mengirim laporan. Periksa koneksi lalu coba lagi.')
     }
   }
 
@@ -261,8 +409,8 @@ export default function LessonDetailPage() {
       row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null }
       setDiscussions((d) => [...d, row])
       setNewPost('')
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Gagal mengirim diskusi.')
+    } catch {
+      setNotice('Gagal mengirim diskusi. Periksa koneksi lalu coba lagi.')
     } finally {
       setPosting(false)
     }
@@ -279,12 +427,25 @@ export default function LessonDetailPage() {
       setDiscussions((d) => [...d, row])
       setReplyBody('')
       setReplyTo(null)
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Gagal mengirim balasan.')
+    } catch {
+      setNotice('Gagal mengirim balasan. Periksa koneksi lalu coba lagi.')
     } finally {
       setPosting(false)
     }
   }
+
+  const reportForm = (discussionId: string) => (
+    <form className="form form-inline" onSubmit={(e) => handleReport(e, discussionId)}>
+      <label>
+        Alasan laporan
+        <input value={reportReason} onChange={(e) => setReportReason(e.target.value)} required placeholder="Mis. spam, tidak sopan, di luar topik…" />
+      </label>
+      <div className="form-actions">
+        <button type="submit" className="btn btn-primary btn-small">Kirim Laporan</button>
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(null)}>Batal</button>
+      </div>
+    </form>
+  )
 
   return (
     <div className="page">
@@ -294,18 +455,24 @@ export default function LessonDetailPage() {
         </Link>
       )}
       <h1>
-        {lesson.lesson_code ? `${lesson.lesson_code} — ` : ''}
+        {lesson.lesson_code ? `${lesson.lesson_code}, ` : ''}
         {lesson.title}
       </h1>
       <p className="muted">
-        Status: {status === 'completed' ? 'Selesai' : status === 'in_progress' ? 'Sedang dipelajari' : 'Belum dimulai'}
+        Status: {!user
+          ? 'Masuk untuk melacak progres'
+          : status === 'completed'
+            ? 'Selesai'
+            : status === 'in_progress'
+              ? 'Sedang dipelajari'
+              : 'Belum dimulai'}
       </p>
 
       <ol className="flow-strip" aria-label="Alur belajar">
-        <li className={embed ? 'flow-done' : ''}>WATCH — Tonton</li>
-        <li className={lesson.content ? 'flow-done' : ''}>READ — Baca</li>
-        <li className={quizzes.length > 0 ? 'flow-done' : ''}>CHECK — Cek Pemahaman</li>
-        <li className={assignments.length > 0 ? 'flow-done' : ''}>DO — Kerjakan</li>
+        <li className={watchDone ? 'flow-done' : ''} title="Tonton">WATCH</li>
+        <li className={readDone ? 'flow-done' : ''} title="Baca">READ</li>
+        <li className={checkDone ? 'flow-done' : ''} title="Cek Pemahaman">CHECK</li>
+        <li className={doDone ? 'flow-done' : ''} title="Kerjakan">DO</li>
       </ol>
 
       <section className="section" aria-label="Video">
@@ -340,8 +507,10 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Cek pemahaman">
-        <h2>CHECK — Kuis</h2>
-        {quizzes.length === 0 ? (
+        <h2>CHECK, Kuis</h2>
+        {quizError ? (
+          <p className="error-box">{quizError}</p>
+        ) : quizzes.length === 0 ? (
           <p className="empty">Belum ada kuis untuk lesson ini.</p>
         ) : (
           <ul>
@@ -355,44 +524,57 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Tugas">
-        <h2>DO — Tugas</h2>
-        {assignments.length === 0 ? (
+        <h2>DO, Tugas</h2>
+        {assignError ? (
+          <p className="error-box">{assignError}</p>
+        ) : assignments.length === 0 ? (
           <p className="empty">Belum ada tugas untuk lesson ini.</p>
         ) : (
           <ul>
             {assignments.map((a) => (
               <li key={a.id}>
                 <Link to={`/tugas/${a.id}`}><strong>{a.title}</strong></Link>
-                {a.description ? ` — ${a.description}` : ''} (maks. {a.max_score})
+                {a.description ? `, ${a.description}` : ''} (maks. {a.max_score})
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      {notice && <p className="notice-box">{notice}</p>}
-
       {user && (
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={handleComplete}
-          disabled={status === 'completed'}
-        >
-          {status === 'completed' ? 'Lesson Selesai' : 'Tandai Selesai'}
-        </button>
+        <>
+          {notice && <p className="notice-box">{notice}</p>}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleComplete}
+            disabled={status === 'completed' || saving}
+          >
+            {saving ? 'Menyimpan…' : status === 'completed' ? 'Lesson Selesai' : 'Tandai Selesai'}
+          </button>
+        </>
       )}
 
       <nav className="lesson-nav" aria-label="Navigasi lesson">
         {prev ? (
-          <Link to={`/lesson/${prev.id}`} className="btn btn-secondary">
+          <Link
+            to={`/lesson/${prev.id}`}
+            className="btn btn-secondary lesson-nav-title"
+            title={prev.title}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '45vw', minWidth: 0 }}
+          >
             ← {prev.title}
           </Link>
         ) : (
           <span />
         )}
         {next ? (
-          <Link to={`/lesson/${next.id}`} className="btn btn-secondary">
+          <Link
+            to={`/lesson/${next.id}`}
+            className="btn btn-secondary lesson-nav-title"
+            title={next.title}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '45vw', minWidth: 0 }}
+          >
             {next.title} →
           </Link>
         ) : (
@@ -402,7 +584,9 @@ export default function LessonDetailPage() {
 
       <section className="section" aria-label="Diskusi lesson">
         <h2>Diskusi Lesson</h2>
-        {topLevel.length === 0 ? (
+        {discussionError ? (
+          <p className="error-box">{discussionError}</p>
+        ) : topLevel.length === 0 ? (
           <p className="empty">Belum ada diskusi. Jadilah yang pertama bertanya.</p>
         ) : (
           <ul className="discussion-list">
@@ -416,9 +600,11 @@ export default function LessonDetailPage() {
                 </p>
                 <p>{d.body}</p>
                 <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(d.id)}>
-                    Bermanfaat ({helpfulCounts[d.id] ?? 0})
-                  </button>
+                  {user && (
+                    <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(d.id)}>
+                      Bermanfaat ({helpfulCounts[d.id] ?? 0})
+                    </button>
+                  )}
                   {canModerate && (
                     <button
                       type="button"
@@ -443,31 +629,32 @@ export default function LessonDetailPage() {
                     </button>
                   )}
                 </div>
-                {user && reportingId === d.id && (
-                  <form className="form form-inline" onSubmit={(e) => handleReport(e, d.id)}>
-                    <label>
-                      Alasan laporan
-                      <input value={reportReason} onChange={(e) => setReportReason(e.target.value)} required placeholder="Mis. spam, tidak sopan, di luar topik…" />
-                    </label>
-                    <div className="form-actions">
-                      <button type="submit" className="btn btn-primary btn-small">Kirim Laporan</button>
-                      <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(null)}>Batal</button>
-                    </div>
-                  </form>
-                )}
+                {user && reportingId === d.id && reportForm(d.id)}
                 <ul className="discussion-replies">
                   {replies(d.id).map((r) => (
                     <li key={r.id}>
                       <p className="discussion-meta">
                         {r.author?.name ?? 'Anggota'} ·{' '}
                         {new Date(r.created_at).toLocaleString('id-ID')}
+                        {r.is_pinned ? ' · Disematkan' : ''}
                         {d.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
                       </p>
                       <p>{r.body}</p>
                       <div className="form-actions">
-                        <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
-                          Bermanfaat ({helpfulCounts[r.id] ?? 0})
-                        </button>
+                        {user && (
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
+                            Bermanfaat ({helpfulCounts[r.id] ?? 0})
+                          </button>
+                        )}
+                        {canModerate && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => void updateDiscussionFlags(r.id, { is_pinned: !(r.is_pinned ?? false) }, r.is_pinned ? 'Balasan dilepas dari sematan.' : 'Balasan disematkan.')}
+                          >
+                            {r.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
+                          </button>
+                        )}
                         {user && d.user_id === user.id && d.accepted_answer_id !== r.id && (
                           <button
                             type="button"
@@ -477,7 +664,13 @@ export default function LessonDetailPage() {
                             Terima sebagai Jawaban
                           </button>
                         )}
+                        {user && reportingId !== r.id && (
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
+                            Laporkan
+                          </button>
+                        )}
                       </div>
+                      {user && reportingId === r.id && reportForm(r.id)}
                     </li>
                   ))}
                 </ul>
@@ -518,6 +711,7 @@ export default function LessonDetailPage() {
         )}
         {user ? (
           <form className="form" onSubmit={handlePost}>
+            {notice && <p className="notice-box">{notice}</p>}
             <label>
               Tulis pertanyaan atau komentar
               <textarea

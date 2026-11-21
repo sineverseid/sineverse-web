@@ -1,13 +1,13 @@
-// SINEVERSE — Komunitas: direktori komunitas yang disetujui + gabung/
+// SINEVERSE, Komunitas: direktori komunitas yang disetujui + gabung/
 // keluar + usulan komunitas baru dari anggota (004). Persetujuan admin
 // membuat komunitas + menggabungkan pengusul (ditangani admin di Admin
 // Panel; di sini usulan tercatat sebagai community_proposals 'pending').
 //
 // Per peran:
-// - Siswa: seperti semula — semua community yang disetujui + tombol Gabung.
+// - Siswa: seperti semula, semua community yang disetujui + tombol Gabung.
 // - Mentor: community yang diikuti (status Anggota/Pembimbing + tombol
 //   Buka), "Community Mencari Pembimbing" (011: community yang disetujui
-//   dan menandai seeking_mentor — tombol "Jadi Pembimbing"), community
+//   dan menandai seeking_mentor, tombol "Jadi Pembimbing"), community
 //   lain yang bisa diikuti (tombol Gabung); bisa mengusulkan community
 //   baru. Pembuat community (atau admin, di halaman detail) bisa
 //   menghidupkan/mematikan penanda "Mencari pembimbing".
@@ -37,6 +37,29 @@ function memberRoleLabel(role: string | null): string {
   return role
 }
 
+function proposalStatusLabel(status: CommunityProposal['status']): string {
+  if (status === 'pending') return 'Menunggu persetujuan'
+  if (status === 'approved') return 'Disetujui'
+  return 'Ditolak'
+}
+
+function reportStatusLabel(status: ModerationReport['status']): string {
+  if (status === 'open') return 'Terbuka'
+  if (status === 'resolved') return 'Diselesaikan'
+  return 'Ditolak'
+}
+
+function reportTargetTypeLabel(targetType: string): string {
+  if (targetType === 'community') return 'Komunitas'
+  if (targetType === 'community_post') return 'Postingan komunitas'
+  return targetType
+}
+
+// Pesan ramah untuk kegagalan database, bukan teks mentah Supabase.
+function friendlyDbError(): string {
+  return 'Gagal menyimpan perubahan. Coba lagi nanti.'
+}
+
 export default function CommunitiesPage() {
   const { user, profile, loading: authLoading } = useAuth()
   const [items, setItems] = useState<Community[] | null>(null)
@@ -47,7 +70,10 @@ export default function CommunitiesPage() {
   const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map())
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
   const [proposalNames, setProposalNames] = useState<Map<string, string>>(new Map())
+  const [myProposals, setMyProposals] = useState<CommunityProposal[]>([])
   const [modReports, setModReports] = useState<ModerationReport[] | null>([])
+  const [reportTargets, setReportTargets] = useState<Map<string, { label: string; href: string | null }>>(new Map())
+  const [reportReporters, setReportReporters] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -82,7 +108,7 @@ export default function CommunitiesPage() {
       }
       // Mentor: community yang sedang mencari pembimbing (011) dan belum
       // diikuti mentor ini. Bila kolom seeking_mentor belum ada (migrasi
-      // 011 belum diterapkan), query gagal — tampilkan daftar kosong,
+      // 011 belum diterapkan), query gagal, tampilkan daftar kosong,
       // bukan crash.
       if (isMentor) {
         const { data: seekData, error: seekErr } = await supabase
@@ -96,8 +122,8 @@ export default function CommunitiesPage() {
       } else {
         setSeeking([])
       }
-      // Jumlah anggota per community (mentor + admin).
-      if (isAdmin || isMentor) {
+      // Jumlah anggota per community (semua peran melihatnya).
+      {
         const { data: allMem } = await supabase
           .from('community_members')
           .select('community_id')
@@ -106,6 +132,18 @@ export default function CommunitiesPage() {
           counts.set(m.community_id, (counts.get(m.community_id) ?? 0) + 1)
         }
         setMemberCounts(counts)
+      }
+      // Usulan komunitas saya sendiri (semua status) agar pengusul bisa
+      // melihat status usulannya.
+      if (!isAdmin && user) {
+        const { data: myPropData } = await supabase
+          .from('community_proposals')
+          .select('*')
+          .eq('proposer_id', user.id)
+          .order('created_at', { ascending: false })
+        setMyProposals((myPropData ?? []) as CommunityProposal[])
+      } else {
+        setMyProposals([])
       }
       // Admin: usulan menunggu persetujuan + laporan community.
       if (isAdmin) {
@@ -130,15 +168,48 @@ export default function CommunitiesPage() {
           if (isMissingTableError(repErr)) setModReports(null)
           else setModReports([])
         } else {
-          setModReports(
-            ((repData ?? []) as ModerationReport[]).filter(
-              (r) => r.target_type === 'community' || r.target_type === 'community_post',
+          const reports = ((repData ?? []) as ModerationReport[]).filter(
+            (r) => r.target_type === 'community' || r.target_type === 'community_post',
+          )
+          setModReports(reports)
+          // Selesaikan target laporan ke label yang bisa dibaca + tautan,
+          // bukan UUID mentah.
+          const targets = new Map<string, { label: string; href: string | null }>()
+          const communityIds = reports
+            .filter((r) => r.target_type === 'community' && r.target_id)
+            .map((r) => r.target_id as string)
+          const postIds = reports
+            .filter((r) => r.target_type === 'community_post' && r.target_id)
+            .map((r) => r.target_id as string)
+          if (communityIds.length > 0) {
+            const { data: comms } = await supabase
+              .from('communities')
+              .select('id,name')
+              .in('id', communityIds)
+            for (const c of (comms ?? []) as { id: string; name: string }[]) {
+              targets.set(c.id, { label: c.name, href: `/komunitas/${c.id}` })
+            }
+          }
+          if (postIds.length > 0) {
+            const { data: postsData } = await supabase
+              .from('community_posts')
+              .select('id,body,community_id')
+              .in('id', postIds)
+            for (const p of (postsData ?? []) as { id: string; body: string; community_id: string }[]) {
+              const excerpt = p.body.length > 60 ? `${p.body.slice(0, 60)}…` : p.body
+              targets.set(p.id, { label: excerpt, href: `/komunitas/${p.community_id}` })
+            }
+          }
+          setReportTargets(targets)
+          setReportReporters(
+            await fetchProfileNames(reports.map((r) => r.reporter_id)).catch(
+              () => new Map<string, string>(),
             ),
           )
         }
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat komunitas.')
+    } catch {
+      setError('Gagal memuat komunitas. Coba lagi nanti.')
     } finally {
       setLoading(false)
     }
@@ -149,32 +220,54 @@ export default function CommunitiesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.role])
 
-  async function toggleJoin(id: string, joined: boolean) {
+  async function toggleJoin(id: string, joined: boolean, communityName?: string) {
     if (!user) return
     if (joined) {
+      if (!window.confirm('Yakin keluar dari community ini?')) return
+      const wasMentor = myRoles.get(id) === 'mentor'
       const { error } = await supabase
         .from('community_members')
         .delete()
         .eq('community_id', id)
         .eq('user_id', user.id)
-      if (error) setNotice(error.message)
-      else {
-        setMine((m) => {
-          const n = new Set(m)
-          n.delete(id)
-          return n
-        })
-        setMyRoles((m) => {
-          const n = new Map(m)
-          n.delete(id)
-          return n
-        })
+      if (error) {
+        setNotice(friendlyDbError())
+        return
       }
+      // Mentor keluar: bila tidak ada lagi anggota pembimbing, hidupkan
+      // lagi penanda "Mencari pembimbing" agar community bisa dicari
+      // pembimbing baru.
+      let seekingRestored = false
+      if (wasMentor) {
+        const { data: remaining } = await supabase
+          .from('community_members')
+          .select('role')
+          .eq('community_id', id)
+        const hasMentor = ((remaining ?? []) as { role: string | null }[]).some(
+          (m) => m.role === 'mentor',
+        )
+        if (!hasMentor) {
+          const { error: updErr } = await supabase
+            .from('communities')
+            .update({ seeking_mentor: true })
+            .eq('id', id)
+          seekingRestored = !updErr
+        }
+      }
+      await logAudit('community.left', 'communities', id, {
+        name: communityName ?? null,
+        seeking_mentor_restored: seekingRestored,
+      })
+      setNotice(
+        `Kamu sudah keluar dari community${communityName ? ` "${communityName}"` : ''}.` +
+          (seekingRestored ? ' Community ini kembali ditandai sedang mencari pembimbing.' : ''),
+      )
+      await load()
     } else {
       const { error } = await supabase
         .from('community_members')
         .insert({ community_id: id, user_id: user.id, role: 'member' })
-      if (error) setNotice(error.message)
+      if (error) setNotice(friendlyDbError())
       else {
         setMine((m) => new Set(m).add(id))
         setMyRoles((m) => new Map(m).set(id, 'member'))
@@ -200,7 +293,7 @@ export default function CommunitiesPage() {
           role: 'mentor',
         })
     if (memErr) {
-      setNotice(memErr.message)
+      setNotice(friendlyDbError())
       return
     }
     const { error: updErr } = await supabase
@@ -209,10 +302,10 @@ export default function CommunitiesPage() {
       .eq('id', id)
     if (updErr) {
       // Keanggotaan pembimbing sudah tersimpan; penanda seeking gagal
-      // dimatikan (mis. migrasi 011 belum diterapkan) — beri tahu,
+      // dimatikan (mis. migrasi 011 belum diterapkan), beri tahu,
       // jangan diam.
       setNotice(
-        `Kamu kini menjadi pembimbing "${communityName}", tetapi penanda "Mencari pembimbing" gagal dimatikan: ${updErr.message}`,
+        `Kamu kini menjadi pembimbing "${communityName}", tetapi penanda "Mencari pembimbing" gagal dimatikan. Coba lagi nanti.`,
       )
     } else {
       setNotice(`Kamu kini menjadi pembimbing komunitas "${communityName}".`)
@@ -230,11 +323,12 @@ export default function CommunitiesPage() {
       proposer_id: user.id,
       status: 'pending',
     })
-    if (error) setNotice(error.message)
+    if (error) setNotice(friendlyDbError())
     else {
-      setNotice('Usulan komunitas terkirim. Admin akan meninjau — bila disetujui, komunitas dibuat dan kamu langsung menjadi anggotanya.')
+      setNotice('Usulan komunitas terkirim. Admin akan meninjau. Bila disetujui, komunitas dibuat dan kamu langsung menjadi anggotanya.')
       setName('')
       setDesc('')
+      await load()
     }
   }
 
@@ -246,7 +340,7 @@ export default function CommunitiesPage() {
       .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
       .eq('id', p.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice(friendlyDbError())
       return
     }
     if (approve) {
@@ -256,7 +350,7 @@ export default function CommunitiesPage() {
         .select()
         .single()
       if (cErr) {
-        setNotice(cErr.message)
+        setNotice(friendlyDbError())
         return
       }
       await supabase.from('community_members').insert({
@@ -275,7 +369,7 @@ export default function CommunitiesPage() {
   async function handleDeleteCommunity(id: string, communityName: string) {
     if (!window.confirm(`Hapus komunitas "${communityName}" beserta semua postingan dan keanggotaannya? Tindakan ini tidak bisa dibatalkan.`)) return
     const { error: delErr } = await supabase.from('communities').delete().eq('id', id)
-    if (delErr) setNotice(delErr.message)
+    if (delErr) setNotice(friendlyDbError())
     else {
       await logAudit('community.deleted', 'communities', id, { name: communityName })
       setNotice(`Komunitas "${communityName}" dihapus.`)
@@ -289,13 +383,33 @@ export default function CommunitiesPage() {
       .update({ status, resolved_by: user?.id ?? null, resolved_at: new Date().toISOString() })
       .eq('id', r.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice(friendlyDbError())
       return
     }
     await logAudit(`moderation_report.${status}`, 'moderation_reports', r.id, { target_type: r.target_type, target_id: r.target_id })
     setNotice(`Laporan moderasi ${status === 'resolved' ? 'diselesaikan' : 'ditolak'}.`)
     await load()
   }
+
+  // Usulan komunitas yang diajukan pengguna ini, lengkap dengan statusnya.
+  const myProposalsSection = user && myProposals.length > 0 ? (
+    <section className="section">
+      <h2>Usulan Saya ({myProposals.length})</h2>
+      <ul className="discussion-list">
+        {myProposals.map((p) => (
+          <li key={p.id} className="discussion-item">
+            <p>
+              <strong>{p.name}</strong>
+            </p>
+            {p.description && <p>{p.description}</p>}
+            <p className="muted">
+              Status: {proposalStatusLabel(p.status)} · {fmtDate(p.created_at)}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null
 
   if (loading || authLoading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -308,7 +422,7 @@ export default function CommunitiesPage() {
         <PageHeader
           icon="community"
           title="Community"
-          subtitle="Moderasi Community — admin tidak bergabung ke community."
+          subtitle="Moderasi Community. Admin tidak bergabung ke community."
         />
         {notice && <p className="notice-box">{notice}</p>}
 
@@ -363,32 +477,38 @@ export default function CommunitiesPage() {
             <p className="empty">Tidak ada laporan community.</p>
           ) : (
             <ul className="discussion-list">
-              {modReports.map((r) => (
-                <li key={r.id} className="discussion-item">
-                  <p className="discussion-meta">
-                    {r.target_type}
-                    {r.target_id ? ` · ${r.target_id}` : ''} · {fmtDate(r.created_at)} · Status:{' '}
-                    {r.status}
-                  </p>
-                  <p>Alasan: {r.reason ?? '—'}</p>
-                  <div className="form-actions">
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-small"
-                      onClick={() => void resolveModReport(r, 'resolved')}
-                    >
-                      Selesaikan
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      onClick={() => void resolveModReport(r, 'dismissed')}
-                    >
-                      Tolak Laporan
-                    </button>
-                  </div>
-                </li>
-              ))}
+              {modReports.map((r) => {
+                const target = r.target_id ? reportTargets.get(r.target_id) : undefined
+                const targetLabel = target?.label ??
+                  `${reportTargetTypeLabel(r.target_type)}${r.target_id ? ` #${r.target_id.slice(0, 8)}` : ''}`
+                return (
+                  <li key={r.id} className="discussion-item">
+                    <p className="discussion-meta">
+                      {target?.href ? <Link to={target.href}>{targetLabel}</Link> : targetLabel}
+                      {' · '}
+                      {fmtDate(r.created_at)} · Status: {reportStatusLabel(r.status)}
+                    </p>
+                    <p>Pelapor: {reportReporters.get(r.reporter_id) ?? '—'}</p>
+                    <p>Alasan: {r.reason ?? '—'}</p>
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        onClick={() => void resolveModReport(r, 'resolved')}
+                      >
+                        Selesaikan
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => void resolveModReport(r, 'dismissed')}
+                      >
+                        Tolak Laporan
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
@@ -434,7 +554,9 @@ export default function CommunitiesPage() {
   // --- Mentor: community yang diikuti + community lain --------------------
   if (isMentor) {
     const joined = items.filter((c) => mine.has(c.id))
-    const others = items.filter((c) => !mine.has(c.id))
+    // Community yang sedang mencari pembimbing hanya tampil di bagian
+    // "Community Mencari Pembimbing", bukan juga di "Community Lain".
+    const others = items.filter((c) => !mine.has(c.id) && !c.seeking_mentor)
     return (
       <div className="page">
         <PageHeader
@@ -510,7 +632,7 @@ export default function CommunitiesPage() {
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"
-                      onClick={() => void toggleJoin(c.id, true)}
+                      onClick={() => void toggleJoin(c.id, true, c.name)}
                     >
                       Keluar
                     </button>
@@ -539,7 +661,7 @@ export default function CommunitiesPage() {
                       <button
                         type="button"
                         className="btn btn-secondary btn-small"
-                        onClick={() => void toggleJoin(c.id, false)}
+                        onClick={() => void toggleJoin(c.id, false, c.name)}
                       >
                         Gabung
                       </button>
@@ -567,6 +689,8 @@ export default function CommunitiesPage() {
             </form>
           </section>
         )}
+
+        {myProposalsSection}
       </div>
     )
   }
@@ -589,10 +713,11 @@ export default function CommunitiesPage() {
               <Link to={`/komunitas/${c.id}`}>
                 <h3>{c.name}</h3>
                 <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                <p className="muted">{memberCounts.get(c.id) ?? 0} anggota</p>
               </Link>
               {user && (
                 <div style={{ padding: '0 1.25rem 1rem' }}>
-                  <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleJoin(c.id, mine.has(c.id))}>
+                  <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleJoin(c.id, mine.has(c.id), c.name)}>
                     {mine.has(c.id) ? 'Keluar' : 'Gabung'}
                   </button>
                 </div>
@@ -617,6 +742,7 @@ export default function CommunitiesPage() {
           </form>
         </section>
       )}
+      {myProposalsSection}
     </div>
   )
 }

@@ -1,15 +1,16 @@
-// SINEVERSE — Detail proyek (005): anggota, undangan & permintaan gabung,
+// SINEVERSE, Detail proyek (005): anggota, undangan & permintaan gabung,
 // milestone, papan kanban tugas (Rencana → Dikerjakan → Tinjauan →
 // Selesai), file proyek (bucket project-files), update produksi.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, supabase, uploadToBucket } from '../lib/supabase'
+import { fetchCrewProfiles, fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
 import type {
   Project,
+  ProjectAccessMode,
   ProjectFile,
   ProjectInvite,
   ProjectJoinRequest,
@@ -27,8 +28,39 @@ const COLUMNS: { status: ProjectTaskStatus; label: string }[] = [
   { status: 'selesai', label: 'Selesai' },
 ]
 
+const MODE_LABEL: Record<ProjectAccessMode, string> = {
+  open: 'Terbuka',
+  approval: 'Butuh persetujuan',
+  invite_only: 'Undangan saja',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  active: 'Aktif',
+  draft: 'Draf',
+  completed: 'Selesai',
+  archived: 'Diarsipkan',
+  paused: 'Dijeda',
+  cancelled: 'Dibatalkan',
+}
+
+const PRIORITY_LABEL: Record<string, string> = {
+  high: 'tinggi',
+  medium: 'sedang',
+  low: 'rendah',
+}
+
+const REQUEST_STATUS_LABEL: Record<string, string> = {
+  pending: 'Menunggu',
+  approved: 'Disetujui',
+  rejected: 'Ditolak',
+}
+
+const SECTION_FAILED = 'Bagian ini gagal dimuat.'
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { user, profile } = useAuth()
   const [project, setProject] = useState<Project | null>(null)
   const [missing, setMissing] = useState(false)
@@ -40,47 +72,110 @@ export default function ProjectDetailPage() {
   const [tasks, setTasks] = useState<ProjectTask[]>([])
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [updates, setUpdates] = useState<ProjectUpdate[]>([])
+  const [sectionErrors, setSectionErrors] = useState<Record<string, boolean>>({})
+  const [templateTitle, setTemplateTitle] = useState<string | null>(null)
+  const [crewNames, setCrewNames] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const [taskTitle, setTaskTitle] = useState('')
+  const [taskDesc, setTaskDesc] = useState('')
   const [taskStatus, setTaskStatus] = useState<ProjectTaskStatus>('rencana')
   const [msTitle, setMsTitle] = useState('')
   const [updateBody, setUpdateBody] = useState('')
   const [fileTitle, setFileTitle] = useState('')
   const [fileKind, setFileKind] = useState<ProjectFile['kind']>('reference')
   const [file, setFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [joinMsg, setJoinMsg] = useState('')
   const [inviteName, setInviteName] = useState('')
+
+  // Ubah proyek (pemilik / admin).
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [editMode, setEditMode] = useState<ProjectAccessMode>('open')
 
   const isOwner = project?.owner_id === user?.id
   const isAdmin = profile?.role === 'admin'
   const isMember = members.some((m) => m.user_id === user?.id) || isOwner
 
+  // Prefill nama undangan dari Crew Finder (?undang=Nama).
+  useEffect(() => {
+    const prefilled = searchParams.get('undang')
+    if (prefilled) setInviteName(prefilled)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Nama untuk autocomplete undangan: kru yang membuka diri + anggota proyek.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const crew = await fetchCrewProfiles()
+        if (!cancelled) setCrewNames(crew.map((c) => c.name ?? '').filter(Boolean))
+      } catch {
+        // Autocomplete bersifat tambahan; kegagalan dimuat tidak menghalangi undangan manual.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   async function loadAll(projectId: string) {
+    // Setiap query dibungkus sendiri: satu query gagal tidak boleh
+    // mengosongkan atau merusak seluruh halaman.
+    const errors: Record<string, boolean> = {}
     const [mem, req, inv, ms, tk, fl, up] = await Promise.all([
-      supabase.from('project_members').select('*').eq('project_id', projectId),
-      supabase.from('project_join_requests').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
-      supabase.from('project_invites').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
-      supabase.from('project_milestones').select('*').eq('project_id', projectId).order('order_index'),
-      supabase.from('project_tasks').select('*').eq('project_id', projectId).order('order_index'),
-      supabase.from('project_files').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
-      supabase.from('project_updates').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
+      supabase.from('project_members').select('*').eq('project_id', projectId).then(
+        (r) => { if (r.error) errors.members = true; return r },
+        () => { errors.members = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_join_requests').select('*').eq('project_id', projectId).order('created_at', { ascending: true }).then(
+        (r) => { if (r.error) errors.requests = true; return r },
+        () => { errors.requests = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_invites').select('*').eq('project_id', projectId).order('created_at', { ascending: false }).then(
+        (r) => { if (r.error) errors.invites = true; return r },
+        () => { errors.invites = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_milestones').select('*').eq('project_id', projectId).order('order_index').then(
+        (r) => { if (r.error) errors.milestones = true; return r },
+        () => { errors.milestones = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_tasks').select('*').eq('project_id', projectId).order('order_index').then(
+        (r) => { if (r.error) errors.tasks = true; return r },
+        () => { errors.tasks = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_files').select('*').eq('project_id', projectId).order('created_at', { ascending: false }).then(
+        (r) => { if (r.error) errors.files = true; return r },
+        () => { errors.files = true; return { data: null } as { data: null } },
+      ),
+      supabase.from('project_updates').select('*').eq('project_id', projectId).order('created_at', { ascending: false }).then(
+        (r) => { if (r.error) errors.updates = true; return r },
+        () => { errors.updates = true; return { data: null } as { data: null } },
+      ),
     ])
-    setMembers((mem.data ?? []) as ProjectMember[])
-    setRequests((req.data ?? []) as ProjectJoinRequest[])
-    setInvites((inv.data ?? []) as ProjectInvite[])
-    setMilestones((ms.data ?? []) as ProjectMilestone[])
-    setTasks((tk.data ?? []) as ProjectTask[])
-    setFiles((fl.data ?? []) as ProjectFile[])
-    setUpdates((up.data ?? []) as ProjectUpdate[])
+    setSectionErrors(errors)
+    if (!errors.members) setMembers((mem.data ?? []) as ProjectMember[])
+    if (!errors.requests) setRequests((req.data ?? []) as ProjectJoinRequest[])
+    if (!errors.invites) setInvites((inv.data ?? []) as ProjectInvite[])
+    if (!errors.milestones) setMilestones((ms.data ?? []) as ProjectMilestone[])
+    if (!errors.tasks) setTasks((tk.data ?? []) as ProjectTask[])
+    if (!errors.files) setFiles((fl.data ?? []) as ProjectFile[])
+    if (!errors.updates) setUpdates((up.data ?? []) as ProjectUpdate[])
     const ids = [
-      ...((mem.data ?? []) as ProjectMember[]).map((m) => m.user_id),
-      ...((req.data ?? []) as ProjectJoinRequest[]).map((r) => r.user_id),
-      ...((up.data ?? []) as ProjectUpdate[]).map((u) => u.user_id),
+      ...(((mem.data ?? []) as ProjectMember[]).map((m) => m.user_id)),
+      ...(((req.data ?? []) as ProjectJoinRequest[]).map((r) => r.user_id)),
+      ...(((up.data ?? []) as ProjectUpdate[]).map((u) => u.user_id)),
     ]
-    setNames(await fetchProfileNames(ids))
+    try {
+      setNames(await fetchProfileNames(ids))
+    } catch {
+      // Nama boleh tampil sebagai "Anggota" bila gagal dimuat.
+    }
   }
 
   useEffect(() => {
@@ -99,9 +194,16 @@ export default function ProjectDetailPage() {
         }
         if (cancelled) return
         setProject(data as Project | null)
-        if (data) await loadAll(projectId)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat proyek.')
+        if (data) {
+          await loadAll(projectId)
+          const proj = data as Project
+          if (proj.template) {
+            const { data: tData } = await supabase.from('project_templates').select('title').eq('slug', proj.template).maybeSingle()
+            if (!cancelled) setTemplateTitle((tData as { title: string } | null)?.title ?? '—')
+          }
+        }
+      } catch {
+        if (!cancelled) setError('Gagal memuat proyek. Coba lagi.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -120,10 +222,16 @@ export default function ProjectDetailPage() {
 
   const currentProject = project
   const refresh = () => loadAll(currentProject.id)
+  const myRequest = requests.filter((r) => r.user_id === user?.id).sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+  const myPendingRequest = myRequest?.status === 'pending' ? myRequest : null
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault()
     if (!user) return
+    if (myPendingRequest) {
+      setNotice('Permintaan gabungmu masih menunggu persetujuan pemilik proyek.')
+      return
+    }
     if (currentProject.access_mode === 'open') {
       const { error: insErr } = await supabase.from('project_members').insert({
         project_id: currentProject.id,
@@ -131,7 +239,7 @@ export default function ProjectDetailPage() {
         role: 'member',
         permissions: {},
       })
-      if (insErr) setNotice(insErr.message)
+      if (insErr) setNotice('Gagal bergabung dengan proyek. Coba lagi.')
       else {
         setNotice('Kamu bergabung dengan proyek ini.')
         await refresh()
@@ -143,8 +251,11 @@ export default function ProjectDetailPage() {
         message: joinMsg.trim() || null,
         status: 'pending',
       })
-      if (insErr) setNotice(insErr.message)
-      else setNotice('Permintaan gabung terkirim. Pemilik proyek akan meninjaunya.')
+      if (insErr) setNotice('Gagal mengirim permintaan gabung. Coba lagi.')
+      else {
+        setNotice('Permintaan gabung terkirim. Pemilik proyek akan meninjaunya.')
+        await refresh()
+      }
     } else {
       setNotice('Proyek ini hanya bisa diikuti lewat undangan dari pemilik.')
     }
@@ -156,16 +267,21 @@ export default function ProjectDetailPage() {
       .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
       .eq('id', req.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal memproses permintaan gabung. Coba lagi.')
       return
     }
     if (approve) {
-      await supabase.from('project_members').insert({
+      const { error: memErr } = await supabase.from('project_members').insert({
         project_id: currentProject.id,
         user_id: req.user_id,
         role: 'member',
         permissions: {},
       })
+      if (memErr) {
+        setNotice('Gagal menambahkan anggota.')
+        await refresh()
+        return
+      }
     }
     await refresh()
   }
@@ -173,11 +289,11 @@ export default function ProjectDetailPage() {
   async function handleInvite(e: FormEvent) {
     e.preventDefault()
     if (!user || !inviteName.trim()) return
-    // Cari anggota berdasarkan nama (tanpa email — Crew Finder rule).
-    const { data } = await supabase.from('profiles').select('id').eq('name', inviteName.trim()).maybeSingle()
+    // Cari anggota berdasarkan nama, tanpa membedakan huruf besar/kecil.
+    const { data } = await supabase.from('profiles').select('id').ilike('name', inviteName.trim()).maybeSingle()
     const invitee = data as { id: string } | null
     if (!invitee) {
-      setNotice('Tidak ditemukan anggota dengan nama persis itu. Pastikan ejaan namanya benar.')
+      setNotice('Tidak ditemukan anggota dengan nama itu. Pilih salah satu saran atau periksa ejaannya.')
       return
     }
     const { error: insErr } = await supabase.from('project_invites').insert({
@@ -186,7 +302,7 @@ export default function ProjectDetailPage() {
       invitee_id: invitee.id,
       status: 'pending',
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mengirim undangan. Coba lagi.')
     else {
       setNotice(`Undangan terkirim ke ${inviteName.trim()}.`)
       setInviteName('')
@@ -200,18 +316,77 @@ export default function ProjectDetailPage() {
       .update({ status: accept ? 'accepted' : 'declined' })
       .eq('id', invite.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal menjawab undangan. Coba lagi.')
       return
     }
     if (accept && user) {
-      await supabase.from('project_members').insert({
+      const { error: memErr } = await supabase.from('project_members').insert({
         project_id: currentProject.id,
         user_id: user.id,
         role: 'member',
         permissions: {},
       })
+      if (memErr) {
+        setNotice('Gagal menambahkan anggota.')
+        await refresh()
+        return
+      }
     }
     await refresh()
+  }
+
+  async function handleLeave() {
+    if (!user || isOwner) return
+    if (!window.confirm('Keluar dari proyek ini? Kamu tidak akan lagi melihat milestone, tugas, dan file proyek.')) return
+    const { error: delErr } = await supabase.from('project_members').delete().eq('project_id', currentProject.id).eq('user_id', user.id)
+    if (delErr) {
+      setNotice('Gagal keluar dari proyek. Coba lagi.')
+      return
+    }
+    await logAudit('project.left', 'projects', currentProject.id, { title: currentProject.title })
+    setNotice('Kamu sudah keluar dari proyek ini.')
+    await refresh()
+  }
+
+  function startEdit() {
+    setEditTitle(currentProject.title)
+    setEditDesc(currentProject.description ?? '')
+    setEditMode(currentProject.access_mode)
+    setEditing(true)
+  }
+
+  async function handleEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editTitle.trim()) return
+    const { error: updErr } = await supabase.from('projects').update({
+      title: editTitle.trim(),
+      description: editDesc.trim() || null,
+      access_mode: editMode,
+    }).eq('id', currentProject.id)
+    if (updErr) {
+      setNotice('Gagal mengubah proyek. Coba lagi.')
+      return
+    }
+    await logAudit('project.updated', 'projects', currentProject.id, { title: editTitle.trim() })
+    setProject({ ...currentProject, title: editTitle.trim(), description: editDesc.trim() || null, access_mode: editMode })
+    setEditing(false)
+    setNotice('Proyek berhasil diubah.')
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Hapus proyek "${currentProject.title}" beserta seluruh anggotanya? Tindakan ini tidak bisa dibatalkan.`)) return
+    const { error: memErr } = await supabase.from('project_members').delete().eq('project_id', currentProject.id)
+    if (memErr) {
+      setNotice('Gagal menghapus proyek. Coba lagi.')
+      return
+    }
+    const { error: delErr } = await supabase.from('projects').delete().eq('id', currentProject.id)
+    if (delErr) {
+      setNotice('Gagal menghapus proyek. Coba lagi.')
+      return
+    }
+    await logAudit('project.deleted', 'projects', currentProject.id, { title: currentProject.title })
+    navigate('/proyek')
   }
 
   async function handleAddTask(e: FormEvent) {
@@ -221,14 +396,15 @@ export default function ProjectDetailPage() {
       project_id: currentProject.id,
       milestone_id: null,
       title: taskTitle.trim(),
-      description: null,
+      description: taskDesc.trim() || null,
       status: taskStatus,
       priority: 'normal',
       order_index: tasks.length,
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal menambah tugas. Coba lagi.')
     else {
       setTaskTitle('')
+      setTaskDesc('')
       await refresh()
     }
   }
@@ -238,7 +414,7 @@ export default function ProjectDetailPage() {
     const next = COLUMNS[idx + dir]
     if (!next) return
     const { error: updErr } = await supabase.from('project_tasks').update({ status: next.status }).eq('id', task.id)
-    if (updErr) setNotice(updErr.message)
+    if (updErr) setNotice('Gagal memindahkan tugas. Coba lagi.')
     else await refresh()
   }
 
@@ -252,7 +428,7 @@ export default function ProjectDetailPage() {
       is_done: false,
       order_index: milestones.length,
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal menambah milestone. Coba lagi.')
     else {
       setMsTitle('')
       await refresh()
@@ -260,7 +436,11 @@ export default function ProjectDetailPage() {
   }
 
   async function toggleMilestone(ms: ProjectMilestone) {
-    await supabase.from('project_milestones').update({ is_done: !ms.is_done }).eq('id', ms.id)
+    const { error: updErr } = await supabase.from('project_milestones').update({ is_done: !ms.is_done }).eq('id', ms.id)
+    if (updErr) {
+      setNotice('Gagal mengubah milestone. Coba lagi.')
+      return
+    }
     await refresh()
   }
 
@@ -272,7 +452,7 @@ export default function ProjectDetailPage() {
       user_id: user.id,
       body: updateBody.trim(),
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mengirim update. Coba lagi.')
     else {
       setUpdateBody('')
       await refresh()
@@ -284,7 +464,7 @@ export default function ProjectDetailPage() {
     if (!user || !file || !fileTitle.trim()) return
     const url = await uploadToBucket('project-files', `${currentProject.id}/${Date.now()}-${file.name}`, file)
     if (!url) {
-      setNotice('Bucket project-files belum tersedia — file tidak bisa diunggah (lihat supabase/README.md).')
+      setNotice('Bucket project-files belum tersedia, file tidak bisa diunggah (lihat supabase/README.md).')
       return
     }
     const { error: insErr } = await supabase.from('project_files').insert({
@@ -294,24 +474,71 @@ export default function ProjectDetailPage() {
       url,
       uploaded_by: user.id,
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal menyimpan file. Coba lagi.')
     else {
       setFileTitle('')
       setFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       await refresh()
     }
   }
 
   const myInvite = invites.find((i) => i.invitee_id === user?.id && i.status === 'pending')
+  const inviteSuggestions = inviteName.trim()
+    ? [...new Set([...crewNames, ...members.map((m) => names.get(m.user_id) ?? '')])]
+        .filter((n) => n && n.toLowerCase().includes(inviteName.trim().toLowerCase()) && n.toLowerCase() !== inviteName.trim().toLowerCase())
+        .slice(0, 5)
+    : []
 
   return (
     <div className="page">
       <Link to="/proyek" className="back-link">← Semua Proyek</Link>
       <h1>{currentProject.title}</h1>
       <p className="muted">
-        {currentProject.description ?? ''} · Mode: {currentProject.access_mode} · {currentProject.status}
+        {currentProject.description ?? ''} · Mode: {MODE_LABEL[currentProject.access_mode]} · {STATUS_LABEL[currentProject.status] ?? currentProject.status}
+        {templateTitle ? ` · Template: ${templateTitle}` : ''}
       </p>
       {notice && <p className="notice-box">{notice}</p>}
+
+      {(isOwner || isAdmin) && (
+        <div className="form-actions" style={{ marginBottom: '1rem' }}>
+          {editing ? (
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => setEditing(false)}>Batalkan Perubahan</button>
+          ) : (
+            <button type="button" className="btn btn-ghost btn-small" onClick={startEdit}>Ubah Proyek</button>
+          )}
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleDelete()}>Hapus Proyek</button>
+        </div>
+      )}
+      {isMember && !isOwner && (
+        <div className="form-actions" style={{ marginBottom: '1rem' }}>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleLeave()}>Keluar dari Proyek</button>
+        </div>
+      )}
+      {editing && (isOwner || isAdmin) && (
+        <section className="section">
+          <h2>Ubah Proyek</h2>
+          <form className="form" onSubmit={handleEdit}>
+            <label>
+              Judul proyek
+              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+            </label>
+            <label>
+              Deskripsi
+              <textarea value={editDesc} onChange={(e) => setEditDesc(e.target.value)} rows={3} />
+            </label>
+            <label>
+              Mode akses
+              <select value={editMode} onChange={(e) => setEditMode(e.target.value as ProjectAccessMode)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+                <option value="open">Terbuka, siapa saja bisa gabung</option>
+                <option value="approval">Persetujuan, pemilik menyetujui permintaan gabung</option>
+                <option value="invite_only">Undangan saja</option>
+              </select>
+            </label>
+            <button type="submit" className="btn btn-primary">Simpan Perubahan</button>
+          </form>
+        </section>
+      )}
 
       {myInvite && (
         <p className="notice-box">
@@ -320,7 +547,10 @@ export default function ProjectDetailPage() {
           <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleInviteResponse(myInvite, false)}>Tolak</button>
         </p>
       )}
-      {!isMember && user && (
+      {!isMember && user && currentProject.access_mode === 'invite_only' && (
+        <p className="notice-box">Proyek ini hanya bisa diikuti lewat undangan.</p>
+      )}
+      {!isMember && user && currentProject.access_mode !== 'invite_only' && !myPendingRequest && (
         <form className="form" onSubmit={handleJoin}>
           {currentProject.access_mode === 'approval' && (
             <label>
@@ -329,16 +559,26 @@ export default function ProjectDetailPage() {
             </label>
           )}
           <button type="submit" className="btn btn-primary">
-            {currentProject.access_mode === 'open' ? 'Gabung Proyek' : currentProject.access_mode === 'approval' ? 'Minta Gabung' : 'Proyek Undangan Saja'}
+            {currentProject.access_mode === 'open' ? 'Gabung Proyek' : 'Minta Gabung'}
           </button>
         </form>
+      )}
+      {!isMember && user && myPendingRequest && (
+        <p className="notice-box">Permintaan gabungmu masih menunggu persetujuan pemilik proyek.</p>
+      )}
+      {!isMember && user && myRequest && myRequest.status === 'rejected' && (
+        <p className="notice-box">Permintaan gabungmu ditolak oleh pemilik proyek.</p>
+      )}
+      {!isMember && user && myRequest && myRequest.status === 'approved' && (
+        <p className="notice-box">Permintaan gabungmu disetujui.</p>
       )}
 
       <section className="section">
         <h2>Anggota ({members.length})</h2>
+        {sectionErrors.members && <p className="notice-box">{SECTION_FAILED}</p>}
         <ul>
           {members.map((m) => (
-            <li key={m.id}>{names.get(m.user_id) ?? 'Anggota'}{m.role ? ` — ${m.role}` : ''}</li>
+            <li key={m.id}>{names.get(m.user_id) ?? 'Anggota'}{m.role ? `, ${m.role}` : ''}</li>
           ))}
         </ul>
       </section>
@@ -346,13 +586,24 @@ export default function ProjectDetailPage() {
       {(isOwner || isAdmin) && requests.filter((r) => r.status === 'pending').length > 0 && (
         <section className="section">
           <h2>Permintaan Gabung</h2>
+          {sectionErrors.requests && <p className="notice-box">{SECTION_FAILED}</p>}
           <ul>
             {requests.filter((r) => r.status === 'pending').map((r) => (
               <li key={r.id}>
-                {names.get(r.user_id) ?? 'Anggota'}{r.message ? ` — “${r.message}”` : ''}{' '}
+                {names.get(r.user_id) ?? 'Anggota'}{r.message ? `, “${r.message}”` : ''}{' '}
                 <button type="button" className="btn btn-primary btn-small" onClick={() => void decideRequest(r, true)}>Setujui</button>{' '}
                 <button type="button" className="btn btn-ghost btn-small" onClick={() => void decideRequest(r, false)}>Tolak</button>
               </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {(isOwner || isAdmin) && requests.filter((r) => r.status === 'rejected').length > 0 && (
+        <section className="section">
+          <h2>Permintaan Ditolak</h2>
+          <ul>
+            {requests.filter((r) => r.status === 'rejected').map((r) => (
+              <li key={r.id}>{names.get(r.user_id) ?? 'Anggota'}, {REQUEST_STATUS_LABEL.rejected}</li>
             ))}
           </ul>
         </section>
@@ -361,11 +612,27 @@ export default function ProjectDetailPage() {
       {(isOwner || isAdmin) && (
         <section className="section">
           <h2>Undang Anggota</h2>
+          {sectionErrors.invites && <p className="notice-box">{SECTION_FAILED}</p>}
           <form className="form" onSubmit={handleInvite}>
             <label>
-              Nama anggota (persis seperti di profil)
-              <input value={inviteName} onChange={(e) => setInviteName(e.target.value)} required placeholder="Nama anggota…" />
+              Nama anggota
+              <input
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+                required
+                placeholder="Ketik nama anggota…"
+                autoComplete="off"
+              />
             </label>
+            {inviteSuggestions.length > 0 && (
+              <ul>
+                {inviteSuggestions.map((s) => (
+                  <li key={s}>
+                    <button type="button" className="link-button" onClick={() => setInviteName(s)}>{s}</button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <button type="submit" className="btn btn-primary">Kirim Undangan</button>
           </form>
         </section>
@@ -375,12 +642,13 @@ export default function ProjectDetailPage() {
         <>
           <section className="section">
             <h2>Milestone</h2>
-            {milestones.length === 0 ? <p className="empty">Belum ada milestone.</p> : (
+            {sectionErrors.milestones && <p className="notice-box">{SECTION_FAILED}</p>}
+            {milestones.length === 0 && !sectionErrors.milestones ? <p className="empty">Belum ada milestone.</p> : (
               <ul>
                 {milestones.map((m) => (
                   <li key={m.id}>
                     <button type="button" className="link-button" onClick={() => void toggleMilestone(m)}>
-                      {m.is_done ? 'Selesai' : 'Belum selesai'}
+                      {m.is_done ? 'Batalkan selesai' : 'Tandai selesai'}
                     </button>{' '}
                     {m.title}{m.due_date ? ` · tenggat ${fmtDate(m.due_date)}` : ''}
                   </li>
@@ -398,6 +666,7 @@ export default function ProjectDetailPage() {
 
           <section className="section">
             <h2>Papan Tugas (Kanban)</h2>
+            {sectionErrors.tasks && <p className="notice-box">{SECTION_FAILED}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
               {COLUMNS.map((col) => (
                 <div key={col.status} className="module-block">
@@ -405,10 +674,11 @@ export default function ProjectDetailPage() {
                   {tasks.filter((t) => t.status === col.status).map((t) => (
                     <div key={t.id} style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '0.6rem', marginBottom: '0.5rem' }}>
                       <strong>{t.title}</strong>
-                      {t.priority ? <p className="muted">Prioritas: {t.priority}</p> : null}
+                      {t.description ? <p>{t.description}</p> : null}
+                      {t.priority && t.priority !== 'normal' ? <p className="muted">Prioritas: {PRIORITY_LABEL[t.priority] ?? t.priority}</p> : null}
                       <div className="form-actions">
-                        {col.status !== 'rencana' && <button type="button" className="btn btn-ghost btn-small" onClick={() => void moveTask(t, -1)}>←</button>}
-                        {col.status !== 'selesai' && <button type="button" className="btn btn-ghost btn-small" onClick={() => void moveTask(t, 1)}>→</button>}
+                        {col.status !== 'rencana' && <button type="button" className="btn btn-ghost btn-small" aria-label="Pindah ke kolom sebelumnya" title="Pindah ke kolom sebelumnya" onClick={() => void moveTask(t, -1)}>←</button>}
+                        {col.status !== 'selesai' && <button type="button" className="btn btn-ghost btn-small" aria-label="Pindah ke kolom berikutnya" title="Pindah ke kolom berikutnya" onClick={() => void moveTask(t, 1)}>→</button>}
                       </div>
                     </div>
                   ))}
@@ -422,6 +692,10 @@ export default function ProjectDetailPage() {
                 <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} required placeholder="Mis. Tulis naskah adegan 1" />
               </label>
               <label>
+                Deskripsi tugas
+                <input value={taskDesc} onChange={(e) => setTaskDesc(e.target.value)} placeholder="Penjelasan singkat tugas…" />
+              </label>
+              <label>
                 Kolom awal
                 <select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value as ProjectTaskStatus)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
                   {COLUMNS.map((c) => <option key={c.status} value={c.status}>{c.label}</option>)}
@@ -433,11 +707,12 @@ export default function ProjectDetailPage() {
 
           <section className="section">
             <h2>File Proyek</h2>
-            {files.length === 0 ? <p className="empty">Belum ada file.</p> : (
+            {sectionErrors.files && <p className="notice-box">{SECTION_FAILED}</p>}
+            {files.length === 0 && !sectionErrors.files ? <p className="empty">Belum ada file.</p> : (
               <ul>
                 {files.map((f) => (
                   <li key={f.id}>
-                    {f.title} ({f.kind}){f.url ? <>{' — '}<a href={f.url} target="_blank" rel="noreferrer">Buka file</a></> : ''}
+                    {f.title} ({f.kind}){f.url ? <>{', '}<a href={f.url} target="_blank" rel="noreferrer">Buka file</a></> : ''}
                   </li>
                 ))}
               </ul>
@@ -459,7 +734,7 @@ export default function ProjectDetailPage() {
               </label>
               <label>
                 File
-                <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+                <input ref={fileInputRef} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
               </label>
               <button type="submit" className="btn btn-primary">Unggah File</button>
             </form>
@@ -467,6 +742,7 @@ export default function ProjectDetailPage() {
 
           <section className="section">
             <h2>Update Produksi</h2>
+            {sectionErrors.updates && <p className="notice-box">{SECTION_FAILED}</p>}
             <form className="form" onSubmit={handleAddUpdate}>
               <label>
                 Kabar terbaru produksi
@@ -474,7 +750,7 @@ export default function ProjectDetailPage() {
               </label>
               <button type="submit" className="btn btn-primary">Kirim Update</button>
             </form>
-            {updates.length === 0 ? <p className="empty">Belum ada update produksi.</p> : (
+            {updates.length === 0 && !sectionErrors.updates ? <p className="empty">Belum ada update produksi.</p> : (
               <ul className="discussion-list">
                 {updates.map((u) => (
                   <li key={u.id} className="discussion-item">

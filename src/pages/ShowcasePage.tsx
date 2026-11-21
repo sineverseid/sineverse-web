@@ -1,14 +1,18 @@
-// SINEVERSE — Showcase: galeri film yang dipublikasikan + publikasikan
+// SINEVERSE, Showcase: galeri film yang dipublikasikan + publikasikan
 // film sendiri (006). Hanya film status 'published' + visibility 'public'
 // yang tampil di galeri; draft/privat hanya untuk pemilik/admin (RLS).
 //
 // Kurasi admin: film baru masuk sebagai 'draft' (menunggu dinilai admin),
 // BUKAN langsung published. Admin melihat bagian "Perlu Dinilai" di atas
-// galeri — "Layak Ditampilkan" mengubah status menjadi 'published'.
+// galeri, "Layak Ditampilkan" mengubah status menjadi 'published'.
 // "Tidak Layak" mengubah status menjadi 'rejected' (011) beserta
-// reviewed_by / review_note / reviewed_at — pemilik melihat alasan
+// reviewed_by / review_note / reviewed_at, pemilik melihat alasan
 // penolakan di "Film Saya" dan di halaman detail film. Film 'rejected'
-// tidak pernah tampil di galeri publik.
+// tidak pernah tampil di galeri publik. Pemilik film yang ditolak bisa
+// mengirim ulang untuk dinilai ("Kirim ulang untuk dinilai"): status
+// kembali 'draft', penilaian lama dihapus, dan film masuk lagi ke antrean
+// admin (film privat ikut dijadikan publik saat dikirim, supaya benar-benar
+// masuk antrean).
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -28,6 +32,22 @@ function filmStatusLabel(status: string): string {
   return status
 }
 
+function visibilityLabel(visibility: string): string {
+  if (visibility === 'public') return 'Publik'
+  if (visibility === 'private') return 'Privat'
+  return visibility
+}
+
+// Pesan error Supabase mentah (bahasa Inggris, teknis) tidak pernah
+// ditampilkan ke pengguna, selalu diganti pesan ramah berbahasa Indonesia.
+function friendlyDbError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (/duplicate key|unique constraint/i.test(msg)) return 'Data yang sama sudah ada. Periksa kembali isianmu.'
+  if (/row-level security|permission denied|not authorized/i.test(msg)) return 'Kamu tidak punya izin untuk melakukan tindakan ini.'
+  if (/network|fetch failed|Failed to fetch/i.test(msg)) return 'Koneksi bermasalah. Periksa internetmu lalu coba lagi.'
+  return 'Terjadi kesalahan. Silakan coba lagi.'
+}
+
 export default function ShowcasePage() {
   const { user, profile, loading: authLoading } = useAuth()
   const [films, setFilms] = useState<Film[] | null>(null)
@@ -39,6 +59,8 @@ export default function ShowcasePage() {
   const [ownerNames, setOwnerNames] = useState<Map<string, string>>(new Map())
   const [rejectingId, setRejectingId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [rejectError, setRejectError] = useState<string | null>(null)
+  const [brokenPosters, setBrokenPosters] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -94,8 +116,8 @@ export default function ShowcasePage() {
       } else {
         setPending([])
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat Showcase.')
+    } catch {
+      setError('Gagal memuat Showcase. Silakan muat ulang halaman.')
     } finally {
       setLoading(false)
     }
@@ -109,20 +131,25 @@ export default function ShowcasePage() {
   async function handlePublish(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim()) return
-    // Film baru masuk sebagai draft — tampil di galeri HANYA setelah
-    // admin menyetujuinya di "Perlu Dinilai".
+    // Film privat tidak masuk antrean penilaian admin, jadi saat dikirim
+    // film langsung dijadikan publik bersama status draft.
+    const makePublic = visibility === 'private'
     const { error: insErr } = await supabase.from('films').insert({
       title: title.trim(),
       description: desc.trim() || null,
       owner_id: user.id,
       film_url: filmUrl.trim() || null,
-      visibility,
+      visibility: makePublic ? 'public' : visibility,
       show_school: showSchool,
       status: 'draft',
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice(friendlyDbError(insErr))
     else {
-      setNotice('Film dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.')
+      setNotice(
+        makePublic
+          ? 'Film dijadikan publik dan dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.'
+          : 'Film dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.',
+      )
       setTitle('')
       setDesc('')
       setFilmUrl('')
@@ -130,24 +157,64 @@ export default function ShowcasePage() {
     }
   }
 
+  // Kirim ulang film yang ditolak: status kembali 'draft', penilaian lama
+  // (penilai, alasan, tanggal) dihapus, dan film masuk lagi ke antrean
+  // "Perlu Dinilai" admin. Film privat ikut dijadikan publik supaya
+  // benar-benar masuk antrean.
+  async function handleResubmit(film: Film) {
+    if (!user) return
+    const makePublic = film.visibility === 'private'
+    const { error: updErr } = await supabase
+      .from('films')
+      .update({
+        status: 'draft',
+        visibility: makePublic ? 'public' : film.visibility,
+        reviewed_by: null,
+        review_note: null,
+        reviewed_at: null,
+      })
+      .eq('id', film.id)
+    if (updErr) {
+      setNotice(friendlyDbError(updErr))
+      return
+    }
+    await logAudit('film.resubmitted', 'films', film.id, { title: film.title })
+    setNotice(
+      makePublic
+        ? 'Film dijadikan publik dan dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.'
+        : 'Film dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.',
+    )
+    await load()
+  }
+
   // Kurasi admin: setujui (published) atau tolak (status 'rejected'
-  // beserta penilai, alasan, dan tanggal penilaian — 011). Film yang
+  // beserta penilai, alasan, dan tanggal penilaian, 011). Film yang
   // ditolak keluar dari antrean dan tidak tampil di galeri publik;
-  // pemilik melihat alasannya di "Film Saya".
+  // pemilik melihat alasannya di "Film Saya". Alasan penolakan wajib
+  // diisi. Persetujuan juga mencatat penilai dan tanggal seperti penolakan.
   async function decideFilm(film: Film, approve: boolean) {
     if (approve) {
       const { error: updErr } = await supabase
         .from('films')
-        .update({ status: 'published' })
+        .update({
+          status: 'published',
+          reviewed_by: user?.id ?? null,
+          reviewed_at: new Date().toISOString(),
+          review_note: 'Disetujui',
+        })
         .eq('id', film.id)
       if (updErr) {
-        setNotice(updErr.message)
+        setNotice(friendlyDbError(updErr))
         return
       }
       await logAudit('film.approved', 'films', film.id, { title: film.title })
       setNotice(`Film "${film.title}" disetujui dan tampil di Showcase.`)
     } else {
-      const reason = rejectReason.trim() || null
+      const reason = rejectReason.trim()
+      if (!reason) {
+        setRejectError('Tulis alasan penolakan terlebih dahulu.')
+        return
+      }
       const { error: updErr } = await supabase
         .from('films')
         .update({
@@ -158,15 +225,16 @@ export default function ShowcasePage() {
         })
         .eq('id', film.id)
       if (updErr) {
-        setNotice(updErr.message)
+        setNotice(friendlyDbError(updErr))
         return
       }
       await logAudit('film.rejected', 'films', film.id, { title: film.title, reason })
       setNotice(
-        `Film "${film.title}" dinilai tidak layak tampil — pemilik dapat melihat alasannya di Film Saya.`,
+        `Film "${film.title}" dinilai tidak layak tampil, pemilik dapat melihat alasannya di Film Saya.`,
       )
       setRejectingId(null)
       setRejectReason('')
+      setRejectError(null)
     }
     await load()
   }
@@ -198,12 +266,19 @@ export default function ShowcasePage() {
               {pending.map((f) => (
                 <li key={f.id} className="discussion-item">
                   <p className="discussion-meta">
-                    Diajukan oleh {ownerNames.get(f.owner_id) ?? '—'} · {fmtDate(f.created_at)}
+                    Diajukan oleh {ownerNames.get(f.owner_id) ?? 'tidak diketahui'} · {fmtDate(f.created_at)}
                   </p>
                   <h3>
                     <Link to={`/showcase/${f.id}`}>{f.title}</Link>
                   </h3>
                   {f.description && <p>{f.description}</p>}
+                  {!f.film_url && !f.trailer_url && (
+                    <p>
+                      <span style={{ display: 'inline-block', background: '#fff3cd', color: '#7a5b00', padding: '0.2rem 0.5rem', borderRadius: 6, fontSize: '0.85rem', fontWeight: 600 }}>
+                        Tidak ada tautan film
+                      </span>
+                    </p>
+                  )}
                   {f.film_url && (
                     <p>
                       <a href={f.film_url} target="_blank" rel="noreferrer">
@@ -220,13 +295,17 @@ export default function ShowcasePage() {
                       }}
                     >
                       <label>
-                        Alasan penolakan (opsional — akan dilihat oleh pemilik film)
+                        Alasan penolakan (wajib, akan dilihat oleh pemilik film)
                         <input
                           value={rejectReason}
-                          onChange={(e) => setRejectReason(e.target.value)}
+                          onChange={(e) => {
+                            setRejectReason(e.target.value)
+                            if (rejectError) setRejectError(null)
+                          }}
                           placeholder="Mis. kualitas video kurang, bukan karya sendiri…"
                         />
                       </label>
+                      {rejectError && <p className="error-box">{rejectError}</p>}
                       <div className="form-actions">
                         <button type="submit" className="btn btn-primary btn-small">
                           Konfirmasi Tidak Layak
@@ -237,6 +316,7 @@ export default function ShowcasePage() {
                           onClick={() => {
                             setRejectingId(null)
                             setRejectReason('')
+                            setRejectError(null)
                           }}
                         >
                           Batal
@@ -258,6 +338,7 @@ export default function ShowcasePage() {
                         onClick={() => {
                           setRejectingId(f.id)
                           setRejectReason('')
+                          setRejectError(null)
                         }}
                       >
                         Tidak Layak
@@ -275,23 +356,31 @@ export default function ShowcasePage() {
         <EmptyState message="Belum ada film yang dipublikasikan." />
       ) : (
         <ul className="course-list">
-          {films.map((f) => (
-            <li key={f.id} className="course-card">
-              <Link to={`/showcase/${f.id}`}>
-                {f.poster_url ? (
-                  <img src={f.poster_url} alt={`Poster ${f.title}`} style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }} />
-                ) : (
-                  <div className="film-cover" style={{ background: filmHue(f.id) }} aria-hidden="true">
-                    <span className="film-cover-title">{f.title}</span>
+          {films.map((f) => {
+            const showPoster = f.poster_url && !brokenPosters.has(f.id)
+            return (
+              <li key={f.id} className="course-card">
+                <Link to={`/showcase/${f.id}`}>
+                  {showPoster ? (
+                    <img
+                      src={f.poster_url ?? ''}
+                      alt={`Poster ${f.title}`}
+                      onError={() => setBrokenPosters((prev) => new Set(prev).add(f.id))}
+                      style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <div className="film-cover" style={{ background: filmHue(f.id) }} aria-hidden="true">
+                      <span className="film-cover-title">{f.title}</span>
+                    </div>
+                  )}
+                  <div className="course-card-body">
+                    <h3 style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{f.title}</h3>
+                    <p style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{f.description ?? ''}</p>
                   </div>
-                )}
-                <div className="course-card-body">
-                  <h3>{f.title}</h3>
-                  <p>{f.description ?? ''}</p>
-                </div>
-              </Link>
-            </li>
-          ))}
+                </Link>
+              </li>
+            )
+          })}
         </ul>
       )}
 
@@ -311,18 +400,25 @@ export default function ShowcasePage() {
               Tautan film (YouTube / Vimeo)
               <input value={filmUrl} onChange={(e) => setFilmUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=…" />
             </label>
+            {!filmUrl.trim() && (
+              <p className="notice-box">
+                Film tanpa tautan tidak bisa ditonton, admin hanya bisa menilai dari judul dan deskripsi.
+              </p>
+            )}
             <label>
               Visibilitas
               <select value={visibility} onChange={(e) => setVisibility(e.target.value as 'public' | 'private')} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-                <option value="public">Publik — diajukan untuk tampil di Showcase</option>
-                <option value="private">Privat — hanya kamu (dan admin) yang melihat</option>
+                <option value="public">Publik, diajukan untuk tampil di Showcase</option>
+                <option value="private">Privat, hanya kamu (dan admin) yang melihat</option>
               </select>
             </label>
             <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
               <input type="checkbox" checked={showSchool} onChange={(e) => setShowSchool(e.target.checked)} />
               Tampilkan nama sekolah pada film ini
             </label>
-            <button type="submit" className="btn btn-primary">Kirim untuk Dinilai</button>
+            <button type="submit" className="btn btn-primary">
+              {visibility === 'private' ? 'Jadikan Publik & Kirim untuk Dinilai' : 'Kirim untuk Dinilai'}
+            </button>
           </form>
           {myFilms.length > 0 && (
             <>
@@ -330,9 +426,12 @@ export default function ShowcasePage() {
               <ul>
                 {myFilms.map((f) => (
                   <li key={f.id}>
-                    <Link to={`/showcase/${f.id}`}>{f.title}</Link> — {filmStatusLabel(f.status)} · {f.visibility}
+                    <Link to={`/showcase/${f.id}`}>{f.title}</Link> · {filmStatusLabel(f.status)} · {visibilityLabel(f.visibility)}
                     {f.status === 'draft' && f.visibility === 'public'
                       ? ' · Menunggu penilaian admin'
+                      : ''}
+                    {f.status === 'draft' && f.visibility === 'private'
+                      ? ' · Draft privat, tidak masuk antrean penilaian admin sampai dijadikan publik.'
                       : ''}
                     {f.status === 'rejected' ? (
                       <p className="error-box" style={{ marginTop: '0.5rem' }}>
@@ -347,6 +446,17 @@ export default function ShowcasePage() {
                         Dinilai oleh{' '}
                         {f.reviewed_by ? reviewerNames.get(f.reviewed_by) ?? 'admin' : 'admin'}
                         {f.reviewed_at ? ` · ${fmtDate(f.reviewed_at)}` : ''}
+                      </p>
+                    ) : null}
+                    {f.status === 'rejected' ? (
+                      <p>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          onClick={() => void handleResubmit(f)}
+                        >
+                          Kirim ulang untuk dinilai
+                        </button>
                       </p>
                     ) : null}
                   </li>

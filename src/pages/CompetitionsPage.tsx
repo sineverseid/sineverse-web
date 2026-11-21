@@ -1,8 +1,8 @@
-// SINEVERSE — Kompetisi (007): siklus draft → dibuka → penjurian → selesai.
+// SINEVERSE, Kompetisi (007): siklus draft → dibuka → penjurian → selesai.
 // Submission hanya saat status 'dibuka' + sebelum deadline + kedua
 // persetujuan (hak cipta & penggunaan) dicentang. Penilaian juri per
 // kriteria hanya saat 'penjurian' dan hanya oleh juri kompetisi itu.
-// SKOR DISEMBUNYIKAN dari peserta sampai status 'selesai' — UI tidak
+// SKOR DISEMBUNYIKAN dari peserta sampai status 'selesai', UI tidak
 // pernah menampilkan skor ke peserta sebelum itu. Pemenang diterbitkan
 // sertifikat karya (type 'work', SVS-KRY) oleh admin.
 import { useEffect, useState } from 'react'
@@ -12,9 +12,32 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError, nextSerial } from '../lib/guarded'
 import { fetchEnrollments, fetchProfileNames, supabase } from '../lib/supabase'
-import type { Competition, CompetitionScore, CompetitionSubmission, CompetitionWinner } from '../lib/types'
+import type { Competition, CompetitionScore, CompetitionStatus, CompetitionSubmission, CompetitionWinner } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
+
+// Status efektif: kompetisi 'dibuka' yang tenggatnya sudah lewat tampil
+// sebagai "Tenggat lewat", bukan "Dibuka", agar tidak menyesatkan.
+function effectiveStatusLabel(c: { status: CompetitionStatus; deadline: string | null }): string {
+  if (c.status === 'dibuka' && c.deadline && new Date(c.deadline).getTime() < Date.now()) {
+    return 'Tenggat lewat'
+  }
+  return (
+    { draft: 'Draf', dibuka: 'Dibuka', penjurian: 'Penjurian', selesai: 'Selesai' } as Record<
+      string,
+      string
+    >
+  )[c.status] ?? c.status
+}
+
+function submissionStatusLabel(status: string): string {
+  return (
+    { submitted: 'Terkirim', approved: 'Disetujui', rejected: 'Ditolak', pending: 'Menunggu' } as Record<
+      string,
+      string
+    >
+  )[status] ?? status
+}
 
 export function CompetitionsPage() {
   const { user, profile } = useAuth()
@@ -88,14 +111,14 @@ export function CompetitionsPage() {
       <PageHeader
         icon="trophy"
         title="Kompetisi"
-        subtitle="Kompetisi dan festival film pelajar — kirim karyamu dan menangkan sertifikat."
+        subtitle="Kompetisi dan festival film pelajar, kirim karyamu dan menangkan sertifikat."
       />
       {notice && <p className="notice-box">{notice}</p>}
       {canCreate && (
         <section className="section">
           <h2>Buat Kompetisi</h2>
           <p className="muted">
-            Mentor dan admin dapat membuat kompetisi. Kompetisi baru berstatus draf — kategori,
+            Mentor dan admin dapat membuat kompetisi. Kompetisi baru berstatus draf, kategori,
             kriteria penilaian, dan panel juri diatur dari halaman detail sebelum dibuka.
           </p>
           <form className="form" onSubmit={handleCreate}>
@@ -125,8 +148,11 @@ export function CompetitionsPage() {
                 <h3>{c.title}</h3>
                 <p>{c.description ?? ''}</p>
                 <p className="muted">
-                  Status: {c.status}
+                  Status: {effectiveStatusLabel(c)}
                   {c.deadline ? ` · Tenggat: ${fmtDate(c.deadline)}` : ''}
+                  {c.status === 'dibuka' && c.deadline && new Date(c.deadline).getTime() < Date.now()
+                    ? ' · Submission sudah melewati tenggat.'
+                    : ''}
                 </p>
               </Link>
             </li>
@@ -300,7 +326,7 @@ export function CompetitionDetailPage() {
       const sub = subs.find((s) => s.id === w.submission_id)
       if (!sub) continue
       // certificates.course_id wajib terisi (001): pakai course terbaru
-      // yang sedang/diambil pemenang — jujur dicatat di pesan hasil.
+      // yang sedang/diambil pemenang, jujur dicatat di pesan hasil.
       const enr = await fetchEnrollments(sub.user_id)
       if (enr.length === 0) {
         failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: belum mengambil course apa pun, sertifikat karya tidak bisa diterbitkan (course_id wajib terisi).`)
@@ -317,7 +343,7 @@ export function CompetitionDetailPage() {
       if (insErr) failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: ${insErr.message}`)
       else {
         seq += 1
-        issued.push(`${names.get(sub.user_id) ?? 'Pemenang'} — ${serial}`)
+        issued.push(`${names.get(sub.user_id) ?? 'Pemenang'}, ${serial}`)
       }
     }
     setNotice(
@@ -335,7 +361,7 @@ export function CompetitionDetailPage() {
       <Link to="/kompetisi" className="back-link">← Semua Kompetisi</Link>
       <h1>{currentComp.title}</h1>
       <p className="muted">
-        Status: <strong>{currentComp.status}</strong>
+        Status: <strong>{effectiveStatusLabel(currentComp)}</strong>
         {currentComp.deadline ? ` · Tenggat: ${fmtDate(currentComp.deadline)}` : ''}
         {criteria.length > 0 && ` · Kriteria: ${criteria.map((c) => `${c.name} (${c.weight}%)`).join(', ')}`}
       </p>
@@ -350,7 +376,7 @@ export function CompetitionDetailPage() {
               const sub = subs.find((s) => s.id === w.submission_id)
               return (
                 <li key={w.id}>
-                  Peringkat {w.rank ?? '—'} — {sub ? names.get(sub.user_id) ?? 'Peserta' : '—'}
+                  Peringkat {w.rank ?? '—'}, {sub ? names.get(sub.user_id) ?? 'Peserta' : '—'}
                   {w.category ? ` (${w.category})` : ''}
                 </li>
               )
@@ -369,10 +395,10 @@ export function CompetitionDetailPage() {
         {!user ? (
           <p className="muted"><Link to="/login">Masuk</Link> untuk mengirim karya.</p>
         ) : mySub ? (
-          <p className="notice-box">Kamu sudah mengirim karya untuk kompetisi ini (status: {mySub.status}).</p>
+          <p className="notice-box">Kamu sudah mengirim karya untuk kompetisi ini (status: {submissionStatusLabel(mySub.status)}).</p>
         ) : !canSubmit ? (
           <p className="empty">
-            Submission {currentComp.status === 'dibuka' ? 'sudah melewati tenggat.' : `belum dibuka (status saat ini: ${currentComp.status}).`}
+            Submission {currentComp.status === 'dibuka' ? 'sudah melewati tenggat.' : `belum dibuka (status saat ini: ${effectiveStatusLabel(currentComp)}).`}
           </p>
         ) : (
           <form className="form" onSubmit={handleSubmit}>
@@ -409,7 +435,7 @@ export function CompetitionDetailPage() {
                 <li key={s.id} className="discussion-item">
                   <p className="discussion-meta">
                     {names.get(s.user_id) ?? 'Peserta'}
-                    {s.category ? ` · ${s.category}` : ''} · {fmtDate(s.created_at)} · {s.status}
+                    {s.category ? ` · ${s.category}` : ''} · {fmtDate(s.created_at)} · {submissionStatusLabel(s.status)}
                   </p>
                   {s.link && <p><a href={s.link} target="_blank" rel="noreferrer">Lihat karya</a></p>}
                   {scoresVisible && (

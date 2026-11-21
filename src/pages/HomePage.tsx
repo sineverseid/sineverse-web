@@ -1,14 +1,14 @@
-// SINEVERSE — Beranda.
+// SINEVERSE, Beranda.
 // - Pengguna login peran siswa: dashboard anggota seperti artefak
-//   (SiswaHome) — hero sapaan, Rekomendasi Untukmu, Kursus Aktifku,
+//   (SiswaHome), hero sapaan, Rekomendasi Untukmu, Kursus Aktifku,
 //   Feedback Terbaru, Tugas & Tenggat, Proyekku & Rekrutmen Kru,
 //   Event Mendatang. Semua data dari Supabase; empty state jujur.
-// - Pengguna login peran mentor: MentorHome — hero Mentor Workspace
+// - Pengguna login peran mentor: MentorHome, hero Mentor Workspace
 //   (course diampu, siswa, submission menunggu dinilai), Antrean
 //   Penilaian Terbaru, Kursus yang Kamu Ampu, Kursus Tanpa Pengampu
 //   (Ajukan untuk Mengampu), Baru Dinilai, Pesanan Mentoring Berikutnya
 //   (bila ada), Pengumuman. Semua data dari Supabase.
-// - Pengguna login peran admin: AdminHome — hero Ringkasan SINEVERSE,
+// - Pengguna login peran admin: AdminHome, hero Ringkasan SINEVERSE,
 //   4 kartu statistik + daftar tindakan (lamaran mentor, sekolah belum
 //   terverifikasi, laporan terbuka), aktivitas terbaru, Pengumuman.
 // - Pengunjung logout: landing page (ACUAN FINAL Arif 21 Nov 2026):
@@ -17,7 +17,7 @@
 //   "Selengkapnya"), Jelajahi 2x2 sebagai kartu navigasi langsung,
 //   CTA horizontal (teks kiri, tombol kanan).
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import '../index-homepage.css'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
@@ -56,7 +56,7 @@ import type {
 
 // --- Data landing ---
 
-// Slide carousel hero — path RELATIF './' dari public/.
+// Slide carousel hero, path RELATIF './' dari public/.
 // (inline style & <img> tidak diproses Vite; path absolut '/...' salah
 // arah ke root domain. Yang butuh path absolut hanya url() di file CSS.)
 const HERO_SLIDES = [
@@ -86,7 +86,7 @@ const VALUES = [
   },
 ]
 
-// Menu Jelajahi — kartu navigasi langsung ke halaman masing-masing
+// Menu Jelajahi, kartu navigasi langsung ke halaman masing-masing
 // (sesuai acuan final: tanpa panel detail di bawah grid).
 const EXPLORE_MENUS: {
   id: string
@@ -135,6 +135,9 @@ export default function HomePage() {
   const [announcements, setAnnouncements] = useState<Announcement[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [coursesError, setCoursesError] = useState<string | null>(null)
+  const [exploreNotice, setExploreNotice] = useState<string | null>(null)
+  const navigate = useNavigate()
   const [aboutOpen, setAboutOpen] = useState(false)
   // Carousel hero (landing logout): slide aktif + jeda saat hover/fokus.
   const [slide, setSlide] = useState(0)
@@ -161,11 +164,16 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false
     async function load() {
+      // Kursus dimuat sendiri: bila gagal, halaman tetap tampil dan hanya
+      // muncul pemberitahuan inline, bukan error seluruh halaman.
       try {
         const all = await fetchCourses()
         if (cancelled) return
         setCourses(all)
-        // Pengumuman terbaru (platform + course yang diikuti) — sama seperti
+      } catch {
+        if (!cancelled) setCoursesError('Kursus gagal dimuat.')
+      }
+        // Pengumuman terbaru (platform + course yang diikuti), sama seperti
         // halaman Pengumuman, bukan teks kosong hardcode.
         try {
           const { data: ann, error: annErr } = await supabase
@@ -193,6 +201,7 @@ export default function HomePage() {
           if (!cancelled) setAnnouncements([])
         }
         if (user) {
+          try {
           const [enr, prog] = await Promise.all([
             fetchEnrollments(user.id),
             fetchLessonProgress(user.id),
@@ -245,12 +254,11 @@ export default function HomePage() {
               ? []
               : ((evRes.data ?? []) as SineEvent[]),
           )
+          } catch {
+            if (!cancelled) setError('Gagal memuat data dashboard. Coba muat ulang halaman.')
+          }
         }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat data.')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+      if (!cancelled) setLoading(false)
     }
     void load()
     return () => {
@@ -266,23 +274,17 @@ export default function HomePage() {
     )
   }
 
-  if (error) {
-    return (
-      <div className="page">
-        <p className="error-box">{error}</p>
-      </div>
-    )
-  }
-
   const myCourses = courses.filter((c) => enrolledIds.includes(c.id))
   const isSiswa = profile?.role !== 'mentor' && profile?.role !== 'admin'
 
   return (
     <div className="page">
+      {coursesError && <p className="notice-box">{coursesError}</p>}
+      {error && <p className="error-box">{error}</p>}
       {user ? (
         isSiswa ? (
           <SiswaHome
-            profileName={profile?.name ?? profile?.email ?? 'SINEVERSE'}
+            profileName={profile?.name ?? ''}
             school={profile?.school ?? null}
             kelas={profile?.kelas ?? null}
             courses={courses}
@@ -316,7 +318,7 @@ export default function HomePage() {
         )
       ) : (
         <>
-          {/* B. Hero — carousel sinematik 3 slide, aksen diagonal mint,
+          {/* B. Hero, carousel sinematik 3 slide, aksen diagonal mint,
               hanya tombol Daftar Gratis (sesuai acuan final). */}
           <section
             className="landing-hero landing-hero-carousel"
@@ -348,6 +350,9 @@ export default function HomePage() {
                   Daftar Gratis
                   <span aria-hidden="true"> →</span>
                 </Link>
+                <Link to="/login" className="btn btn-outline-light">
+                  Masuk
+                </Link>
               </div>
             </div>
             <div className="landing-hero-dots" role="group" aria-label="Pilih foto hero">
@@ -364,7 +369,7 @@ export default function HomePage() {
             </div>
           </section>
 
-          {/* C. Apa Itu SINEVERSE? — 2 kolom (teks + ilustrasi) di semua
+          {/* C. Apa Itu SINEVERSE?, 2 kolom (teks + ilustrasi) di semua
               lebar, sesuai acuan. Nilai LEARN/CREATE/COLLABORATE pindah
               ke dalam "Selengkapnya" agar tampilan awal sama seperti acuan. */}
           <section className="landing-about" aria-label="Apa Itu SINEVERSE?">
@@ -425,7 +430,7 @@ export default function HomePage() {
                 <p>
                   SINEVERSE dibangun dari keyakinan bahwa belajar film tidak seharusnya hanya
                   bisa diakses segelintir orang. Banyak pelajar SMA/SMK yang tertarik dengan
-                  dunia film — menonton, merekam, mengedit — tetapi belum punya ruang terarah
+                  dunia film, menonton, merekam, mengedit, tetapi belum punya ruang terarah
                   untuk belajar dari dasar, berlatih bersama mentor, dan berkarya dalam tim.
                   SINEVERSE hadir untuk mengisi ruang itu: satu tempat untuk belajar, berkarya,
                   dan berkolaborasi.
@@ -467,31 +472,69 @@ export default function HomePage() {
             )}
           </section>
 
-          {/* D. Jelajahi Dunia Filmmaking — grid 2x2 di semua lebar,
+          {/* D. Jelajahi Dunia Filmmaking, grid 2x2 di semua lebar,
               kartu navigasi langsung (sesuai acuan final). */}
           <section className="landing-explore" id="jelajahi" aria-label="Jelajahi Dunia Filmmaking">
             <h2>Jelajahi Dunia Filmmaking</h2>
+            {exploreNotice && (
+              <p className="notice-box" role="status">
+                {exploreNotice}
+              </p>
+            )}
             <div className="explore-grid">
-              {EXPLORE_MENUS.map((m) => (
-                <Link
-                  key={m.id}
-                  to={m.to}
-                  className={`explore-card${m.featured ? ' featured' : ''}`}
-                >
-                  <span className="explore-icon">
-                    <Icon name={m.icon} size={28} />
-                  </span>
-                  <span className="explore-text">
-                    <span className="explore-name">{m.name}</span>
-                    <span className="explore-short">{m.short}</span>
-                  </span>
-                  <Icon name="chevronRight" size={20} className="explore-chevron" />
-                </Link>
-              ))}
+              {EXPLORE_MENUS.map((m) => {
+                // Community dan Projects butuh login: beri tahu pengunjung
+                // logout sebelum mengarahkannya ke halaman masuk.
+                const needsLogin = !user && (m.id === 'community' || m.id === 'projects')
+                return (
+                  <Link
+                    key={m.id}
+                    to={m.to}
+                    className={`explore-card${m.featured ? ' featured' : ''}`}
+                    onClick={
+                      needsLogin
+                        ? (e) => {
+                            e.preventDefault()
+                            setExploreNotice(
+                              'Masuk terlebih dahulu untuk membuka Community/Projects.',
+                            )
+                            window.setTimeout(() => navigate('/login'), 1600)
+                          }
+                        : undefined
+                    }
+                  >
+                    <span className="explore-icon">
+                      <Icon name={m.icon} size={28} />
+                    </span>
+                    <span className="explore-text">
+                      <span className="explore-name">{m.name}</span>
+                      <span className="explore-short">{m.short}</span>
+                      {needsLogin && (
+                        <span
+                          className="explore-badge"
+                          style={{
+                            display: 'inline-block',
+                            marginTop: '0.25rem',
+                            padding: '0.1rem 0.5rem',
+                            borderRadius: '999px',
+                            background: '#fff3cd',
+                            color: '#7a5b00',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                          }}
+                        >
+                          Butuh masuk
+                        </span>
+                      )}
+                    </span>
+                    <Icon name="chevronRight" size={20} className="explore-chevron" />
+                  </Link>
+                )
+              })}
             </div>
           </section>
 
-          {/* E. Ajakan bergabung — horizontal: teks kiri, tombol kanan. */}
+          {/* E. Ajakan bergabung, horizontal: teks kiri, tombol kanan. */}
           <section className="landing-cta" aria-label="Ajakan bergabung">
             <div className="landing-cta-text">
               <h2>Satu Ruang, Banyak Cerita.</h2>
@@ -549,7 +592,7 @@ function SiswaHome(props: SiswaHomeProps) {
     assignments,
   } = props
 
-  const firstName = profileName.trim().split(/\s+/)[0] || 'SINEVERSE'
+  const firstName = profileName.trim().split(/\s+/)[0] || ''
   const schoolParts: string[] = []
   if (school) schoolParts.push(school)
   if (kelas) schoolParts.push(`Kelas ${kelas}`)
@@ -625,7 +668,7 @@ function SiswaHome(props: SiswaHomeProps) {
     <>
       <section className="hero">
         <p className="hero-eyebrow">YOUR WORLD OF FILMMAKING</p>
-        <h1>Halo, {firstName}!</h1>
+        <h1>{firstName ? `Halo, ${firstName}!` : 'Halo!'}</h1>
         <p className="hero-sub">{heroSub}</p>
         <div className="hero-actions">
           <Link to="/akademi" className="btn btn-primary">
@@ -638,7 +681,7 @@ function SiswaHome(props: SiswaHomeProps) {
         {myCourses.length === 0 && (
           <p className="hero-note">
             Kamu belum mengikuti kursus. Mulai dari{' '}
-            <Link to="/akademi">katalog Academy</Link> — semua kursus inti gratis.
+            <Link to="/akademi">katalog Academy</Link>, semua kursus inti gratis.
           </p>
         )}
       </section>
@@ -656,7 +699,8 @@ function SiswaHome(props: SiswaHomeProps) {
               <li key={`${r.kind}-${r.id}`} className="rec-row">
                 <Link to={r.to}>
                   <p className="rec-label">
-                    {r.kind === 'course' ? 'KURSUS' : 'PROYEK MENCARI KRU'} • SKOR {r.score}
+                    {r.kind === 'course' ? 'KURSUS' : 'PROYEK MENCARI KRU'} • Skor kecocokan{' '}
+                    {r.score} dari {r.kind === 'course' ? 20 : 25}
                   </p>
                   <h3>{r.title}</h3>
                   <p className="rec-desc">{r.description ?? r.reason}</p>
@@ -843,6 +887,33 @@ async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+// Status pengajuan mengampu dalam Bahasa Indonesia (bukan mentah "pending").
+function claimStatusLabel(status: string): string {
+  if (status === 'pending') return 'Menunggu persetujuan'
+  if (status === 'approved') return 'Disetujui'
+  if (status === 'rejected') return 'Ditolak'
+  return status
+}
+
+// Jenis target laporan moderasi dalam Bahasa Indonesia.
+function targetTypeLabel(t: string): string {
+  if (t === 'community_post' || t === 'post') return 'Postingan community'
+  if (t === 'community') return 'Komunitas'
+  if (t === 'discussion') return 'Diskusi'
+  if (t === 'film') return 'Film'
+  if (t === 'project') return 'Proyek'
+  if (t === 'profile' || t === 'user') return 'Pengguna'
+  return t
+}
+
+// Status laporan dalam Bahasa Indonesia.
+function reportStatusLabel(s: string): string {
+  if (s === 'open') return 'Terbuka'
+  if (s === 'resolved') return 'Diselesaikan'
+  if (s === 'dismissed') return 'Ditolak'
+  return s
+}
+
 // --- Dashboard mentor, seperti MentorHome di artefak ----------------------
 
 interface MentorQueueRow {
@@ -881,6 +952,7 @@ function MentorHome(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [claimingId, setClaimingId] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -1035,8 +1107,8 @@ function MentorHome(props: {
           })),
         )
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat Mentor Workspace.')
+    } catch {
+      setError('Gagal memuat Mentor Workspace. Coba muat ulang halaman.')
     } finally {
       setLoading(false)
     }
@@ -1048,23 +1120,28 @@ function MentorHome(props: {
   }, [userId, courses])
 
   async function handleClaim(courseId: string) {
+    if (claimingId) return
+    setClaimingId(courseId)
+    setNotice(null)
     const { error: insErr } = await supabase.from('course_claims').insert({
       course_id: courseId,
       mentor_id: userId,
       status: 'pending',
     })
-    if (insErr) setNotice(insErr.message)
-    else {
-      setNotice(
-        'Pengajuan mengampu terkirim. Admin akan meninjau — setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).',
-      )
-      const { data } = await supabase
-        .from('course_claims')
-        .select('*')
-        .eq('mentor_id', userId)
-        .order('created_at', { ascending: false })
-      setClaims((data ?? []) as CourseClaim[])
+    setClaimingId(null)
+    if (insErr) {
+      setNotice('Pengajuan gagal terkirim. Coba lagi.')
+      return
     }
+    setNotice(
+      'Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).',
+    )
+    const { data } = await supabase
+      .from('course_claims')
+      .select('*')
+      .eq('mentor_id', userId)
+      .order('created_at', { ascending: false })
+    setClaims((data ?? []) as CourseClaim[])
   }
 
   if (loading) return <p className="muted">Memuat Mentor Workspace…</p>
@@ -1110,9 +1187,18 @@ function MentorHome(props: {
                   {row.course.title} · {row.assignment.title} · {row.studentName} ·{' '}
                   {fmtDate(row.submission.submitted_at)}
                 </p>
-                <p>{row.submission.content ?? '—'}</p>
+                <p
+                  style={{
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {row.submission.content ?? '—'}
+                </p>
                 <p>
-                  <Link to="/mentor/penilaian">Nilai →</Link>
+                  <Link to="/mentor/penilaian">Buka Antrean →</Link>
                 </p>
               </li>
             ))}
@@ -1161,21 +1247,25 @@ function MentorHome(props: {
         {unassigned.length === 0 ? (
           <p className="empty">Tidak ada course tanpa mentor saat ini.</p>
         ) : (
-          <ul>
+          <ul
+            className="plain-list"
+            style={{ listStyle: 'none', margin: 0, padding: 0 }}
+          >
             {unassigned.map((c) => {
               const claim = claims.find((cl) => cl.course_id === c.id)
               return (
-                <li key={c.id}>
+                <li key={c.id} style={{ marginBottom: '0.75rem' }}>
                   {c.title}{' '}
                   {claim ? (
-                    <span className="muted">— pengajuan: {claim.status}</span>
+                    <span className="muted">— pengajuan: {claimStatusLabel(claim.status)}</span>
                   ) : (
                     <button
                       type="button"
                       className="btn btn-ghost btn-small"
+                      disabled={claimingId === c.id}
                       onClick={() => void handleClaim(c.id)}
                     >
-                      Ajukan untuk Mengampu
+                      {claimingId === c.id ? 'Mengajukan…' : 'Ajukan untuk Mengampu'}
                     </button>
                   )}
                 </li>
@@ -1272,6 +1362,7 @@ function AdminHome(props: {
     users: 0,
     siswa: 0,
     mentor: 0,
+    admin: 0,
     schools: 0,
     films: 0,
     enrollments: 0,
@@ -1279,6 +1370,10 @@ function AdminHome(props: {
     openReports: 0,
     unverifiedSchools: 0,
   })
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [targetLabels, setTargetLabels] = useState<
+    Map<string, { label: string; to: string | null }>
+  >(new Map())
   const [apps, setApps] = useState<MentorApplication[]>([])
   const [schools, setSchools] = useState<School[]>([])
   const [discReports, setDiscReports] = useState<DiscussionReport[]>([])
@@ -1291,7 +1386,15 @@ function AdminHome(props: {
 
   async function load() {
     try {
-      const { data: profiles } = await supabase.from('profiles').select('id,name,role')
+      const { data: profiles, error: profilesErr } = await supabase
+        .from('profiles')
+        .select('id,name,role')
+      // Kegagalan memuat profil jangan disamarkan sebagai 0 pengguna.
+      if (profilesErr) {
+        setUsersError('Data pengguna gagal dimuat.')
+      } else {
+        setUsersError(null)
+      }
       const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
       const { count: filmCount } = await safe(
         async () =>
@@ -1348,6 +1451,7 @@ function AdminHome(props: {
         users: profs.length,
         siswa: profs.filter((p) => p.role === 'siswa').length,
         mentor: profs.filter((p) => p.role === 'mentor').length,
+        admin: profs.filter((p) => p.role === 'admin').length,
         schools: schoolData.length,
         films: filmCount ?? 0,
         enrollments: enrCount ?? 0,
@@ -1359,6 +1463,92 @@ function AdminHome(props: {
       setSchools(schoolData)
       setDiscReports(dData)
       setModReports(mData)
+
+      // Selesaikan target laporan moderasi menjadi label yang bisa dibaca
+      // manusia (judul/nama + tautan), bukan UUID mentah. Bila target tidak
+      // bisa diselesaikan, tampilkan jenisnya + ID pendek saja.
+      const labels = new Map<string, { label: string; to: string | null }>()
+      for (const r of mData) {
+        const key = `${r.target_type}:${r.target_id ?? ''}`
+        const fallback = { label: targetTypeLabel(r.target_type), to: null as string | null }
+        if (!r.target_id) {
+          labels.set(key, fallback)
+          continue
+        }
+        try {
+          if (r.target_type === 'community_post' || r.target_type === 'post') {
+            const { data } = await supabase
+              .from('community_posts')
+              .select('body,community_id')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { body: string | null; community_id: string } | null
+            labels.set(
+              key,
+              row
+                ? {
+                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
+                    to: `/komunitas/${row.community_id}`,
+                  }
+                : fallback,
+            )
+          } else if (r.target_type === 'community') {
+            const { data } = await supabase
+              .from('communities')
+              .select('name')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { name: string } | null
+            labels.set(
+              key,
+              row ? { label: row.name, to: `/komunitas/${r.target_id}` } : fallback,
+            )
+          } else if (r.target_type === 'discussion') {
+            const { data } = await supabase
+              .from('discussions')
+              .select('body,lesson_id')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { body: string | null; lesson_id: string } | null
+            labels.set(
+              key,
+              row
+                ? {
+                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
+                    to: `/lesson/${row.lesson_id}`,
+                  }
+                : fallback,
+            )
+          } else if (r.target_type === 'film') {
+            const { data } = await supabase
+              .from('films')
+              .select('title')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { title: string } | null
+            labels.set(
+              key,
+              row ? { label: row.title, to: `/showcase/${r.target_id}` } : fallback,
+            )
+          } else if (r.target_type === 'project') {
+            const { data } = await supabase
+              .from('projects')
+              .select('title')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { title: string } | null
+            labels.set(
+              key,
+              row ? { label: row.title, to: `/proyek/${r.target_id}` } : fallback,
+            )
+          } else {
+            labels.set(key, fallback)
+          }
+        } catch {
+          labels.set(key, fallback)
+        }
+      }
+      setTargetLabels(labels)
 
       // Aktivitas terbaru: audit log; bila tabel tidak ada, pakai
       // pendaftaran terbaru sebagai gantinya (data asli saja).
@@ -1406,8 +1596,8 @@ function AdminHome(props: {
           })),
         )
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat Ringkasan SINEVERSE.')
+    } catch {
+      setError('Gagal memuat Ringkasan SINEVERSE. Coba muat ulang halaman.')
     } finally {
       setLoading(false)
     }
@@ -1424,7 +1614,7 @@ function AdminHome(props: {
       .update({ status: approve ? 'approved' : 'rejected', decided_by: userId })
       .eq('id', app.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal menyimpan keputusan. Coba lagi.')
       return
     }
     await logAudit(
@@ -1447,7 +1637,7 @@ function AdminHome(props: {
       .update({ is_verified: verify })
       .eq('id', school.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal mengubah status verifikasi sekolah. Coba lagi.')
       return
     }
     await logAudit(verify ? 'school.verified' : 'school.unverified', 'schools', school.id, {})
@@ -1461,7 +1651,7 @@ function AdminHome(props: {
       .update({ status, resolved_by: userId, resolved_at: new Date().toISOString() })
       .eq('id', r.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal menyelesaikan laporan. Coba lagi.')
       return
     }
     await logAudit(
@@ -1480,7 +1670,7 @@ function AdminHome(props: {
       .update({ status, resolved_by: userId, resolved_at: new Date().toISOString() })
       .eq('id', r.id)
     if (updErr) {
-      setNotice(updErr.message)
+      setNotice('Gagal menyelesaikan laporan. Coba lagi.')
       return
     }
     await logAudit(
@@ -1516,6 +1706,7 @@ function AdminHome(props: {
       </section>
 
       {notice && <p className="notice-box">{notice}</p>}
+      {usersError && <p className="error-box">{usersError}</p>}
 
       <section className="section" aria-label="Statistik platform">
         <div className="stat-grid">
@@ -1537,7 +1728,8 @@ function AdminHome(props: {
           <div className="stat-card">
             <span className="stat-num">{counts.users}</span>
             <span className="stat-label">
-              Total pengguna (Siswa {counts.siswa} · Mentor {counts.mentor})
+              Total pengguna (Siswa {counts.siswa} · Mentor {counts.mentor} · Admin{' '}
+              {counts.admin})
             </span>
             <Link to="/admin/pengguna">Lihat →</Link>
           </div>
@@ -1629,7 +1821,8 @@ function AdminHome(props: {
             {discReports.map((r) => (
               <li key={`d-${r.id}`} className="discussion-item">
                 <p className="discussion-meta">
-                  Laporan diskusi · {fmtDate(r.created_at)} · Status: {r.status}
+                  Laporan diskusi · {fmtDate(r.created_at)} · Status:{' '}
+                  {reportStatusLabel(r.status)}
                 </p>
                 <p>Alasan: {r.reason ?? '—'}</p>
                 <div className="form-actions">
@@ -1650,32 +1843,44 @@ function AdminHome(props: {
                 </div>
               </li>
             ))}
-            {modReports.map((r) => (
-              <li key={`m-${r.id}`} className="discussion-item">
-                <p className="discussion-meta">
-                  Laporan moderasi · {r.target_type}
-                  {r.target_id ? ` · ${r.target_id}` : ''} · {fmtDate(r.created_at)} · Status:{' '}
-                  {r.status}
-                </p>
-                <p>Alasan: {r.reason ?? '—'}</p>
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-small"
-                    onClick={() => void resolveModeration(r, 'resolved')}
-                  >
-                    Selesaikan
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-small"
-                    onClick={() => void resolveModeration(r, 'dismissed')}
-                  >
-                    Tolak Laporan
-                  </button>
-                </div>
-              </li>
-            ))}
+            {modReports.map((r) => {
+              const info = targetLabels.get(`${r.target_type}:${r.target_id ?? ''}`)
+              const typeLabel = targetTypeLabel(r.target_type)
+              return (
+                <li key={`m-${r.id}`} className="discussion-item">
+                  <p className="discussion-meta">
+                    Laporan moderasi · {typeLabel}
+                    {info && info.to ? (
+                      <>
+                        {' · '}
+                        <Link to={info.to}>{info.label}</Link>
+                      </>
+                    ) : (
+                      <>{r.target_id ? ` · ID ${r.target_id.slice(0, 8)}` : ''}</>
+                    )}
+                    {' · '}
+                    {fmtDate(r.created_at)} · Status: {reportStatusLabel(r.status)}
+                  </p>
+                  <p>Alasan: {r.reason ?? '—'}</p>
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void resolveModeration(r, 'resolved')}
+                    >
+                      Selesaikan
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void resolveModeration(r, 'dismissed')}
+                    >
+                      Tolak Laporan
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
