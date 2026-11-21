@@ -1158,6 +1158,48 @@ p {
   color: #5b6b7c;
 }
 
+/* Kartu statistik dashboard admin. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+@media (min-width: 640px) {
+  .stat-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.stat-card .stat-num {
+  display: block;
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.stat-card .stat-label {
+  display: block;
+  margin-top: 0.15rem;
+  color: #5b6b7c;
+  font-size: 0.88rem;
+}
+
+.stat-card a {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.88rem;
+}
+
 .progress-track {
   height: 8px;
   background: var(--light-grey);
