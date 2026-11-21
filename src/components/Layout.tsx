@@ -10,7 +10,6 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } from '../lib/supabase'
-import { checkDueReminders } from '../lib/reminders'
 import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
 
@@ -53,10 +52,6 @@ const BOTTOM_NAV: Record<Role, string[]> = {
   admin: ['/', '/akademi', '/admin', '/komunitas'],
 }
 
-// Pengingat H-1 (Tahap 6): sekali per sesi per pengguna, supaya sign-in
-// berikutnya tidak membuat duplikat dan tidak mengulang query.
-const remindersCheckedFor = new Set<string>()
-
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
   const navigate = useNavigate()
@@ -84,17 +79,6 @@ export default function Layout() {
         })
     }
     refresh()
-    // Pengingat H-1 (Tahap 6): sekali per sesi, fire-and-forget — gagal
-    // kirim tidak pernah memblokir sign-in. Setelah selesai, hitung ulang
-    // lonceng supaya pengingat baru ikut tampil di badge.
-    if (!remindersCheckedFor.has(user.id)) {
-      remindersCheckedFor.add(user.id)
-      void checkDueReminders(user.id)
-        .then(() => {
-          if (!cancelled) refresh()
-        })
-        .catch(() => undefined)
-    }
     const onVisible = () => {
       if (!document.hidden) refresh()
     }
