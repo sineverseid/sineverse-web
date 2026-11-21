@@ -38,7 +38,7 @@ interface AuthContextValue {
   signUp: (
     input: SignUpInput,
   ) => Promise<{ error: string | null; needsConfirmation: boolean }>
-  /** Verifikasi kode 6 digit dari email konfirmasi pendaftaran. */
+  /** Verifikasi kode 8 digit dari email konfirmasi pendaftaran. */
   verifyOtpCode: (email: string, code: string) => Promise<{ error: string | null; user: User | null }>
   /** Kirim ulang email konfirmasi pendaftaran. */
   resendConfirmation: (email: string) => Promise<{ error: string | null }>
@@ -69,7 +69,7 @@ function translateAuthError(message: string): string {
     message.toLowerCase().includes('invalid') &&
     (message.toLowerCase().includes('otp') || message.toLowerCase().includes('token'))
   ) {
-    return 'Kode salah. Periksa lagi kode 6 digit dari email kamu.'
+    return 'Kode salah. Periksa lagi kode 8 digit dari email kamu.'
   }
   if (message.includes('Email rate limit exceeded')) {
     return 'Terlalu sering meminta email. Tunggu sebentar lalu coba lagi.'
