@@ -18,6 +18,7 @@ import type {
   LessonProgress,
   LessonResource,
   LibraryItem,
+  LiveClass,
   Module,
   Profile,
   Quiz,
@@ -443,6 +444,133 @@ export async function fetchSubmissions(userId: string): Promise<Submission[]> {
   return (data ?? []) as Submission[]
 }
 
+// ---------------------------------------------------------------------------
+// Rubrik terstruktur + pengiriman multi-file (migrasi 014)
+// ---------------------------------------------------------------------------
+
+/** Rubrik sebuah tugas beserta kriterianya, atau null bila belum ada rubrik. */
+export async function fetchRubricForAssignment(
+  assignmentId: string,
+): Promise<RubricWithCriteria | null> {
+  const { data, error } = await supabase
+    .from('assignment_rubrics')
+    .select('*')
+    .eq('assignment_id', assignmentId)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  const rubric = data as AssignmentRubric
+  const { data: criteria, error: cErr } = await supabase
+    .from('rubric_criteria')
+    .select('*')
+    .eq('rubric_id', rubric.id)
+    .order('order_index', { ascending: true })
+  if (cErr) throw cErr
+  return { rubric, criteria: (criteria ?? []) as RubricCriterion[] }
+}
+
+export interface RubricCriterionInput {
+  id?: string
+  title: string
+  description: string | null
+  max_score: number
+}
+
+/**
+ * Simpan rubrik sebuah tugas: satu baris assignment_rubrics per tugas
+ * (upsert), lalu ganti seluruh kriterianya (hapus yang lama, masukkan yang
+ * baru sesuai urutan). Kriteria berjudul kosong dibuang.
+ * Mengembalikan rubrik + kriteria yang tersimpan.
+ */
+export async function saveRubric(
+  assignmentId: string,
+  title: string,
+  criteria: RubricCriterionInput[],
+): Promise<RubricWithCriteria> {
+  const { data, error } = await supabase
+    .from('assignment_rubrics')
+    .upsert(
+      { assignment_id: assignmentId, title: title.trim() || 'Rubrik Penilaian' },
+      { onConflict: 'assignment_id' },
+    )
+    .select()
+    .single()
+  if (error) throw error
+  const rubric = data as AssignmentRubric
+  const { error: delErr } = await supabase
+    .from('rubric_criteria')
+    .delete()
+    .eq('rubric_id', rubric.id)
+  if (delErr) throw delErr
+  const rows = criteria
+    .filter((c) => c.title.trim())
+    .map((c, i) => ({
+      rubric_id: rubric.id,
+      title: c.title.trim(),
+      description: c.description?.trim() || null,
+      max_score: Math.max(1, Math.round(c.max_score)),
+      order_index: i,
+    }))
+  if (rows.length > 0) {
+    const { error: insErr } = await supabase.from('rubric_criteria').insert(rows)
+    if (insErr) throw insErr
+  }
+  const saved = await fetchRubricForAssignment(assignmentId)
+  if (!saved) throw new Error('Rubrik gagal disimpan.')
+  return saved
+}
+
+/** Skor per kriteria untuk satu submission (kosong bila belum dinilai). */
+export async function fetchRubricScores(submissionId: string): Promise<RubricScore[]> {
+  const { data, error } = await supabase
+    .from('rubric_scores')
+    .select('*')
+    .eq('submission_id', submissionId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as RubricScore[]
+}
+
+/** Simpan skor per kriteria (upsert per pasangan submission + kriteria). */
+export async function saveRubricScores(
+  submissionId: string,
+  scores: { criterion_id: string; score: number }[],
+): Promise<void> {
+  if (scores.length === 0) return
+  const { error } = await supabase.from('rubric_scores').upsert(
+    scores.map((s) => ({
+      submission_id: submissionId,
+      criterion_id: s.criterion_id,
+      score: s.score,
+    })),
+    { onConflict: 'submission_id,criterion_id' },
+  )
+  if (error) throw error
+}
+
+/** Semua file lampiran satu submission, diurutkan berdasarkan waktu unggah. */
+export async function fetchSubmissionFiles(submissionId: string): Promise<SubmissionFile[]> {
+  const { data, error } = await supabase
+    .from('submission_files')
+    .select('*')
+    .eq('submission_id', submissionId)
+    .order('uploaded_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as SubmissionFile[]
+}
+
+/** Catat file-file yang sudah diunggah ke Storage untuk satu submission. */
+export async function addSubmissionFiles(
+  submissionId: string,
+  files: { file_path: string; file_name: string; file_size: number | null }[],
+): Promise<void> {
+  if (files.length === 0) return
+  const { error } = await supabase
+    .from('submission_files')
+    .insert(files.map((f) => ({ submission_id: submissionId, ...f })))
+  if (error) throw error
+}
+
 /** exam_attempts is a planned migration-003 table; empty when absent. */
 export async function fetchExamAttempts(userId: string): Promise<ExamAttempt[]> {
   try {
@@ -511,10 +639,15 @@ export async function postDiscussion(
 // ---------------------------------------------------------------------------
 import type {
   AppNotification,
+  AssignmentRubric,
   Certificate,
   CompetencyExam,
   NotificationPrefs,
   QuizQuestion,
+  RubricCriterion,
+  RubricScore,
+  RubricWithCriteria,
+  SubmissionFile,
 } from './types'
 
 /**
@@ -722,3 +855,63 @@ export async function logAudit(
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Tahap 3 — Pretest/Posttest, partisipasi diskusi, Kelas Live (migrasi 015)
+// ---------------------------------------------------------------------------
+
+/** Semua diskusi (thread + balasan) di lesson-lesson yang diberikan. */
+export async function fetchDiscussionsForLessons(
+  lessonIds: string[],
+): Promise<Discussion[]> {
+  if (lessonIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('discussions')
+    .select('*')
+    .in('lesson_id', lessonIds)
+  if (error) throw error
+  return (data ?? []) as Discussion[]
+}
+
+/** Kelas live sebuah course, urut jadwal terdekat dulu. */
+export async function fetchLiveClasses(courseId: string): Promise<LiveClass[]> {
+  const { data, error } = await supabase
+    .from('live_classes')
+    .select('*')
+    .eq('course_id', courseId)
+    .order('scheduled_at', { ascending: true, nullsFirst: false })
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  return (data ?? []) as LiveClass[]
+}
+
+/** Jadwalkan satu kelas live (mentor course / admin). */
+export async function createLiveClass(input: {
+  courseId: string
+  title: string
+  scheduledAt: string | null
+  meetUrl: string | null
+  createdBy: string
+}): Promise<LiveClass> {
+  const { data, error } = await supabase
+    .from('live_classes')
+    .insert({
+      course_id: input.courseId,
+      title: input.title,
+      scheduled_at: input.scheduledAt,
+      meet_url: input.meetUrl,
+      created_by: input.createdBy,
+    })
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as LiveClass
+}
+
+/** Batalkan satu kelas live (mentor course / admin). */
+export async function deleteLiveClass(id: string): Promise<void> {
+  const { error } = await supabase.from('live_classes').delete().eq('id', id)
+  if (error) throw error
+}

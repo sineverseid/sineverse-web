@@ -97,7 +97,14 @@ export interface Assignment {
   // Opsional: tugas lama yang dibuat sebelum 009 bernilai null.
   due_date?: string | null
   rubric?: string | null
+  // kind ditambahkan migrasi 015 (Tahap 3): 'weekly' (default) atau
+  // 'final_practice' (tugas praktik akhir, bobot 40% di gradebook).
+  // Opsional: tugas lama yang dibuat sebelum 015 dibaca sebagai 'weekly'.
+  kind?: AssignmentKind
 }
+
+/** Jenis tugas (migrasi 015). */
+export type AssignmentKind = 'weekly' | 'final_practice'
 
 export interface Submission {
   id: string
@@ -111,6 +118,50 @@ export interface Submission {
   graded_at: string | null
 }
 
+// --- 014: rubrik terstruktur + pengiriman multi-file ------------------------
+// Kolom mengikuti supabase/migrations/014_academy_stage2.sql verbatim.
+// submissions.feedback tetap dipakai untuk umpan balik (tidak ada tabel
+// submission_feedback); submissions.file_url tetap file pertama/legacy.
+export interface AssignmentRubric {
+  id: string
+  assignment_id: string
+  title: string
+  created_at: string
+}
+
+export interface RubricCriterion {
+  id: string
+  rubric_id: string
+  title: string
+  description: string | null
+  max_score: number
+  order_index: number
+  created_at: string
+}
+
+export interface RubricScore {
+  id: string
+  submission_id: string
+  criterion_id: string
+  score: number
+  created_at: string
+}
+
+export interface SubmissionFile {
+  id: string
+  submission_id: string
+  file_path: string
+  file_name: string
+  file_size: number | null
+  uploaded_at: string
+}
+
+/** Rubrik sebuah tugas beserta kriterianya (migrasi 014). */
+export interface RubricWithCriteria {
+  rubric: AssignmentRubric
+  criteria: RubricCriterion[]
+}
+
 export interface Quiz {
   id: string
   lesson_id: string
@@ -119,6 +170,40 @@ export interface Quiz {
   created_at: string
   // NOT in the written schema: quizzes have no max_attempts column
   // (only competency_exams do). Quiz history is shown; no cap is enforced.
+  // kind ditambahkan migrasi 015 (Tahap 3): 'quiz' (default), 'pretest',
+  // atau 'posttest'. Opsional: kuis lama yang dibuat sebelum 015 dibaca
+  // sebagai 'quiz' (pakai q.kind ?? 'quiz' di pemakaian).
+  kind?: QuizKind
+}
+
+/** Jenis kuis (migrasi 015). */
+export type QuizKind = 'quiz' | 'pretest' | 'posttest'
+
+/** Kelas live terjadwal untuk satu course (migrasi 015, Tahap 3). */
+export interface LiveClass {
+  id: string
+  course_id: string
+  title: string
+  scheduled_at: string | null
+  meet_url: string | null
+  created_by: string | null
+  created_at: string
+}
+
+/**
+ * Komponen nilai akhir satu course (Tahap 3, formula master prompt).
+ * null = komponen belum ada nilainya (belum ada pretest/posttest/tugas
+ * yang dinilai, atau belum ada aktivitas diskusi) — ditampilkan
+ * "belum ada nilai" dan dikeluarkan dari perhitungan (renormalisasi).
+ */
+export interface GradeComponents {
+  pretest: number | null
+  posttest: number | null
+  weeklyAssignments: number | null
+  finalPractice: number | null
+  discussion: number | null
+  final: number
+  passed: boolean
 }
 
 export interface QuizQuestion {
@@ -216,7 +301,19 @@ export interface Rps {
   code: string
   title: string
   description: string | null
-  weights: { kuis: number; tugas: number; ujian: number }
+  // Tahap 3 (migrasi 015): pretest / posttest / tugas_mingguan /
+  // tugas_akhir / diskusi. Kunci lama (kuis/tugas/ujian) tetap opsional
+  // agar baris RPS yang belum dimigrasi masih bisa dibaca.
+  weights: {
+    pretest: number
+    posttest: number
+    tugas_mingguan: number
+    tugas_akhir: number
+    diskusi: number
+    kuis?: number
+    tugas?: number
+    ujian?: number
+  }
   passing_grade: number
   weeks: RpsWeek[]
 }
