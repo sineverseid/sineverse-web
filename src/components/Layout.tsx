@@ -1,23 +1,61 @@
-// SINEVERSE — shared layout: top nav, bottom mobile nav, footer.
-// Bell notifikasi menampilkan jumlah belum dibaca (tabel notifications,
-// migrasi 008); bila tabel belum ada, lonceng tampil tanpa angka.
+// SINEVERSE — shared layout: top nav (desktop, berikon), bottom navigation
+// (handphone: 4–5 menu utama + Lainnya, sesuai artefak & master prompt),
+// footer. Bell notifikasi menampilkan jumlah belum dibaca (tabel
+// notifications, migrasi 008); bila tabel belum ada, lonceng tampil tanpa angka.
+// Saat belum login: header hanya logo + tombol Masuk (tanpa nav).
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchUnreadCount } from '../lib/supabase'
+import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
+
+type Role = 'siswa' | 'mentor' | 'admin'
+
+type NavEntry = {
+  to: string
+  label: string
+  icon: IconName
+  end?: boolean
+  roles?: Role[]
+}
+
+// Menu utama (bottom navigation handphone + bagian depan top nav desktop).
+const NAV_MAIN: NavEntry[] = [
+  { to: '/', label: 'Beranda', icon: 'home', end: true },
+  { to: '/akademi', label: 'Akademi', icon: 'academy' },
+  { to: '/proyek', label: 'Proyek', icon: 'project' },
+  { to: '/komunitas', label: 'Komunitas', icon: 'community' },
+  { to: '/acara', label: 'Acara', icon: 'event' },
+]
+
+// Menu lain (lembar "Lainnya" di handphone + lanjutan top nav desktop).
+const NAV_MORE: NavEntry[] = [
+  { to: '/showcase', label: 'Showcase', icon: 'showcase' },
+  { to: '/pustaka', label: 'Pustaka', icon: 'library' },
+  { to: '/kompetisi', label: 'Kompetisi', icon: 'trophy' },
+  { to: '/rps', label: 'RPS', icon: 'rps' },
+  { to: '/pengumuman', label: 'Pengumuman', icon: 'announcement' },
+  { to: '/portofolio', label: 'Portofolio', icon: 'portfolio' },
+  { to: '/kru', label: 'Crew Finder', icon: 'crew' },
+  { to: '/sekolah', label: 'Sekolah & Klub', icon: 'school' },
+  { to: '/nilai', label: 'Nilai Saya', icon: 'grade' },
+  { to: '/ujian', label: 'Ujian', icon: 'exam' },
+  { to: '/sertifikat', label: 'Sertifikat', icon: 'certificate' },
+  { to: '/notifikasi', label: 'Notifikasi', icon: 'bell' },
+  { to: '/profil', label: 'Profil', icon: 'user' },
+  { to: '/mentor', label: 'Mentor', icon: 'mentor', roles: ['mentor', 'admin'] },
+  { to: '/admin', label: 'Admin', icon: 'admin', roles: ['admin'] },
+]
 
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [unread, setUnread] = useState<number | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
 
-  // Tutup menu mobile setiap kali pindah halaman.
-  useEffect(() => {
-    setMenuOpen(false)
-  }, [location.pathname])
+  // (Lembar "Lainnya" ditutup lewat onClick di tiap tautan — tanpa effect.)
 
   useEffect(() => {
     if (!user) {
@@ -42,51 +80,30 @@ export default function Layout() {
     navigate('/login')
   }
 
+  const role = (profile?.role ?? 'siswa') as Role
+  const visible = (e: NavEntry) => !e.roles || e.roles.includes(role)
+  const moreEntries = NAV_MORE.filter(visible)
+  const allEntries = [...NAV_MAIN, ...moreEntries]
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${user ? ' has-bottomnav' : ''}`}>
       <header className="topbar">
         <Link to="/" className="brand">
           <img src="./pwa-192x192.png" alt="Logo SINEVERSE" className="brand-logo" />
           <span className="brand-name">SINEVERSE</span>
         </Link>
         {user ? (
-          <>
-            <button
-              type="button"
-              className="menu-toggle"
-              aria-label={menuOpen ? 'Tutup menu' : 'Buka menu'}
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              {menuOpen ? '✕' : '☰'}
-            </button>
-            <nav className={menuOpen ? 'topnav open' : 'topnav'} aria-label="Navigasi utama">
-              <NavLink to="/" end>
-                Beranda
+          <nav className="topnav" aria-label="Navigasi utama">
+            {allEntries.map((e) => (
+              <NavLink key={e.to} to={e.to} end={e.end}>
+                <Icon name={e.icon} size={17} />
+                <span>{e.label}</span>
+                {e.to === '/notifikasi' && unread !== null && unread > 0 ? (
+                  <span className="nav-badge">{unread}</span>
+                ) : null}
               </NavLink>
-              <NavLink to="/akademi">Akademi</NavLink>
-              <NavLink to="/rps">RPS</NavLink>
-              <NavLink to="/komunitas">Komunitas</NavLink>
-              <NavLink to="/sekolah">Sekolah & Klub</NavLink>
-              <NavLink to="/proyek">Proyek</NavLink>
-              <NavLink to="/showcase">Showcase</NavLink>
-              <NavLink to="/pustaka">Pustaka</NavLink>
-              <NavLink to="/acara">Acara</NavLink>
-              <NavLink to="/kompetisi">Kompetisi</NavLink>
-              <NavLink to="/pengumuman">Pengumuman</NavLink>
-              <NavLink to="/nilai">Nilai Saya</NavLink>
-              <NavLink to="/ujian">Ujian</NavLink>
-              <NavLink to="/sertifikat">Sertifikat</NavLink>
-              <NavLink to="/notifikasi">
-                Notifikasi{unread !== null && unread > 0 ? ` (${unread})` : ''}
-              </NavLink>
-              {(profile?.role === 'mentor' || profile?.role === 'admin') && (
-                <NavLink to="/mentor">Mentor</NavLink>
-              )}
-              {profile?.role === 'admin' && <NavLink to="/admin">Admin</NavLink>}
-              <NavLink to="/profil">Profil</NavLink>
-            </nav>
-          </>
+            ))}
+          </nav>
         ) : (
           <NavLink to="/login" className="nav-cta">
             Masuk
@@ -120,6 +137,15 @@ export default function Layout() {
         <p className="footer-sub">
           Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.
         </p>
+        <nav className="footer-nav" aria-label="Tautan footer">
+          <Link to="/tentang">Tentang SINEVERSE</Link>
+          <Link to="/akademi">Academy</Link>
+          <Link to="/komunitas">Community</Link>
+          <Link to="/proyek">Film Projects</Link>
+          <Link to="/showcase">Showcase &amp; Events</Link>
+          <Link to="/privasi">Kebijakan Privasi</Link>
+          <Link to="/syarat">Syarat dan Ketentuan</Link>
+        </nav>
         {user && profile && (
           <p className="footer-sub">
             Masuk sebagai {profile.name ?? profile.email} ({profile.role})
@@ -130,6 +156,76 @@ export default function Layout() {
           </p>
         )}
       </footer>
+
+      {user && (
+        <nav className="bottomnav" aria-label="Navigasi bawah">
+          {NAV_MAIN.map((e) => (
+            <NavLink
+              key={e.to}
+              to={e.to}
+              end={e.end}
+              className="bottomnav-item"
+              onClick={() => setMoreOpen(false)}
+            >
+              <Icon name={e.icon} size={22} />
+              <span>{e.label}</span>
+            </NavLink>
+          ))}
+          <button
+            type="button"
+            className={`bottomnav-item${moreOpen ? ' active' : ''}`}
+            aria-expanded={moreOpen}
+            aria-label="Menu lainnya"
+            onClick={() => setMoreOpen((v) => !v)}
+          >
+            <Icon name="more" size={22} />
+            <span>Lainnya</span>
+          </button>
+        </nav>
+      )}
+
+      {user && moreOpen && (
+        <div
+          className="more-sheet-backdrop"
+          onClick={() => setMoreOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      {user && moreOpen && (
+        <div className="more-sheet" role="dialog" aria-label="Menu lainnya">
+          <div className="more-sheet-head">
+            <strong>Menu Lainnya</strong>
+            <button
+              type="button"
+              className="more-sheet-close"
+              aria-label="Tutup menu"
+              onClick={() => setMoreOpen(false)}
+            >
+              <Icon name="close" size={20} />
+            </button>
+          </div>
+          <div className="more-sheet-grid">
+            {moreEntries.map((e) => (
+              <NavLink
+                key={e.to}
+                to={e.to}
+                end={e.end}
+                className="more-sheet-item"
+                onClick={() => setMoreOpen(false)}
+              >
+                <Icon name={e.icon} size={20} />
+                <span>{e.label}</span>
+                {e.to === '/notifikasi' && unread !== null && unread > 0 ? (
+                  <span className="nav-badge">{unread}</span>
+                ) : null}
+              </NavLink>
+            ))}
+          </div>
+          <button type="button" className="btn btn-ghost btn-block" onClick={handleSignOut}>
+            Keluar
+          </button>
+        </div>
+      )}
     </div>
   )
 }
