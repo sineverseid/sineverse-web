@@ -10,6 +10,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchProfileNames, supabase } from '../lib/supabase'
 import type { ClubActivity, FilmClub, School } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function SchoolsPage() {
   const { user, profile } = useAuth()
@@ -141,13 +143,13 @@ export default function SchoolsPage() {
 
   return (
     <div className="page">
-      <h1>Sekolah &amp; Klub Film</h1>
+      <PageHeader icon="school" title="Sekolah & Klub Film" />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">
         <h2>Sekolah</h2>
         {schools.length === 0 ? (
-          <p className="empty">Belum ada sekolah terdaftar.</p>
+          <EmptyState message="Belum ada sekolah terdaftar." />
         ) : (
           <ul className="course-list">
             {schools.map((s) => {
@@ -191,7 +193,7 @@ export default function SchoolsPage() {
       <section className="section">
         <h2>Klub Film</h2>
         {(clubs ?? []).length === 0 ? (
-          <p className="empty">Belum ada klub film.</p>
+          <EmptyState message="Belum ada klub film." />
         ) : (
           <ul className="discussion-list">
             {(clubs ?? []).map((c) => (

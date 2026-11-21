@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourseLessons, fetchCourses, supabase } from '../lib/supabase'
 import type { Course, CourseClaim } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 interface MentorCourseRow {
   course: Course
@@ -117,7 +118,11 @@ export default function MentorPage() {
 
   return (
     <div className="page">
-      <h1>Mentor Workspace</h1>
+      <PageHeader
+        icon="mentor"
+        title="Mentor Workspace"
+        subtitle="Kursus yang kamu ampu, antrean penilaian, dan jadwal mentoring."
+      />
       {notice && <p className="notice-box">{notice}</p>}
 
       {isSiswa && (

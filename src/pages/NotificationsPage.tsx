@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '../lib/supabase'
 import type { AppNotification } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
@@ -58,11 +59,16 @@ export default function NotificationsPage() {
 
   return (
     <div className="page">
-      <h1>Notifikasi</h1>
-      <p className="muted">
-        {unread > 0 ? `${unread} belum dibaca.` : 'Semua sudah dibaca.'}{' '}
-        <Link to="/notifikasi/pengaturan">Pengaturan notifikasi</Link>
-      </p>
+      <PageHeader
+        icon="bell"
+        title="Notifikasi"
+        subtitle={
+          <>
+            {unread > 0 ? `${unread} belum dibaca.` : 'Semua sudah dibaca.'}{' '}
+            <Link to="/notifikasi/pengaturan">Pengaturan notifikasi</Link>
+          </>
+        }
+      />
       {notice && <p className="notice-box">{notice}</p>}
       {unread > 0 && (
         <p>

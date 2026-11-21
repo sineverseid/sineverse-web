@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom'
 import { BRAND, GRADEBOOK_WEIGHTS, PASSING_GRADE } from '../lib/brand'
 import { fetchCourses, supabase } from '../lib/supabase'
 import type { Rps, RpsWeek } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 export default function RpsPage() {
   const [rps, setRps] = useState<Rps | null>(null)
@@ -95,10 +96,15 @@ export default function RpsPage() {
 
   return (
     <div className="page">
-      <h1>RPS Semester 1</h1>
-      <p className="muted">
-        Kode: {BRAND.rpsCode} · {rps?.title ?? 'Rencana Pembelajaran Semester — Filmmaking'}
-      </p>
+      <PageHeader
+        icon="rps"
+        title="RPS Semester 1"
+        subtitle={
+          <>
+            Kode: {BRAND.rpsCode} · {rps?.title ?? 'Rencana Pembelajaran Semester — Filmmaking'}
+          </>
+        }
+      />
       {rps?.description && <p>{rps.description}</p>}
       {!rps && (
         <p className="notice-box">

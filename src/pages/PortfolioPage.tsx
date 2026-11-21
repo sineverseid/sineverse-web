@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { fetchCourses, fetchEnrollments, fetchLessonProgress, fetchMyCertificates, fetchPublicProfile, supabase } from '../lib/supabase'
 import type { Certificate, PortfolioItem } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 const KINDS = [
   { value: 'work', label: 'Karya' },
@@ -135,7 +136,10 @@ export default function PortfolioPage() {
 
   return (
     <div className="page">
-      <h1>Portofolio {isOwner ? 'Saya' : owner?.name ?? ''}</h1>
+      <PageHeader
+        icon="portfolio"
+        title={`Portofolio ${isOwner ? 'Saya' : owner?.name ?? ''}`}
+      />
       {owner?.photo_url && <img src={owner.photo_url} alt="Foto profil" className="avatar" />}
       {notice && <p className="notice-box">{notice}</p>}
 

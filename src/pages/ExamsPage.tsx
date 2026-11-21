@@ -12,6 +12,8 @@ import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { fetchCompetencyExams, fetchExamAttempts, supabase } from '../lib/supabase'
 import type { CompetencyExam, ExamAttempt } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 interface ExamQuestion {
   id: string
@@ -60,10 +62,13 @@ export function ExamsPage() {
 
   return (
     <div className="page">
-      <h1>Ujian Kompetensi</h1>
-      <p className="muted">Lulus ujian kompetensi menerbitkan sertifikat ujian (SVS-EXM).</p>
+      <PageHeader
+        icon="exam"
+        title="Ujian Kompetensi"
+        subtitle="Lulus ujian kompetensi menerbitkan sertifikat ujian (SVS-EXM)."
+      />
       {exams.length === 0 ? (
-        <p className="empty">Belum ada ujian kompetensi.</p>
+        <EmptyState message="Belum ada ujian kompetensi." />
       ) : (
         <ul className="course-list">
           {exams.map((ex) => {

@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchEnrollments, supabase } from '../lib/supabase'
 import type { Announcement } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function AnnouncementsPage() {
   const { user } = useAuth()
@@ -57,9 +59,9 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="page">
-      <h1>Pengumuman</h1>
+      <PageHeader icon="announcement" title="Pengumuman" />
       {items.length === 0 ? (
-        <p className="empty">Belum ada pengumuman.</p>
+        <EmptyState message="Belum ada pengumuman." />
       ) : (
         <ul className="discussion-list">
           {items.map((a) => (

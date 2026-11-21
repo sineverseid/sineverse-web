@@ -18,6 +18,7 @@ import {
   fetchSubmissions,
 } from '../lib/supabase'
 import type { Course } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 interface CourseGrade {
   course: Course
@@ -137,11 +138,11 @@ export default function GradebookPage() {
 
   return (
     <div className="page">
-      <h1>Nilai Saya</h1>
-      <p className="muted">
-        Bobot: Kuis 20% · Tugas 50% · Ujian 30% · Nilai lulus: {PASSING_GRADE}. Hanya nilai kamu
-        sendiri yang ditampilkan di sini.
-      </p>
+      <PageHeader
+        icon="grade"
+        title="Nilai Saya"
+        subtitle={`Bobot: Kuis 20% · Tugas 50% · Ujian 30% · Nilai lulus: ${PASSING_GRADE}. Hanya nilai kamu sendiri yang ditampilkan di sini.`}
+      />
       {grades.length === 0 ? (
         <p className="empty">
           Kamu belum mengambil course apa pun.{' '}

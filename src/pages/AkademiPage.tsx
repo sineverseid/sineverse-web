@@ -1,9 +1,11 @@
 // SINEVERSE — Katalog Akademi: 10 course Semester 1 (data asli Supabase),
 // chip kategori + pencarian.
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import CourseCard from '../components/CourseCard'
 import { fetchCourses } from '../lib/supabase'
 import type { Course } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function AkademiPage() {
   const [courses, setCourses] = useState<Course[]>([])
@@ -64,10 +66,11 @@ export default function AkademiPage() {
 
   return (
     <div className="page">
-      <h1>Akademi</h1>
-      <p className="muted">
-        Kurikulum Semester 1 — {courses.length} course. Kategori → Course → Module → Lesson.
-      </p>
+      <PageHeader
+        icon="academy"
+        title="Akademi"
+        subtitle={`Kurikulum Semester 1 — ${courses.length} course. Kategori → Course → Module → Lesson.`}
+      />
 
       <div className="filters">
         <input
@@ -94,23 +97,17 @@ export default function AkademiPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="empty">
-          {courses.length === 0
-            ? 'Belum ada course yang tersedia.'
-            : 'Tidak ada course yang cocok dengan pencarian kamu.'}
-        </p>
+        <EmptyState
+          message={
+            courses.length === 0
+              ? 'Belum ada course yang tersedia.'
+              : 'Tidak ada course yang cocok dengan pencarian kamu.'
+          }
+        />
       ) : (
         <ul className="course-list">
           {filtered.map((c) => (
-            <li key={c.id} className="course-card">
-              <Link to={`/course/${c.id}`}>
-                <h3>{c.title}</h3>
-                <p>{c.description}</p>
-                <span className="chip">{c.category ?? 'Lainnya'}</span>{' '}
-                <span className="chip">{c.level ?? 'Semua level'}</span>
-                {c.mentor_id === null && <span className="chip chip-waitlist">Tanpa mentor</span>}
-              </Link>
-            </li>
+            <CourseCard key={c.id} course={c} />
           ))}
         </ul>
       )}

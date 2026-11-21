@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
 import { fetchMyCertificates, fetchPublicProfile, verifyCertificate } from '../lib/supabase'
 import type { Certificate } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 const TYPE_LABEL: Record<Certificate['type'], string> = {
   course: 'Sertifikat Course',
@@ -52,11 +53,17 @@ export function CertificatesPage() {
 
   return (
     <div className="page">
-      <h1>Sertifikat Saya</h1>
-      <p className="muted">
-        Tiga jenis sertifikat SINEVERSE: Course (SVS-CRS), Ujian Kompetensi (SVS-EXM), Karya (SVS-KRY).{' '}
-        <Link to="/sertifikat/verifikasi">Verifikasi sertifikat berdasarkan nomor serial →</Link>
-      </p>
+      <PageHeader
+        icon="certificate"
+        title="Sertifikat Saya"
+        subtitle={
+          <>
+            Tiga jenis sertifikat SINEVERSE: Course (SVS-CRS), Ujian Kompetensi (SVS-EXM), Karya
+            (SVS-KRY).{' '}
+            <Link to="/sertifikat/verifikasi">Verifikasi sertifikat berdasarkan nomor serial →</Link>
+          </>
+        }
+      />
       {certs.length === 0 ? (
         <p className="empty">
           Belum ada sertifikat. Sertifikat course diterbitkan setelah semua lesson selesai dan nilai akhir

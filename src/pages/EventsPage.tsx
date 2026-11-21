@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { EventRegistration, EventSession, SineEvent } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export function EventsPage() {
   const [events, setEvents] = useState<SineEvent[] | null>(null)
@@ -46,9 +48,13 @@ export function EventsPage() {
 
   return (
     <div className="page">
-      <h1>Acara</h1>
+      <PageHeader
+        icon="event"
+        title="Acara"
+        subtitle="Workshop, screening, webinar, dan festival film pelajar."
+      />
       {events.length === 0 ? (
-        <p className="empty">Belum ada acara.</p>
+        <EmptyState message="Belum ada acara." />
       ) : (
         <ul className="course-list">
           {events.map((e) => (

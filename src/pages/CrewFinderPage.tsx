@@ -7,6 +7,7 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { fetchCrewProfiles } from '../lib/supabase'
+import PageHeader from '../components/PageHeader'
 
 type CrewRow = Awaited<ReturnType<typeof fetchCrewProfiles>>[number]
 
@@ -60,11 +61,11 @@ export default function CrewFinderPage() {
 
   return (
     <div className="page">
-      <h1>Crew Finder</h1>
-      <p className="muted">
-        Temukan kru untuk proyek filmmu. Hanya anggota yang membuka diri untuk kru yang tampil di sini,
-        dan hanya info publik yang ditampilkan — alamat email tidak pernah ditampilkan.
-      </p>
+      <PageHeader
+        icon="crew"
+        title="Crew Finder"
+        subtitle="Temukan kru untuk proyek filmmu. Hanya anggota yang membuka diri untuk kru yang tampil di sini, dan hanya info publik yang ditampilkan — alamat email tidak pernah ditampilkan."
+      />
       <div className="filters">
         <input
           className="search-input"

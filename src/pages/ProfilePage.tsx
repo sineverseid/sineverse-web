@@ -5,6 +5,7 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import ProfilePhotoUpload from '../components/ProfilePhotoUpload'
 import { useAuth } from '../context/AuthContext'
+import PageHeader from '../components/PageHeader'
 
 export default function ProfilePage() {
   const { user, profile, changePassword, refreshProfile } = useAuth()
@@ -40,7 +41,7 @@ export default function ProfilePage() {
 
   return (
     <div className="page page-narrow">
-      <h1>Profil Saya</h1>
+      <PageHeader icon="user" title="Profil Saya" />
       {profile?.photo_url ? (
         <img src={profile.photo_url} alt="Foto profil" className="avatar" />
       ) : (

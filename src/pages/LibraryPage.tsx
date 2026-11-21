@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { LibraryItem } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 function isScript(item: LibraryItem): boolean {
   return (item.category ?? '').toLowerCase().includes('naskah')
@@ -75,8 +77,11 @@ export function LibraryPage() {
 
   return (
     <div className="page">
-      <h1>Pustaka</h1>
-      <p className="muted">Naskah, glosarium, template, dan bacaan filmmaking — lengkap dengan dasar hukum dan atribusi.</p>
+      <PageHeader
+        icon="library"
+        title="Pustaka"
+        subtitle="Naskah, glosarium, template, dan bacaan filmmaking — lengkap dengan dasar hukum dan atribusi."
+      />
       {notice && <p className="notice-box">{notice}</p>}
       <div className="chip-row" style={{ marginBottom: '1rem' }}>
         <button type="button" className={`chip chip-button ${category === '' ? 'chip-active' : ''}`} onClick={() => setCategory('')}>Semua</button>
@@ -85,7 +90,7 @@ export function LibraryPage() {
         ))}
       </div>
       {filtered.length === 0 ? (
-        <p className="empty">Belum ada item Pustaka.</p>
+        <EmptyState message="Belum ada item Pustaka." />
       ) : (
         <ul className="course-list">
           {filtered.map((it) => {

@@ -13,6 +13,8 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError, nextSerial } from '../lib/guarded'
 import { fetchEnrollments, fetchProfileNames, supabase } from '../lib/supabase'
 import type { Competition, CompetitionScore, CompetitionSubmission, CompetitionWinner } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export function CompetitionsPage() {
   const [items, setItems] = useState<Competition[] | null>(null)
@@ -50,9 +52,13 @@ export function CompetitionsPage() {
 
   return (
     <div className="page">
-      <h1>Kompetisi</h1>
+      <PageHeader
+        icon="trophy"
+        title="Kompetisi"
+        subtitle="Kompetisi dan festival film pelajar — kirim karyamu dan menangkan sertifikat."
+      />
       {items.length === 0 ? (
-        <p className="empty">Belum ada kompetisi.</p>
+        <EmptyState message="Belum ada kompetisi." />
       ) : (
         <ul className="course-list">
           {items.map((c) => (

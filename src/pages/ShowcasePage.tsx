@@ -10,6 +10,8 @@ import { filmHue } from '../lib/brand'
 import { isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { Film } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function ShowcasePage() {
   const { user } = useAuth()
@@ -82,11 +84,14 @@ export default function ShowcasePage() {
 
   return (
     <div className="page">
-      <h1>Showcase</h1>
-      <p className="muted">Film karya pelajar SMA/SMK dari seluruh Indonesia.</p>
+      <PageHeader
+        icon="showcase"
+        title="Showcase"
+        subtitle="Film karya pelajar SMA/SMK dari seluruh Indonesia."
+      />
       {notice && <p className="notice-box">{notice}</p>}
       {films.length === 0 ? (
-        <p className="empty">Belum ada film yang dipublikasikan.</p>
+        <EmptyState message="Belum ada film yang dipublikasikan." />
       ) : (
         <ul className="course-list">
           {films.map((f) => (

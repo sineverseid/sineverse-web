@@ -10,6 +10,8 @@ import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { Community, CommunityMember } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function CommunitiesPage() {
   const { user } = useAuth()
@@ -95,11 +97,14 @@ export default function CommunitiesPage() {
 
   return (
     <div className="page">
-      <h1>Komunitas</h1>
-      <p className="muted">Bergabung dengan komunitas filmmaker pelajar di seluruh Indonesia.</p>
+      <PageHeader
+        icon="community"
+        title="Komunitas"
+        subtitle="Bergabung dengan komunitas filmmaker pelajar di seluruh Indonesia."
+      />
       {notice && <p className="notice-box">{notice}</p>}
       {items.length === 0 ? (
-        <p className="empty">Belum ada komunitas yang disetujui.</p>
+        <EmptyState message="Belum ada komunitas yang disetujui." />
       ) : (
         <ul className="course-list">
           {items.map((c) => (

@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
+import PageHeader from '../components/PageHeader'
 
 interface ProgressRow {
   userId: string
@@ -289,12 +290,17 @@ export default function AdminPage() {
 
   return (
     <div className="page">
-      <h1>Admin Panel</h1>
-      <p className="muted">
-        <Link to="/admin/moderasi">Moderasi &amp; Audit Log</Link> ·{' '}
-        <Link to="/admin/diskusi-mentor">Diskusi Admin ↔ Mentor</Link> ·{' '}
-        <Link to="/admin/rps">Editor RPS</Link>
-      </p>
+      <PageHeader
+        icon="admin"
+        title="Admin Panel"
+        subtitle={
+          <>
+            <Link to="/admin/moderasi">Moderasi &amp; Audit Log</Link> ·{' '}
+            <Link to="/admin/diskusi-mentor">Diskusi Admin ↔ Mentor</Link> ·{' '}
+            <Link to="/admin/rps">Editor RPS</Link>
+          </>
+        }
+      />
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">

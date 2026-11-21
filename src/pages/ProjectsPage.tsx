@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
 import { supabase } from '../lib/supabase'
 import type { Project, ProjectAccessMode, ProjectTemplate } from '../lib/types'
+import PageHeader from '../components/PageHeader'
+import EmptyState from '../components/EmptyState'
 
 export default function ProjectsPage() {
   const { user } = useAuth()
@@ -94,11 +96,14 @@ export default function ProjectsPage() {
 
   return (
     <div className="page">
-      <h1>Proyek</h1>
-      <p className="muted">Buat film bareng kru dari berbagai sekolah.</p>
+      <PageHeader
+        icon="project"
+        title="Proyek"
+        subtitle="Buat film bareng kru dari berbagai sekolah."
+      />
       {notice && <p className="notice-box">{notice}</p>}
       {projects.length === 0 ? (
-        <p className="empty">Belum ada proyek.</p>
+        <EmptyState message="Belum ada proyek." />
       ) : (
         <ul className="course-list">
           {projects.map((p) => (
