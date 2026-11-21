@@ -43,7 +43,7 @@ export interface RegistrationPayload {
   expertise: string
   experience: string
   portfolioLink: string
-  /** Foto: file yang dititipkan (data URL, maks ~2 MB) atau tautan. */
+  /** Foto: file yang dititipkan (data URL, sudah diperkecil di browser bila besar) atau tautan. */
   photo: { kind: 'file'; dataUrl: string; ext: string } | { kind: 'url'; url: string } | null
 }
 
@@ -148,6 +148,11 @@ async function runCompletion(userId: string, email: string): Promise<CompletionR
   // 2. Lengkapi kolom profil dari payload (menutup celah bila migrasi 010
   //    belum diterapkan sehingga trigger hanya mengisi nama). Nilai yang
   //    sudah terisi trigger tidak diubah kecuali foto.
+  // 3. Jalur mentor: kirim lamaran (hindari ganda bila sudah ada yang
+  //    pending/disetujui). Peran tetap 'siswa' sampai admin menyetujui.
+  // Langkah 2 dan 3 menyentuh tabel berbeda dan independen — dijalankan
+  // paralel; error profil tetap diutamakan (di-await dulu) supaya pesan
+  // yang muncul sama seperti sebelumnya.
   const patch: Record<string, unknown> = {}
   if (photoUrl) patch['photo_url'] = photoUrl
   const textFields: [string, string][] = [
@@ -163,33 +168,36 @@ async function runCompletion(userId: string, email: string): Promise<CompletionR
     if (val) patch[col] = val
   }
   if (payload.interests.length > 0) patch['interests'] = payload.interests
-  if (Object.keys(patch).length > 0) {
-    const { error } = await supabase.from('profiles').update(patch).eq('id', userId)
-    if (error) throw new Error(`Data profil belum tersimpan: ${error.message}`)
-    result.profileCompleted = true
-  }
-
-  // 3. Jalur mentor: kirim lamaran (hindari ganda bila sudah ada yang
-  //    pending/disetujui). Peran tetap 'siswa' sampai admin menyetujui.
-  if (payload.role === 'mentor') {
-    const { data: existing } = await supabase
-      .from('mentor_applications')
-      .select('id')
-      .eq('user_id', userId)
-      .in('status', ['pending', 'approved'])
-      .maybeSingle()
-    if (!existing) {
-      const { error } = await supabase.from('mentor_applications').insert({
-        user_id: userId,
-        expertise: payload.expertise || null,
-        experience: payload.experience || null,
-        portfolio_link: payload.portfolioLink || null,
-        status: 'pending',
-      })
-      if (error) throw new Error(`Lamaran mentor belum terkirim: ${error.message}`)
+  const profileJob = (async () => {
+    if (Object.keys(patch).length > 0) {
+      const { error } = await supabase.from('profiles').update(patch).eq('id', userId)
+      if (error) throw new Error(`Data profil belum tersimpan: ${error.message}`)
+      result.profileCompleted = true
     }
-    result.mentorApplied = true
-  }
+  })()
+  const mentorJob = (async () => {
+    if (payload.role === 'mentor') {
+      const { data: existing } = await supabase
+        .from('mentor_applications')
+        .select('id')
+        .eq('user_id', userId)
+        .in('status', ['pending', 'approved'])
+        .maybeSingle()
+      if (!existing) {
+        const { error } = await supabase.from('mentor_applications').insert({
+          user_id: userId,
+          expertise: payload.expertise || null,
+          experience: payload.experience || null,
+          portfolio_link: payload.portfolioLink || null,
+          status: 'pending',
+        })
+        if (error) throw new Error(`Lamaran mentor belum terkirim: ${error.message}`)
+      }
+      result.mentorApplied = true
+    }
+  })()
+  await profileJob
+  await mentorJob
 
   clearPendingRegistration(email)
   return result

@@ -167,13 +167,25 @@ export async function fetchLesson(id: string): Promise<Lesson | null> {
 }
 
 // All lessons of a course, in module/lesson order — used for prev/next nav.
+// Satu query untuk semua lesson (bukan satu query per modul), lalu diurutkan
+// di JS berdasarkan (urutan modul, urutan lesson) supaya urutannya sama
+// seperti sebelumya.
 export async function fetchCourseLessons(courseId: string): Promise<Lesson[]> {
   const modules = await fetchModules(courseId)
-  const lessons: Lesson[] = []
-  for (const m of modules) {
-    lessons.push(...(await fetchLessons(m.id)))
-  }
-  return lessons
+  if (modules.length === 0) return []
+  const orderByModule = new Map(modules.map((m) => [m.id, m.order_index]))
+  const { data, error } = await supabase
+    .from('lessons')
+    .select('*')
+    .in('module_id', modules.map((m) => m.id))
+  if (error) throw error
+  const lessons = (data ?? []) as Lesson[]
+  return lessons.sort((a, b) => {
+    const ma = orderByModule.get(a.module_id) ?? 0
+    const mb = orderByModule.get(b.module_id) ?? 0
+    if (ma !== mb) return ma - mb
+    return (a.order_index ?? 0) - (b.order_index ?? 0)
+  })
 }
 
 // ---------------------------------------------------------------------------
