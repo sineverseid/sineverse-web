@@ -16,6 +16,7 @@ export interface WorkspaceNavEntry {
 export const MENTOR_NAV: WorkspaceNavEntry[] = [
   { to: '/mentor', label: 'Overview', icon: 'mentor', end: true },
   { to: '/mentor/course-builder', label: 'Course Builder', icon: 'academy' },
+  { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/mentor/materi', label: 'Materi', icon: 'book' },
   { to: '/mentor/video', label: 'Video', icon: 'film' },
   { to: '/mentor/kuis', label: 'Kuis', icon: 'exam' },
@@ -38,6 +39,8 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin/tugas', label: 'Monitoring Tugas', icon: 'fileText' },
   { to: '/admin/kuis', label: 'Kelola Kuis', icon: 'exam' },
   { to: '/admin/sertifikat', label: 'Sertifikat', icon: 'certificate' },
+  { to: '/admin/sertifikat/terbitkan', label: 'Terbitkan Sertifikat', icon: 'certificate' },
+  { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/admin/materi', label: 'Materi', icon: 'book' },
   { to: '/admin/analitik', label: 'Analytics', icon: 'chart' },
   { to: '/admin/pengaturan', label: 'Pengaturan', icon: 'settings' },

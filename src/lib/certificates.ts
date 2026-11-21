@@ -1,0 +1,234 @@
+// SINEVERSE — Sertifikat course (Tahap 5).
+// Rumah bersama untuk kelayakan + penerbitan sertifikat course (SVS-CRS).
+// Kelayakan dihitung dari data mentah dengan formula 5 komponen yang sama
+// dengan GradebookPage / lib/grading.ts — skor tidak pernah dikarang.
+// Penerbitan sendiri dilakukan SERVER-SIDE oleh RPC
+// issue_course_certificate() (migrasi 016): RPC yang memeriksa pemanggil
+// (admin atau mentor course), menghitung ulang nilai akhir, dan hanya
+// menerbitkan bila siswa lulus. Catatan: AdminCertificatesPage (Tahap 4,
+// frozen) masih membawa salinan sendiri dari perhitungan ini — setelah
+// deploy, halaman itu bisa disederhanakan memakai helper di sini.
+import {
+  avgOrNull,
+  bestScoresByQuiz,
+  buildGradeComponents,
+  discussionParticipationScore,
+} from './grading'
+import { supabase } from './supabase'
+import type {
+  Assignment,
+  Certificate,
+  Discussion,
+  Enrollment,
+  GradeComponents,
+  Lesson,
+  Module,
+  Quiz,
+  QuizAttempt,
+  Submission,
+} from './types'
+
+export const DEFAULT_CERT_WEIGHTS = { pretest: 5, posttest: 15, tugasMingguan: 30, tugasAkhir: 40, diskusi: 10 }
+export const DEFAULT_CERT_PASSING = 70
+
+export interface CertWeights {
+  pretest: number
+  posttest: number
+  tugasMingguan: number
+  tugasAkhir: number
+  diskusi: number
+}
+
+export interface EligibilityRow {
+  userId: string
+  components: GradeComponents
+  missing: string[]
+}
+
+/** Lima komponen nilai satu course untuk satu siswa, dari data mentah. */
+export function computeGradeComponents(
+  quizzes: Quiz[],
+  assignments: Assignment[],
+  attempts: QuizAttempt[],
+  submissions: Submission[],
+  userPosts: Discussion[],
+  weights: CertWeights,
+  passingGrade: number,
+): GradeComponents {
+  const best = bestScoresByQuiz(attempts)
+  const pretestIds = new Set(quizzes.filter((q) => q.kind === 'pretest').map((q) => q.id))
+  const posttestIds = new Set(quizzes.filter((q) => q.kind === 'posttest').map((q) => q.id))
+  const pretest = avgOrNull([...best.entries()].filter(([id]) => pretestIds.has(id)).map(([, s]) => s))
+  const posttest = avgOrNull([...best.entries()].filter(([id]) => posttestIds.has(id)).map(([, s]) => s))
+  const weeklyIds = new Set(assignments.filter((a) => (a.kind ?? 'weekly') === 'weekly').map((a) => a.id))
+  const finalIds = new Set(assignments.filter((a) => a.kind === 'final_practice').map((a) => a.id))
+  const weeklyAssignments = avgOrNull(
+    submissions.filter((s) => weeklyIds.has(s.assignment_id) && s.score !== null).map((s) => s.score as number),
+  )
+  const finalPractice = avgOrNull(
+    submissions.filter((s) => finalIds.has(s.assignment_id) && s.score !== null).map((s) => s.score as number),
+  )
+  const discussion = discussionParticipationScore(userPosts)
+  return buildGradeComponents(
+    { pretest, posttest, weeklyAssignments, finalPractice, discussion },
+    weights,
+    passingGrade,
+  )
+}
+
+export function missingComponents(c: GradeComponents): string[] {
+  const missing: string[] = []
+  if (c.pretest === null) missing.push('Pretest')
+  if (c.posttest === null) missing.push('Posttest')
+  if (c.weeklyAssignments === null) missing.push('Tugas mingguan')
+  if (c.finalPractice === null) missing.push('Tugas praktik akhir')
+  if (c.discussion === null) missing.push('Diskusi')
+  return missing
+}
+
+export interface EligibilityResult {
+  rows: EligibilityRow[]
+  weights: CertWeights
+  passingGrade: number
+  weightsNote: string
+}
+
+/** Kelayakan sertifikat course untuk semua siswa terdaftar di satu course
+ *  yang belum punya sertifikat type 'course' di course itu. */
+export async function fetchCourseEligibility(courseId: string): Promise<EligibilityResult> {
+  let weights: CertWeights = DEFAULT_CERT_WEIGHTS
+  let passingGrade = DEFAULT_CERT_PASSING
+  let weightsNote = 'fallback (baris RPS SVS-SEM1 tidak ditemukan)'
+  const { data: rpsData } = await supabase
+    .from('rps')
+    .select('weights,passing_grade')
+    .eq('code', 'SVS-SEM1')
+    .maybeSingle()
+  const rpsRow = rpsData as unknown as {
+    weights?: { pretest: number; posttest: number; tugas_mingguan: number; tugas_akhir: number; diskusi: number }
+    passing_grade?: number
+  } | null
+  if (rpsRow?.weights) {
+    // Fallback per kunci (bukan hanya per baris): bila satu kunci hilang
+    // dari JSONB, bobot itu memakai default master prompt — tanpa ini
+    // bobot undefined akan membuat nilai akhir NaN.
+    weights = {
+      pretest: rpsRow.weights.pretest ?? DEFAULT_CERT_WEIGHTS.pretest,
+      posttest: rpsRow.weights.posttest ?? DEFAULT_CERT_WEIGHTS.posttest,
+      tugasMingguan: rpsRow.weights.tugas_mingguan ?? DEFAULT_CERT_WEIGHTS.tugasMingguan,
+      tugasAkhir: rpsRow.weights.tugas_akhir ?? DEFAULT_CERT_WEIGHTS.tugasAkhir,
+      diskusi: rpsRow.weights.diskusi ?? DEFAULT_CERT_WEIGHTS.diskusi,
+    }
+    passingGrade = rpsRow.passing_grade ?? DEFAULT_CERT_PASSING
+    weightsNote = `RPS SVS-SEM1 (Pretest ${weights.pretest}% · Posttest ${weights.posttest}% · Tugas mingguan ${weights.tugasMingguan}% · Tugas praktik akhir ${weights.tugasAkhir}% · Diskusi ${weights.diskusi}% · Lulus ${passingGrade})`
+  }
+
+  const { data: enrData } = await supabase.from('enrollments').select('*').eq('course_id', courseId)
+  const enrRows = (enrData ?? []) as Enrollment[]
+  const { data: certData } = await supabase
+    .from('certificates')
+    .select('user_id')
+    .eq('course_id', courseId)
+    .eq('type', 'course')
+  const certified = new Set(((certData ?? []) as { user_id: string }[]).map((c) => c.user_id))
+  const pending = enrRows.filter((e) => !certified.has(e.user_id))
+  if (pending.length === 0) return { rows: [], weights, passingGrade, weightsNote }
+
+  const { data: mods } = await supabase.from('modules').select('id').eq('course_id', courseId)
+  const modRows = (mods ?? []) as Module[]
+  let lessonRows: Lesson[] = []
+  if (modRows.length > 0) {
+    const { data: lessons } = await supabase
+      .from('lessons')
+      .select('id')
+      .in('module_id', modRows.map((m) => m.id))
+    lessonRows = (lessons ?? []) as Lesson[]
+  }
+  const lessonIds = lessonRows.map((l) => l.id)
+  const empty = '00000000-0000-0000-0000-000000000000'
+  const [quizzes, assignments, discussions] = await Promise.all([
+    (async () => {
+      if (lessonIds.length === 0) return [] as Quiz[]
+      const { data } = await supabase.from('quizzes').select('*').in('lesson_id', lessonIds)
+      return (data ?? []) as Quiz[]
+    })(),
+    (async () => {
+      if (lessonIds.length === 0) return [] as Assignment[]
+      const { data } = await supabase.from('assignments').select('*').in('lesson_id', lessonIds)
+      return (data ?? []) as Assignment[]
+    })(),
+    (async () => {
+      const { data } = await supabase
+        .from('discussions')
+        .select('id,lesson_id,user_id')
+        .in('lesson_id', lessonIds.length > 0 ? lessonIds : [empty])
+      return (data ?? []) as Discussion[]
+    })(),
+  ])
+  const quizIds = quizzes.map((q) => q.id)
+  const assignmentIds = assignments.map((a) => a.id)
+  const [attempts, submissions] = await Promise.all([
+    (async () => {
+      const { data } = await supabase
+        .from('quiz_attempts')
+        .select('id,quiz_id,user_id,score')
+        .in('quiz_id', quizIds.length > 0 ? quizIds : [empty])
+      return (data ?? []) as QuizAttempt[]
+    })(),
+    (async () => {
+      const { data } = await supabase
+        .from('submissions')
+        .select('id,assignment_id,user_id,score')
+        .in('assignment_id', assignmentIds.length > 0 ? assignmentIds : [empty])
+      return (data ?? []) as Submission[]
+    })(),
+  ])
+
+  const rows: EligibilityRow[] = pending.map((enr) => {
+    const components = computeGradeComponents(
+      quizzes,
+      assignments,
+      attempts.filter((a) => a.user_id === enr.user_id),
+      submissions.filter((s) => s.user_id === enr.user_id),
+      discussions.filter((d) => d.user_id === enr.user_id),
+      weights,
+      passingGrade,
+    )
+    return { userId: enr.user_id, components, missing: missingComponents(components) }
+  })
+  rows.sort((a, b) => b.components.final - a.components.final)
+  return { rows, weights, passingGrade, weightsNote }
+}
+
+/** Terbitkan sertifikat course via RPC (migrasi 016). RPC menghitung ulang
+ *  nilai akhir di server dan menolak bila siswa belum lulus. Bila sertifikat
+ *  sudah ada, RPC mengembalikan serial yang sudah ada (alreadyIssued). */
+export async function issueCourseCertificate(
+  courseId: string,
+  userId: string,
+): Promise<{ serial: string; score: number; alreadyIssued: boolean }> {
+  const { data, error } = await supabase.rpc('issue_course_certificate', {
+    p_course_id: courseId,
+    p_user_id: userId,
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    serial: string
+    score: number
+    already_issued: boolean
+  } | null
+  if (!row) throw new Error('RPC issue_course_certificate tidak mengembalikan data.')
+  return { serial: row.serial, score: row.score, alreadyIssued: row.already_issued }
+}
+
+/** Sertifikat course yang sudah terbit untuk satu course (terbaru dulu). */
+export async function fetchIssuedCourseCertificates(courseId: string): Promise<Certificate[]> {
+  const { data, error } = await supabase
+    .from('certificates')
+    .select('*')
+    .eq('course_id', courseId)
+    .eq('type', 'course')
+    .order('issued_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as Certificate[]
+}
