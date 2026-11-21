@@ -37,12 +37,15 @@ export function ExamsPage() {
     let cancelled = false
     async function load() {
       try {
-        const list = await fetchCompetencyExams()
+        // Daftar ujian dan percobaan saya independen — dimuat paralel.
+        const [list, atts] = await Promise.all([
+          fetchCompetencyExams(),
+          user ? fetchExamAttempts(user.id) : Promise.resolve([] as ExamAttempt[]),
+        ])
         if (cancelled) return
         setExams(list)
         if (user) {
-          const atts = await fetchExamAttempts(user.id)
-          if (!cancelled) setAttempts(atts)
+          setAttempts(atts)
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat ujian.')
@@ -114,19 +117,29 @@ export function ExamPage() {
     let cancelled = false
     async function load() {
       try {
-        const list = await fetchCompetencyExams()
+        // Daftar ujian, soal (RPC), dan percobaan saya independen — ketiganya
+        // hanya butuh examId/user — dimulai paralel. Hasil soal/percobaan
+        // baru dipakai setelah daftar ujian dipastikan ada, supaya bila
+        // tabel ujian belum ada, halaman tetap menampilkan MigrationNotice
+        // (bukan error RPC/percobaan) seperti sebelumnya.
+        const listP = fetchCompetencyExams()
+        const rpcP = supabase.rpc('get_exam_questions', { p_exam_id: examId })
+        const attP = fetchExamAttempts(currentUser.id)
+        const list = await listP
         if (cancelled) return
         if (list === null) {
+          // Abaikan hasil soal/percobaan yang sudah terlanjur berjalan.
+          await Promise.allSettled([rpcP, attP])
           setExam(null)
           return
         }
         setExam(list.find((e) => e.id === examId) ?? null)
-        const { data, error: rpcErr } = await supabase.rpc('get_exam_questions', { p_exam_id: examId })
+        const { data, error: rpcErr } = await rpcP
         if (rpcErr) {
           if (isMissingTableError(rpcErr) || String(rpcErr.code) === 'PGRST202') setMissingQuestions(true)
           else throw rpcErr
         } else if (!cancelled) setQuestions((data ?? []) as ExamQuestion[])
-        const atts = await fetchExamAttempts(currentUser.id)
+        const atts = await attP
         if (!cancelled) setAttempts(atts.filter((a) => a.exam_id === examId))
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat ujian.')

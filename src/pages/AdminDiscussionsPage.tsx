@@ -31,6 +31,9 @@ export default function AdminDiscussionsPage() {
 
   async function load() {
     try {
+      // Daftar mentor independen dari thread/balasan — dimulai paralel
+      // dengan query thread, baru dipakai setelah balasan termuat.
+      const mentorsP = supabase.from('profiles').select('id,name,role').eq('role', 'mentor')
       let query = supabase.from('admin_discussions').select('*').order('created_at', { ascending: false })
       if (isMentor && user) {
         // Mentor hanya melihat thread yang ditujukan kepadanya atau broadcast.
@@ -48,7 +51,7 @@ export default function AdminDiscussionsPage() {
         const { data: rData } = await supabase.from('admin_discussion_replies').select('*').in('thread_id', rows.map((t) => t.id)).order('created_at', { ascending: true })
         const rRows = (rData ?? []) as AdminDiscussionReply[]
         setReplies(rRows)
-        const { data: profs } = await supabase.from('profiles').select('id,name,role').eq('role', 'mentor')
+        const { data: profs } = await mentorsP
         setMentors(((profs ?? []) as { id: string; name: string | null }[]).map((p) => ({ id: p.id, name: p.name })))
         setNames(await fetchProfileNames([
           ...rows.map((t) => t.admin_id),

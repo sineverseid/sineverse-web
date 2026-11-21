@@ -28,7 +28,10 @@ import {
 } from '../lib/registration'
 import type { CompletionResult, RegistrationPayload } from '../lib/registration'
 
-const MAX_PHOTO_BYTES = 2 * 1024 * 1024 // 2 MB — muat dititipkan di localStorage
+// Foto pendaftaran TIDAK ada batas ukuran file (Arif, 21 Nov 2026): foto
+// besar diperkecil di browser sebelum dititipkan, supaya data URL-nya tetap
+// muat di localStorage (kuota ~5 MB) tanpa menolak foto pengguna.
+const PHOTO_MAX_SIDE = 1024
 
 // Batas tanggal lahir (hari ini) — konstanta modul, bukan hasil render.
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -48,6 +51,28 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Tidak dapat membaca file foto.'))
     reader.readAsDataURL(file)
   })
+}
+
+// Perkecil foto di browser (canvas) bila sisinya melebihi batas, lalu
+// kembalikan data URL JPEG. Foto kecil dikembalikan apa adanya.
+async function photoToDataUrl(file: File): Promise<string> {
+  const dataUrl = await readFileAsDataUrl(file)
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image()
+    el.onload = () => resolve(el)
+    el.onerror = () => reject(new Error('Tidak dapat membaca file foto.'))
+    el.src = dataUrl
+  })
+  const longest = Math.max(img.naturalWidth, img.naturalHeight)
+  if (longest <= PHOTO_MAX_SIDE) return dataUrl
+  const scale = PHOTO_MAX_SIDE / longest
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(img.naturalWidth * scale)
+  canvas.height = Math.round(img.naturalHeight * scale)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return dataUrl
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.85)
 }
 
 export default function RegisterPage() {
@@ -114,15 +139,10 @@ export default function RegisterPage() {
       setError('Pilih file gambar (JPG/PNG/WebP).')
       return
     }
-    if (file.size > MAX_PHOTO_BYTES) {
-      setError(
-        'Ukuran foto maksimal 2 MB untuk pendaftaran. Pilih foto yang lebih kecil, atau tempel tautan foto di kolom bawah.',
-      )
-      return
-    }
+    // Tidak ada batas ukuran: foto besar diperkecil otomatis di browser.
     setError(null)
     try {
-      const dataUrl = await readFileAsDataUrl(file)
+      const dataUrl = await photoToDataUrl(file)
       setPhotoFile({ dataUrl, ext: extFromFile(file) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Tidak dapat membaca file foto.')
@@ -437,7 +457,7 @@ export default function RegisterPage() {
               )}
             </span>
             <span className="muted" style={{ fontWeight: 400 }}>
-              JPG/PNG/WebP, maksimal 2 MB. Atau tempel tautan foto di bawah ini.
+              JPG/PNG/WebP, tanpa batas ukuran (foto besar diperkecil otomatis). Atau tempel tautan foto di bawah ini.
             </span>
             <input
               type="url"

@@ -98,7 +98,7 @@ const EXPLORE_MENUS: {
 }[] = [
   {
     id: 'academy',
-    icon: 'book',
+    icon: 'academy',
     name: 'Academy',
     short: 'Belajar filmmaking',
     to: '/akademi',
@@ -524,6 +524,8 @@ export default function HomePage() {
                             color: '#7a5b00',
                             fontSize: '0.75rem',
                             fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            alignSelf: 'flex-start',
                           }}
                         >
                           Butuh masuk
@@ -960,40 +962,70 @@ function MentorHome(props: {
   async function load() {
     try {
       const mine = courses.filter((c) => c.mentor_id === userId)
-      // Per course: jumlah siswa + submission menunggu dinilai; kumpulkan
-      // juga peta assignment → course untuk antrean dan riwayat nilai.
-      const out: MentorCourseRow[] = []
+      // Semua course mentor dimuat paralel (bukan satu per satu): enrollment,
+      // lesson, assignment, dan submission menunggu dinilai diambil dalam
+      // query batch, lalu dihitung per course di JS.
+      const courseIds = mine.map((c) => c.id)
+      const [enrAll, lessonsPerCourse] = await Promise.all([
+        courseIds.length
+          ? supabase.from('enrollments').select('course_id').in('course_id', courseIds)
+          : Promise.resolve({ data: [] as { course_id: string }[] }),
+        Promise.all(
+          mine.map(async (course) => ({
+            courseId: course.id,
+            lessons: await fetchCourseLessons(course.id).catch(() => [] as Lesson[]),
+          })),
+        ),
+      ])
+      const studentsByCourse = new Map<string, number>()
+      for (const e of (enrAll.data ?? []) as { course_id: string }[]) {
+        studentsByCourse.set(e.course_id, (studentsByCourse.get(e.course_id) ?? 0) + 1)
+      }
+      const lessonIds = lessonsPerCourse.flatMap((x) => x.lessons.map((l) => l.id))
+      const courseByLesson = new Map<string, string>()
+      for (const x of lessonsPerCourse) {
+        for (const l of x.lessons) courseByLesson.set(l.id, x.courseId)
+      }
       const assignmentCourse = new Map<string, { assignment: Assignment; course: Course }>()
-      for (const course of mine) {
-        const [enrRes, lessons] = await Promise.all([
-          supabase.from('enrollments').select('id').eq('course_id', course.id),
-          fetchCourseLessons(course.id).catch(() => [] as Lesson[]),
-        ])
-        const lessonIds = lessons.map((l) => l.id)
-        let pending = 0
-        if (lessonIds.length > 0) {
-          const assigns = await safe(
-            async () => {
-              const { data } = await supabase
-                .from('assignments')
-                .select('*')
-                .in('lesson_id', lessonIds)
-              return (data ?? []) as Assignment[]
-            },
-            [] as Assignment[],
-          )
-          for (const a of assigns) assignmentCourse.set(a.id, { assignment: a, course })
-          if (assigns.length > 0) {
-            const { count } = await supabase
-              .from('submissions')
-              .select('id', { count: 'exact', head: true })
-              .in('assignment_id', assigns.map((a) => a.id))
-              .is('score', null)
-            pending = count ?? 0
+      const courseById = new Map(mine.map((c) => [c.id, c]))
+      let pendingByCourse = new Map<string, number>()
+      if (lessonIds.length > 0) {
+        const assigns = await safe(
+          async () => {
+            const { data } = await supabase
+              .from('assignments')
+              .select('*')
+              .in('lesson_id', lessonIds)
+            return (data ?? []) as Assignment[]
+          },
+          [] as Assignment[],
+        )
+        for (const a of assigns) {
+          const course = courseById.get(courseByLesson.get(a.lesson_id) ?? '')
+          if (course) assignmentCourse.set(a.id, { assignment: a, course })
+        }
+        if (assigns.length > 0) {
+          const { data: pendSubs } = await supabase
+            .from('submissions')
+            .select('assignment_id')
+            .in('assignment_id', assigns.map((a) => a.id))
+            .is('score', null)
+          pendingByCourse = new Map<string, number>()
+          for (const s of (pendSubs ?? []) as { assignment_id: string }[]) {
+            const courseId = courseByLesson.get(
+              assignmentCourse.get(s.assignment_id)?.assignment.lesson_id ?? '',
+            )
+            if (courseId) {
+              pendingByCourse.set(courseId, (pendingByCourse.get(courseId) ?? 0) + 1)
+            }
           }
         }
-        out.push({ course, students: (enrRes.data ?? []).length, pending })
       }
+      const out: MentorCourseRow[] = mine.map((course) => ({
+        course,
+        students: studentsByCourse.get(course.id) ?? 0,
+        pending: pendingByCourse.get(course.id) ?? 0,
+      }))
       setRows(out)
       setUnassigned(courses.filter((c) => !c.mentor_id))
 

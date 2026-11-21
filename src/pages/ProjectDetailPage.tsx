@@ -195,10 +195,16 @@ export default function ProjectDetailPage() {
         if (cancelled) return
         setProject(data as Project | null)
         if (data) {
-          await loadAll(projectId)
+          // loadAll (7 query anggota/tugas/dll) dan judul template
+          // independen — keduanya hanya butuh projectId/template dari
+          // baris proyek — dijalankan paralel, bukan berurutan.
           const proj = data as Project
-          if (proj.template) {
-            const { data: tData } = await supabase.from('project_templates').select('title').eq('slug', proj.template).maybeSingle()
+          const templateP = proj.template
+            ? supabase.from('project_templates').select('title').eq('slug', proj.template).maybeSingle()
+            : null
+          await loadAll(projectId)
+          if (templateP) {
+            const { data: tData } = await templateP
             if (!cancelled) setTemplateTitle((tData as { title: string } | null)?.title ?? '—')
           }
         }

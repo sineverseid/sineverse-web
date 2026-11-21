@@ -53,7 +53,13 @@ export function LibraryPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data, error: qErr } = await supabase.from('library_items').select('*').order('title')
+        // Daftar item dan bookmark independen — dimuat paralel.
+        const [{ data, error: qErr }, { data: bm }] = await Promise.all([
+          supabase.from('library_items').select('*').order('title'),
+          user
+            ? supabase.from('library_bookmarks').select('library_item_id').eq('user_id', user.id)
+            : Promise.resolve({ data: null } as { data: null }),
+        ])
         if (qErr) {
           if (isMissingTableError(qErr)) {
             if (!cancelled) setItems(null)
@@ -64,7 +70,6 @@ export function LibraryPage() {
         if (cancelled) return
         setItems((data ?? []) as LibraryItem[])
         if (user) {
-          const { data: bm } = await supabase.from('library_bookmarks').select('library_item_id').eq('user_id', user.id)
           if (!cancelled) setBookmarks(new Set(((bm ?? []) as { library_item_id: string }[]).map((b) => b.library_item_id)))
         }
       } catch (err) {
@@ -174,7 +179,13 @@ export function LibraryDetailPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data, error: qErr } = await supabase.from('library_items').select('*').eq('id', itemId).maybeSingle()
+        // Item dan status bookmark independen — dimuat paralel.
+        const [{ data, error: qErr }, { data: bm }] = await Promise.all([
+          supabase.from('library_items').select('*').eq('id', itemId).maybeSingle(),
+          user
+            ? supabase.from('library_bookmarks').select('id').eq('library_item_id', itemId).eq('user_id', user.id).maybeSingle()
+            : Promise.resolve({ data: null } as { data: null }),
+        ])
         if (qErr) {
           if (isMissingTableError(qErr)) {
             setMissing(true)
@@ -192,7 +203,6 @@ export function LibraryDetailPage() {
           setEditLimits(data.usage_limits ?? '')
         }
         if (user) {
-          const { data: bm } = await supabase.from('library_bookmarks').select('id').eq('library_item_id', itemId).eq('user_id', user.id).maybeSingle()
           if (!cancelled) setBookmarked(bm !== null)
         }
       } catch (err) {

@@ -35,15 +35,22 @@ export default function AssignmentPage() {
     let cancelled = false
     async function load() {
       try {
+        // Tugas dan daftar submission saya independen (keduanya hanya
+        // butuh id) — dimulai paralel; submission baru dipakai setelah
+        // tugas dipastikan termuat.
+        const subsP = fetchSubmissions(currentUser.id)
         const { data, error: aErr } = await supabase
           .from('assignments')
           .select('*')
           .eq('id', assignmentId)
           .maybeSingle()
-        if (aErr) throw aErr
+        if (aErr) {
+          subsP.catch(() => [])
+          throw aErr
+        }
         if (cancelled) return
         setAssignment(data as AssignmentRow | null)
-        const all = await fetchSubmissions(currentUser.id)
+        const all = await subsP
         if (cancelled) return
         setSubs(
           (all as SubmissionRow[])

@@ -31,18 +31,24 @@ export default function QuizPage() {
     let cancelled = false
     async function load() {
       try {
+        // Kuis, soal, dan percobaan independen (hanya butuh quizId/user)
+        // — dimulai paralel; soal/percobaan baru dipakai setelah baris
+        // kuis dipastikan termuat.
+        const qsP = fetchQuizQuestions(quizId)
+        const attsP = fetchQuizAttempts(currentUser.id)
         const { data: q, error: qErr } = await supabase
           .from('quizzes')
           .select('*')
           .eq('id', quizId)
           .maybeSingle()
-        if (qErr) throw qErr
+        if (qErr) {
+          qsP.catch(() => null)
+          attsP.catch(() => [])
+          throw qErr
+        }
         if (cancelled) return
         setQuiz(q as Quiz | null)
-        const [qs, atts] = await Promise.all([
-          fetchQuizQuestions(quizId),
-          fetchQuizAttempts(currentUser.id),
-        ])
+        const [qs, atts] = await Promise.all([qsP, attsP])
         if (cancelled) return
         if (qs === null) setMissing(true)
         else setQuestions(qs)

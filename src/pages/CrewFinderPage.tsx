@@ -59,17 +59,22 @@ export default function CrewFinderPage() {
     let cancelled = false
     async function load() {
       try {
-        const data = await fetchCrewProfiles()
+        // Profil kru, peran, dan proyek saya independen — dimuat paralel.
+        const [data, roleData, projData] = await Promise.all([
+          fetchCrewProfiles(),
+          supabase.from('profiles').select('id,role').eq('is_open_to_crew', true).then((r) => r.data),
+          user
+            ? supabase.from('projects').select('id,title').eq('owner_id', user.id).order('created_at', { ascending: false }).then((r) => r.data)
+            : Promise.resolve(null),
+        ])
         if (!cancelled) setRows(data)
         // Peran tidak ikut di fetchCrewProfiles, jadi ambil langsung dari profiles.
-        const { data: roleData } = await supabase.from('profiles').select('id,role').eq('is_open_to_crew', true)
         if (!cancelled && roleData) {
           const map = new Map<string, string>()
           for (const r of roleData as { id: string; role: string }[]) map.set(r.id, r.role)
           setRoles(map)
         }
         if (user) {
-          const { data: projData } = await supabase.from('projects').select('id,title').eq('owner_id', user.id).order('created_at', { ascending: false })
           if (!cancelled && projData) {
             const list = projData as { id: string; title: string }[]
             setMyProjects(list)

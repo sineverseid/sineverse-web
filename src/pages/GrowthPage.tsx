@@ -61,13 +61,20 @@ export default function GrowthPage() {
     let cancelled = false
     async function load() {
       try {
-        const [courseList, projectRes, schoolRes] = await Promise.all([
+        // Semua sumber independen (course, proyek, sekolah, enrollment
+        // saya, keanggotaan proyek saya) — satu Promise.all, bukan dua
+        // tahap berurutan.
+        const [courseList, projectRes, schoolRes, enr, mem] = await Promise.all([
           fetchCourses().catch(() => {
             setCoursesError(true)
             return [] as Course[]
           }),
           supabase.from('projects').select('*').order('created_at', { ascending: false }),
           supabase.from('schools').select('*').order('name'),
+          user ? fetchEnrollments(user.id) : Promise.resolve([]),
+          user
+            ? supabase.from('project_members').select('project_id').eq('user_id', user.id)
+            : Promise.resolve({ data: [] } as { data: [] }),
         ])
         if (cancelled) return
         if (projectRes.error || schoolRes.error) setCollabError(true)
@@ -75,11 +82,6 @@ export default function GrowthPage() {
         setProjects(((projectRes.data ?? []) as Project[]))
         setSchools(((schoolRes.data ?? []) as School[]))
         if (user) {
-          const [enr, mem] = await Promise.all([
-            fetchEnrollments(user.id),
-            supabase.from('project_members').select('project_id').eq('user_id', user.id),
-          ])
-          if (cancelled) return
           setEnrolledIds(new Set(enr.map((e) => e.course_id)))
           setMyProjectIds(new Set(((mem.data ?? []) as { project_id: string }[]).map((m) => m.project_id)))
         }

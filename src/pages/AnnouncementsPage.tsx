@@ -20,6 +20,10 @@ export default function AnnouncementsPage() {
     let cancelled = false
     async function load() {
       try {
+        // Pengumuman dan enrollment saya independen — dimulai paralel.
+        // Bila tabel announcements belum ada, enrollment yang terlanjur
+        // berjalan ditelan saja supaya tetap tampil MigrationNotice.
+        const enrP = user ? fetchEnrollments(user.id) : Promise.resolve([])
         const { data, error: qErr } = await supabase
           .from('announcements')
           .select('*')
@@ -27,14 +31,17 @@ export default function AnnouncementsPage() {
           .limit(50)
         if (qErr) {
           if (isMissingTableError(qErr)) {
+            await enrP.catch(() => [])
             if (!cancelled) setItems(null)
             return
           }
+          // Enrollment yang terlanjur berjalan tidak boleh jadi unhandled rejection.
+          enrP.catch(() => [])
           throw qErr
         }
         let rows = (data ?? []) as Announcement[]
         if (user) {
-          const enr = await fetchEnrollments(user.id)
+          const enr = await enrP
           const mine = new Set(enr.map((e) => e.course_id))
           rows = rows.filter((a) => a.scope === 'platform' || (a.course_id && mine.has(a.course_id)))
         } else {
