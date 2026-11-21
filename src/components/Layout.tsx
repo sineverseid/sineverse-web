@@ -49,49 +49,49 @@ export default function Layout() {
           <img src="./pwa-192x192.png" alt="Logo SINEVERSE" className="brand-logo" />
           <span className="brand-name">SINEVERSE</span>
         </Link>
-        <button
-          type="button"
-          className="menu-toggle"
-          aria-label={menuOpen ? 'Tutup menu' : 'Buka menu'}
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          {menuOpen ? '✕' : '☰'}
-        </button>
-        <nav className={menuOpen ? 'topnav open' : 'topnav'} aria-label="Navigasi utama">
-          <NavLink to="/" end>
-            Beranda
+        {user ? (
+          <>
+            <button
+              type="button"
+              className="menu-toggle"
+              aria-label={menuOpen ? 'Tutup menu' : 'Buka menu'}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {menuOpen ? '✕' : '☰'}
+            </button>
+            <nav className={menuOpen ? 'topnav open' : 'topnav'} aria-label="Navigasi utama">
+              <NavLink to="/" end>
+                Beranda
+              </NavLink>
+              <NavLink to="/akademi">Akademi</NavLink>
+              <NavLink to="/rps">RPS</NavLink>
+              <NavLink to="/komunitas">Komunitas</NavLink>
+              <NavLink to="/sekolah">Sekolah & Klub</NavLink>
+              <NavLink to="/proyek">Proyek</NavLink>
+              <NavLink to="/showcase">Showcase</NavLink>
+              <NavLink to="/pustaka">Pustaka</NavLink>
+              <NavLink to="/acara">Acara</NavLink>
+              <NavLink to="/kompetisi">Kompetisi</NavLink>
+              <NavLink to="/pengumuman">Pengumuman</NavLink>
+              <NavLink to="/nilai">Nilai Saya</NavLink>
+              <NavLink to="/ujian">Ujian</NavLink>
+              <NavLink to="/sertifikat">Sertifikat</NavLink>
+              <NavLink to="/notifikasi">
+                Notifikasi{unread !== null && unread > 0 ? ` (${unread})` : ''}
+              </NavLink>
+              {(profile?.role === 'mentor' || profile?.role === 'admin') && (
+                <NavLink to="/mentor">Mentor</NavLink>
+              )}
+              {profile?.role === 'admin' && <NavLink to="/admin">Admin</NavLink>}
+              <NavLink to="/profil">Profil</NavLink>
+            </nav>
+          </>
+        ) : (
+          <NavLink to="/login" className="nav-cta">
+            Masuk
           </NavLink>
-          <NavLink to="/akademi">Akademi</NavLink>
-          <NavLink to="/rps">RPS</NavLink>
-          <NavLink to="/komunitas">Komunitas</NavLink>
-          <NavLink to="/sekolah">Sekolah & Klub</NavLink>
-          <NavLink to="/proyek">Proyek</NavLink>
-          <NavLink to="/showcase">Showcase</NavLink>
-          <NavLink to="/pustaka">Pustaka</NavLink>
-          <NavLink to="/acara">Acara</NavLink>
-          <NavLink to="/kompetisi">Kompetisi</NavLink>
-          <NavLink to="/pengumuman">Pengumuman</NavLink>
-          {user && <NavLink to="/nilai">Nilai Saya</NavLink>}
-          {user && <NavLink to="/ujian">Ujian</NavLink>}
-          {user && <NavLink to="/sertifikat">Sertifikat</NavLink>}
-          {user && (
-            <NavLink to="/notifikasi">
-              Notifikasi{unread !== null && unread > 0 ? ` (${unread})` : ''}
-            </NavLink>
-          )}
-          {user && (profile?.role === 'mentor' || profile?.role === 'admin') && (
-            <NavLink to="/mentor">Mentor</NavLink>
-          )}
-          {user && profile?.role === 'admin' && <NavLink to="/admin">Admin</NavLink>}
-          {user ? (
-            <NavLink to="/profil">Profil</NavLink>
-          ) : (
-            <NavLink to="/login" className="nav-cta">
-              Masuk
-            </NavLink>
-          )}
-        </nav>
+        )}
       </header>
 
       <main className="main">
