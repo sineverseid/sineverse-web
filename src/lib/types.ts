@@ -1,7 +1,7 @@
-// SINEVERSE — shared row types for migrations 003–008.
-// Migrations 003–008 are written but NOT applied live yet (only 001–002 +
-// 12 tables exist). Every type below mirrors the written schema exactly;
-// the UI must degrade gracefully when a table is absent (see guarded.ts).
+// SINEVERSE, shared row types.
+// Migrasi 001–011 sudah diterapkan live (67 tabel). Tipe di bawah ini
+// mencerminkan skema live; UI tetap menurun dengan aman bila sebuah
+// tabel atau kolom tidak ada (lihat guarded.ts).
 // Never invent rows: pages render only what Supabase returns.
 
 export type Role = 'siswa' | 'mentor' | 'admin'
@@ -18,10 +18,10 @@ export interface Profile {
   birth_date?: string | null
   gender?: string | null
   address?: string | null
-  /** Migrasi 010 — data pendaftaran artefak (jalur Anggota). */
+  /** Migrasi 010, data pendaftaran artefak (jalur Anggota). */
   school?: string | null
   kelas?: string | null
-  // Migration 005 (Crew Finder) — public-safe fields only; never email.
+  // Migration 005 (Crew Finder), public-safe fields only; never email.
   skills?: string[] | null
   interests?: string[] | null
   availability?: string | null
