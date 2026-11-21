@@ -9,12 +9,14 @@ import { RPS_COURSE_ORDER } from './brand'
 import { isMissingTableError } from './guarded'
 import type {
   Assignment,
+  Community,
   Course,
   Discussion,
   Enrollment,
   ExamAttempt,
   Lesson,
   LessonProgress,
+  LibraryItem,
   Module,
   Profile,
   Quiz,
@@ -33,6 +35,34 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     detectSessionInUrl: true, // email-confirmation links land back in the app
   },
 })
+
+// ---------------------------------------------------------------------------
+// Cache baca (in-memory, per sesi) — supaya pindah menu terasa instan.
+// ---------------------------------------------------------------------------
+// Masalahnya: setiap halaman mengambil data dari server di SETIAP kunjungan,
+// jadi setiap pindah menu menunggu jaringan (~1 detik) dan selalu menampilkan
+// "Memuat…". Data katalog (course, modul, lesson) hampir tidak pernah berubah
+// dan sama untuk semua pengguna, jadi hasil bacanya disimpan di memori dengan
+// TTL singkat. Kunjungan ulang dalam TTL langsung tampil tanpa jaringan.
+// Data milik pengguna (enrollment, progres, submission, notifikasi) TIDAK
+// pernah di-cache — selalu dibaca segar dari server.
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 menit
+const readCache = new Map<string, { data: unknown; expiresAt: number }>()
+
+async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const hit = readCache.get(key)
+  if (hit && hit.expiresAt > Date.now()) return hit.data as T
+  const data = await fetcher()
+  readCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS })
+  return data
+}
+
+/** Hapus cache katalog — dipanggil setelah course/modul/lesson diubah. */
+export function invalidateCatalogCache(): void {
+  for (const key of [...readCache.keys()]) {
+    if (key.startsWith('catalog:')) readCache.delete(key)
+  }
+}
 
 /**
  * URL dasar aplikasi (dengan garis miring akhir) untuk pengalihan email
@@ -96,22 +126,24 @@ export async function updateProfile(
 // ---------------------------------------------------------------------------
 
 export async function fetchCourses(): Promise<Course[]> {
-  const { data, error } = await supabase.from('courses').select('*')
-  if (error) throw error
-  const rows = (data ?? []) as Course[]
-  // Urutan tampil = urutan kurikulum RPS (Semester 1), BUKAN alfabetis.
-  // Course seed mengikuti urutan RPS; course baru (di luar seed) tampil
-  // setelahnya, diurutkan berdasarkan judul.
-  const order = new Map(
-    (RPS_COURSE_ORDER as readonly string[]).map((id, i) => [id, i] as const),
-  )
-  return rows.sort((a, b) => {
-    const ia = order.get(a.id)
-    const ib = order.get(b.id)
-    if (ia !== undefined && ib !== undefined) return ia - ib
-    if (ia !== undefined) return -1
-    if (ib !== undefined) return 1
-    return a.title.localeCompare(b.title, 'id')
+  return cachedRead('catalog:courses', async () => {
+    const { data, error } = await supabase.from('courses').select('*')
+    if (error) throw error
+    const rows = (data ?? []) as Course[]
+    // Urutan tampil = urutan kurikulum RPS (Semester 1), BUKAN alfabetis.
+    // Course seed mengikuti urutan RPS; course baru (di luar seed) tampil
+    // setelahnya, diurutkan berdasarkan judul.
+    const order = new Map(
+      (RPS_COURSE_ORDER as readonly string[]).map((id, i) => [id, i] as const),
+    )
+    return rows.sort((a, b) => {
+      const ia = order.get(a.id)
+      const ib = order.get(b.id)
+      if (ia !== undefined && ib !== undefined) return ia - ib
+      if (ia !== undefined) return -1
+      if (ib !== undefined) return 1
+      return a.title.localeCompare(b.title, 'id')
+    })
   })
 }
 
@@ -137,13 +169,15 @@ export async function fetchMentorName(mentorId: string | null): Promise<string |
 }
 
 export async function fetchModules(courseId: string): Promise<Module[]> {
-  const { data, error } = await supabase
-    .from('modules')
-    .select('*')
-    .eq('course_id', courseId)
-    .order('order_index', { ascending: true })
-  if (error) throw error
-  return (data ?? []) as Module[]
+  return cachedRead(`catalog:modules:${courseId}`, async () => {
+    const { data, error } = await supabase
+      .from('modules')
+      .select('*')
+      .eq('course_id', courseId)
+      .order('order_index', { ascending: true })
+    if (error) throw error
+    return (data ?? []) as Module[]
+  })
 }
 
 export async function fetchLessons(moduleId: string): Promise<Lesson[]> {
@@ -171,20 +205,41 @@ export async function fetchLesson(id: string): Promise<Lesson | null> {
 // di JS berdasarkan (urutan modul, urutan lesson) supaya urutannya sama
 // seperti sebelumya.
 export async function fetchCourseLessons(courseId: string): Promise<Lesson[]> {
-  const modules = await fetchModules(courseId)
-  if (modules.length === 0) return []
-  const orderByModule = new Map(modules.map((m) => [m.id, m.order_index]))
-  const { data, error } = await supabase
-    .from('lessons')
-    .select('*')
-    .in('module_id', modules.map((m) => m.id))
-  if (error) throw error
-  const lessons = (data ?? []) as Lesson[]
-  return lessons.sort((a, b) => {
-    const ma = orderByModule.get(a.module_id) ?? 0
-    const mb = orderByModule.get(b.module_id) ?? 0
-    if (ma !== mb) return ma - mb
-    return (a.order_index ?? 0) - (b.order_index ?? 0)
+  return cachedRead(`catalog:lessons:${courseId}`, async () => {
+    const modules = await fetchModules(courseId)
+    if (modules.length === 0) return []
+    const orderByModule = new Map(modules.map((m) => [m.id, m.order_index]))
+    const { data, error } = await supabase
+      .from('lessons')
+      .select('*')
+      .in('module_id', modules.map((m) => m.id))
+    if (error) throw error
+    const lessons = (data ?? []) as Lesson[]
+    return lessons.sort((a, b) => {
+      const ma = orderByModule.get(a.module_id) ?? 0
+      const mb = orderByModule.get(b.module_id) ?? 0
+      if (ma !== mb) return ma - mb
+      return (a.order_index ?? 0) - (b.order_index ?? 0)
+    })
+  })
+}
+
+// Daftar Library dan Community juga katalog (berubah jarang, sama untuk
+// semua pengguna) — di-cache seperti course, supaya pindah ke menu itu
+// langsung tampil tanpa menunggu jaringan.
+export async function fetchLibraryItems(): Promise<LibraryItem[]> {
+  return cachedRead('catalog:library_items', async () => {
+    const { data, error } = await supabase.from('library_items').select('*').order('title')
+    if (error) throw error
+    return (data ?? []) as LibraryItem[]
+  })
+}
+
+export async function fetchCommunities(): Promise<Community[]> {
+  return cachedRead('catalog:communities', async () => {
+    const { data, error } = await supabase.from('communities').select('*')
+    if (error) throw error
+    return (data ?? []) as Community[]
   })
 }
 
