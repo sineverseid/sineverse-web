@@ -9,8 +9,13 @@
 //   (Ajukan untuk Mengampu), Baru Dinilai, Pesanan Mentoring Berikutnya
 //   (bila ada), Pengumuman. Semua data dari Supabase.
 // - Pengguna login peran admin: AdminHome, hero Ringkasan SINEVERSE,
-//   4 kartu statistik + daftar tindakan (lamaran mentor, sekolah belum
-//   terverifikasi, laporan terbuka), aktivitas terbaru, Pengumuman.
+//   statistik platform dari data asli (Total Siswa, Total Mentor, Total
+//   Course, Sertifikat Diterbitkan) dengan filter periode 7D/30D/90D +
+//   delta vs periode sebelumnya bila bisa dihitung, ring Progress Academy
+//   dari progres lesson semua enrollment, lalu 4 kartu tindakan (lamaran
+//   mentor, sekolah belum terverifikasi, laporan terbuka), aktivitas
+//   terbaru, Pengumuman. Admin tidak pernah enrol/mengerjakan course
+//   (migrasi 022) — tidak ada jalur itu di sini.
 // - Pengunjung logout: landing page (ACUAN FINAL Arif 21 Nov 2026):
 //   hero foto + aksen diagonal mint + hanya tombol Daftar Gratis,
 //   Apa Itu 2 kolom (nilai LEARN/CREATE/COLLABORATE di dalam
@@ -352,6 +357,7 @@ export default function HomePage() {
             events={events}
             submissions={submissions}
             assignments={assignments}
+            announcements={announcements}
             dataLoading={dataLoading}
           />
         ) : profile?.role === 'mentor' ? (
@@ -625,6 +631,7 @@ interface SiswaHomeProps {
   events: SineEvent[]
   submissions: Submission[]
   assignments: Assignment[]
+  announcements: Announcement[] | null
   dataLoading: boolean
 }
 
@@ -646,6 +653,7 @@ function SiswaHome(props: SiswaHomeProps) {
     events,
     submissions,
     assignments,
+    announcements,
     dataLoading,
   } = props
 
@@ -663,6 +671,14 @@ function SiswaHome(props: SiswaHomeProps) {
     () => topRecommendations(courses, enrolledIdSet, projects, myProjectIds, interests, 3),
     [courses, enrolledIdSet, projects, myProjectIds, interests],
   )
+
+  // Pengumuman terbaru untuk banner (sudah dimuat HomePage, limit 3,
+  // filter scope sama seperti halaman Pengumuman).
+  const latestAnnouncement = announcements?.[0] ?? null
+  const latestExcerpt =
+    latestAnnouncement?.body && latestAnnouncement.body.length > 120
+      ? `${latestAnnouncement.body.slice(0, 120).trimEnd()}…`
+      : (latestAnnouncement?.body ?? '')
 
   const schoolName = useMemo(() => {
     const byId = new Map(schools.map((s) => [s.id, s.name]))
@@ -721,27 +737,208 @@ function SiswaHome(props: SiswaHomeProps) {
     progress.filter((p) => p.status === 'completed' && lessonCourse.get(p.lesson_id) === courseId)
       .length
 
+  // Progress Belajar (data asli): lesson selesai / total lesson di semua
+  // course yang diikuti. Ring disembunyikan bila siswa belum punya
+  // enrollment; "—" bila course yang diikuti belum punya materi.
+  const RING_CIRC = 2 * Math.PI * 42
+  const totalLessonsAll = enrolledIds.reduce(
+    (n, id) => n + (lessonTotals.get(id) ?? 0),
+    0,
+  )
+  const doneAll = progress.filter(
+    (p) =>
+      p.status === 'completed' &&
+      lessonCourse.get(p.lesson_id) !== undefined &&
+      enrolledIdSet.has(lessonCourse.get(p.lesson_id) as string),
+  ).length
+  const progressPct =
+    enrolledIds.length === 0 || totalLessonsAll === 0
+      ? null
+      : Math.round((doneAll / totalLessonsAll) * 100)
+
   return (
     <>
-      <section className="hero">
-        <p className="hero-eyebrow">YOUR WORLD OF FILMMAKING</p>
-        <h1>{firstName ? `Halo, ${firstName}!` : 'Halo!'}</h1>
-        <p className="hero-sub">{heroSub}</p>
-        <div className="hero-actions">
-          <Link to="/akademi" className="btn btn-primary">
-            Jelajahi Akademi
-          </Link>
-          <Link to="/proyek" className="btn btn-outline-light">
-            Cari Proyek &amp; Kru
+      <section className="dash-hero">
+        <img
+          src="./home-hero-cinematic.webp"
+          alt="Pelajar dengan kamera di tripod di lokasi syuting"
+          className="dash-hero-photo"
+        />
+        <div className="dash-hero-shade" aria-hidden="true" />
+        <div className="dash-hero-accent" aria-hidden="true" />
+        <div className="dash-hero-content">
+          <h1>{firstName ? `Halo, ${firstName}!` : 'Halo!'}</h1>
+          <p>{heroSub}</p>
+          <div className="dash-hero-actions">
+            <Link to="/akademi" className="btn-mint">
+              Lanjut Belajar →
+            </Link>
+            <Link to="/proyek" className="btn btn-outline-light">
+              Cari Proyek &amp; Kru
+            </Link>
+          </div>
+          {myCourses.length === 0 && (
+            <p className="hero-note">
+              Kamu belum mengikuti kursus. Mulai dari{' '}
+              <Link to="/akademi">katalog Academy</Link>, semua kursus inti gratis.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <nav className="quick-grid" aria-label="Jalan pintas">
+        <Link to="/akademi" className="quick-tile">
+          <Icon name="academy" size={24} />
+          Kursus Saya
+        </Link>
+        <Link to="/tenggat" className="quick-tile">
+          <Icon name="fileText" size={24} />
+          Tugas
+        </Link>
+        <Link to="/nilai" className="quick-tile">
+          <Icon name="chart" size={24} />
+          Nilai
+        </Link>
+        <Link to="/pustaka" className="quick-tile">
+          <Icon name="library" size={24} />
+          Materi
+        </Link>
+        <Link to="/komunitas" className="quick-tile">
+          <Icon name="community" size={24} />
+          Community
+        </Link>
+        <Link to="/acara" className="quick-tile">
+          <Icon name="event" size={24} />
+          Events
+        </Link>
+        <Link to="/portofolio" className="quick-tile">
+          <Icon name="portfolio" size={24} />
+          Portfolio
+        </Link>
+        <Link to="/profil" className="quick-tile">
+          <Icon name="user" size={24} />
+          Profil
+        </Link>
+      </nav>
+
+      {enrolledIds.length > 0 && (
+        <section className="ring-card" aria-label="Progress belajar">
+          <div className="ring-wrap">
+            <svg className="ring-svg" viewBox="0 0 96 96" aria-hidden="true">
+              <circle className="ring-bg" cx="48" cy="48" r="42" />
+              <circle
+                className="ring-fg"
+                cx="48"
+                cy="48"
+                r="42"
+                strokeDasharray={RING_CIRC}
+                strokeDashoffset={
+                  progressPct === null ? RING_CIRC : RING_CIRC * (1 - progressPct / 100)
+                }
+              />
+            </svg>
+            <span className="ring-num">{progressPct === null ? '—' : `${progressPct}%`}</span>
+          </div>
+          <div className="ring-body">
+            <h3>Progress Belajar</h3>
+            <p>
+              {progressPct === null
+                ? 'Kursus yang kamu ikuti belum punya materi.'
+                : `${doneAll} dari ${totalLessonsAll} materi selesai di ${enrolledIds.length} kursus.`}
+            </p>
+            {progressPct !== null && (
+              <div
+                className="progress-track"
+                role="progressbar"
+                aria-valuenow={progressPct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Progress belajar: ${progressPct} persen`}
+              >
+                <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+              </div>
+            )}
+          </div>
+          <span className="ring-action">
+            <Link to="/akademi" className="btn btn-ghost btn-small">
+              Lihat Academy →
+            </Link>
+          </span>
+        </section>
+      )}
+
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Kursus Aktif</h2>
+          <Link to="/akademi" className="dash-more">
+            Lihat Semua →
           </Link>
         </div>
-        {myCourses.length === 0 && (
-          <p className="hero-note">
-            Kamu belum mengikuti kursus. Mulai dari{' '}
-            <Link to="/akademi">katalog Academy</Link>, semua kursus inti gratis.
-          </p>
+        {dataLoading ? (
+          <p className="muted">Memuat progres kursus…</p>
+        ) : myCourses.length === 0 ? (
+          <div className="empty-card">
+            <h3>Belum ada kursus aktif</h3>
+            <p>Ikuti kursus pertamamu dari katalog Academy.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {myCourses.map((c) => {
+              const total = lessonTotals.get(c.id) ?? 0
+              const done = doneCount(c.id)
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0
+              return (
+                <Link key={c.id} to={`/course/${c.id}`} className="dash-course">
+                  <div className="dash-course-cover">
+                    {c.cover_url ? (
+                      <img src={c.cover_url} alt="" />
+                    ) : (
+                      <Icon name="film" size={32} />
+                    )}
+                    <span className="dash-course-status">
+                      {pct === 100 ? 'Selesai' : 'Aktif'}
+                    </span>
+                  </div>
+                  <div className="dash-course-body">
+                    <h3>{c.title}</h3>
+                    <p className="dash-course-meta">
+                      {done} dari {total} materi
+                    </p>
+                    <div
+                      className="progress-track"
+                      role="progressbar"
+                      aria-valuenow={pct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`Progres ${c.title}: ${pct} persen`}
+                    >
+                      <div className="progress-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                  <span className="dash-course-play">
+                    <Icon name="play" size={20} />
+                  </span>
+                </Link>
+              )
+            })}
+          </div>
         )}
       </section>
+
+      {latestAnnouncement && (
+        <Link to="/pengumuman" className="announce-banner">
+          <span className="announce-icon">
+            <Icon name="announcement" size={24} />
+          </span>
+          <span className="announce-body">
+            <strong>{latestAnnouncement.title}</strong>
+            {latestExcerpt && <span>{latestExcerpt}</span>}
+          </span>
+          <span className="announce-chevron">
+            <Icon name="chevronRight" size={20} />
+          </span>
+        </Link>
+      )}
 
       <section className="section">
         <div className="section-head">
@@ -764,51 +961,6 @@ function SiswaHome(props: SiswaHomeProps) {
                 </Link>
               </li>
             ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="section">
-        <div className="section-head">
-          <h2>Kursus Aktifku</h2>
-          <Link to="/akademi">Semua kursus →</Link>
-        </div>
-        {dataLoading ? (
-          <p className="muted">Memuat progres kursus…</p>
-        ) : myCourses.length === 0 ? (
-          <div className="empty-card">
-            <h3>Belum ada kursus aktif</h3>
-            <p>Ikuti kursus pertamamu dari katalog Academy.</p>
-          </div>
-        ) : (
-          <ul className="course-list">
-            {myCourses.map((c) => {
-              const total = lessonTotals.get(c.id) ?? 0
-              const done = doneCount(c.id)
-              const pct = total > 0 ? Math.round((done / total) * 100) : 0
-              return (
-                <li key={c.id} className="course-card">
-                  <Link to={`/course/${c.id}`}>
-                    <div className="course-card-body">
-                      <h3>{c.title}</h3>
-                      <p>
-                        {done}/{total} materi selesai
-                      </p>
-                      <div
-                        className="progress-track"
-                        role="progressbar"
-                        aria-valuenow={pct}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-label={`Progres ${c.title}: ${pct} persen`}
-                      >
-                        <div className="progress-fill" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  </Link>
-                </li>
-              )
-            })}
           </ul>
         )}
       </section>
@@ -915,9 +1067,11 @@ function SiswaHome(props: SiswaHomeProps) {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Event Mendatang</h2>
-          <Link to="/acara">Semua event →</Link>
+          <Link to="/acara" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {dataLoading ? (
           <p className="muted">Memuat event…</p>
@@ -1283,79 +1437,101 @@ function MentorHome(props: {
 
   return (
     <>
-      <section className="hero">
-        <p className="hero-eyebrow">MENTOR WORKSPACE</p>
-        <h1>Halo, {firstName}!</h1>
-        <p className="hero-sub">
-          {rows.length} kursus diampu · {totalStudents} siswa · {pendingTotal} tugas
-          menunggu dinilai
-        </p>
-        <div className="hero-actions">
-          <Link to="/mentor/penilaian" className="btn btn-primary">
-            Buka Antrean Penilaian
-          </Link>
-          <Link to="/mentor/course-builder" className="btn btn-outline-light">
-            Course Builder
-          </Link>
+      <section className="dash-hero">
+        <img
+          src="./home-hero-shoot.webp"
+          alt="Pelajar SMA/SMK sedang syuting film pendek di luar ruangan"
+          className="dash-hero-photo"
+        />
+        <div className="dash-hero-shade" aria-hidden="true" />
+        <div className="dash-hero-accent" aria-hidden="true" />
+        <div className="dash-hero-content">
+          <p className="landing-hero-eyebrow" style={{ color: 'var(--mint)' }}>
+            MENTOR WORKSPACE
+          </p>
+          <h1>Halo, {firstName}!</h1>
+          <div style={{ marginBottom: '0.75rem' }}>
+            <span className="pill-active">Mentor</span>
+          </div>
+          <p>
+            {rows.length} kursus diampu · {totalStudents} siswa · {pendingTotal} tugas
+            menunggu dinilai
+          </p>
+          <div className="dash-hero-actions">
+            <Link to="/mentor/penilaian" className="btn-mint">
+              Buka Antrean Penilaian
+            </Link>
+            <Link to="/mentor/course-builder" className="btn btn-outline-light">
+              Course Builder
+            </Link>
+          </div>
         </div>
       </section>
 
       {notice && <p className="notice-box">{notice}</p>}
 
-      <section className="section">
-        <div className="section-head">
-          <h2>Antrean Penilaian Terbaru</h2>
-          <Link to="/mentor/penilaian">Lihat semua →</Link>
+      {/* Ringkasan Aktivitas — semuanya hitungan asli: course yang diampu,
+          siswa distinct di course itu, dan submission menunggu dinilai. */}
+      <section className="section" aria-label="Ringkasan aktivitas">
+        <div className="dash-section-head">
+          <h2>Ringkasan Aktivitas</h2>
         </div>
-        <p className="muted">{pendingTotal} tugas menunggu dinilai.</p>
-        {queue.length === 0 ? (
-          <p className="empty">Tidak ada tugas yang menunggu penilaian.</p>
-        ) : (
-          <ul className="discussion-list">
-            {queue.map((row) => (
-              <li key={row.submission.id} className="discussion-item">
-                <p className="discussion-meta">
-                  {row.course.title} · {row.assignment.title} · {row.studentName} ·{' '}
-                  {fmtDate(row.submission.submitted_at)}
-                </p>
-                <p
-                  style={{
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {row.submission.content ?? '—'}
-                </p>
-                <p>
-                  <Link to="/mentor/penilaian">Buka Antrean →</Link>
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="stat-grid">
+          <div className="stat-card">
+            <span className="stat-num">{rows.length}</span>
+            <span className="stat-label">Kursus diampu</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{totalStudents}</span>
+            <span className="stat-label">Total siswa</span>
+            <Link to="/mentor/siswa">Lihat siswa →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{pendingTotal}</span>
+            <span className="stat-label">Tugas menunggu dinilai</span>
+            <Link to="/mentor/penilaian">Buka antrean →</Link>
+          </div>
+        </div>
       </section>
 
       <section className="section">
-        <h2>Kursus yang Kamu Ampu</h2>
+        <div className="dash-section-head">
+          <h2>Course Anda</h2>
+          <Link to="/akademi" className="dash-more">
+            Lihat Semua →
+          </Link>
+        </div>
         {rows.length === 0 ? (
           <p className="empty">
             Kamu belum mengampu kursus apa pun. Ajukan kursus tanpa mentor di bawah.
           </p>
         ) : (
-          <ul className="course-list">
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
             {rows.map((r) => (
-              <li key={r.course.id} className="course-card">
-                <Link to={`/mentor/course/${r.course.id}`}>
+              <Link
+                key={r.course.id}
+                to={`/mentor/course/${r.course.id}`}
+                className="dash-course"
+              >
+                <div className="dash-course-cover">
+                  {r.course.cover_url ? (
+                    <img src={r.course.cover_url} alt="" />
+                  ) : (
+                    <Icon name="academy" size={32} />
+                  )}
+                </div>
+                <div className="dash-course-body">
                   <h3>{r.course.title}</h3>
-                  <p className="muted">
-                    {r.students} siswa · {r.pending} tugas menunggu penilaian
+                  <p className="dash-course-meta">
+                    {r.students} siswa • {r.pending} tugas menunggu penilaian
                   </p>
-                </Link>
-              </li>
+                </div>
+                <span className="dash-course-play">
+                  <Icon name="play" size={20} />
+                </span>
+              </Link>
             ))}
-          </ul>
+          </div>
         )}
         <p>
           <Link to="/mentor/siswa" className="btn btn-secondary">
@@ -1373,46 +1549,100 @@ function MentorHome(props: {
         </p>
       </section>
 
+      <div className="grade-motivation" style={{ marginBottom: '1.25rem' }}>
+        <span className="announce-icon">
+          <Icon name="star" size={24} />
+        </span>
+        <span>Terima kasih atas kontribusimu di SINEVERSE!</span>
+      </div>
+
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Antrean Penilaian Terbaru</h2>
+          <Link to="/mentor/penilaian" className="dash-more">
+            Lihat Semua →
+          </Link>
+        </div>
+        <p className="muted">{pendingTotal} tugas menunggu dinilai.</p>
+        {queue.length === 0 ? (
+          <p className="empty">Tidak ada tugas yang menunggu penilaian.</p>
+        ) : (
+          <ul className="list">
+            {queue.map((row) => (
+              <li key={row.submission.id} className="task-card">
+                <span className="task-icon">
+                  <Icon name="fileText" size={24} />
+                </span>
+                <div className="task-body">
+                  <h3>{row.assignment.title}</h3>
+                  <p>
+                    {row.course.title} · {row.assignment.title} · {row.studentName} ·{' '}
+                    {fmtDate(row.submission.submitted_at)}
+                  </p>
+                  <p
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {row.submission.content ?? '—'}
+                  </p>
+                  <p>
+                    <Link to="/mentor/penilaian">Buka Antrean →</Link>
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="section">
         <h2>Kursus Tanpa Pengampu</h2>
         {unassigned.length === 0 ? (
           <p className="empty">Tidak ada kursus tanpa mentor saat ini.</p>
         ) : (
-          <ul
-            className="plain-list"
-            style={{ listStyle: 'none', margin: 0, padding: 0 }}
-          >
+          <ul className="list">
             {unassigned.map((c) => {
               const claim = claims.find((cl) => cl.course_id === c.id)
               return (
-                <li key={c.id} style={{ marginBottom: '0.75rem' }}>
-                  {c.title}{' '}
-                  {claim ? (
-                    claim.status === 'rejected' ? (
-                      <>
-                        <span className="muted">— pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-small"
-                          disabled={claimingId === c.id}
-                          onClick={() => void handleClaim(c.id)}
-                        >
-                          {claimingId === c.id ? 'Mengajukan…' : 'Ajukan Lagi'}
-                        </button>
-                      </>
+                <li key={c.id} className="list-row">
+                  <span>{c.title}</span>
+                  <span>
+                    {claim ? (
+                      claim.status === 'rejected' ? (
+                        <>
+                          <span className="muted">
+                            Pengajuan: Ditolak
+                            {claim.decision_note ? `: ${claim.decision_note}` : ''}
+                          </span>{' '}
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            disabled={claimingId === c.id}
+                            onClick={() => void handleClaim(c.id)}
+                          >
+                            {claimingId === c.id ? 'Mengajukan…' : 'Ajukan Lagi'}
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">
+                          Pengajuan: {claimStatusLabel(claim.status)}
+                        </span>
+                      )
                     ) : (
-                      <span className="muted">— pengajuan: {claimStatusLabel(claim.status)}</span>
-                    )
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      disabled={claimingId === c.id}
-                      onClick={() => void handleClaim(c.id)}
-                    >
-                      {claimingId === c.id ? 'Mengajukan…' : 'Ajukan untuk Mengampu'}
-                    </button>
-                  )}
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        disabled={claimingId === c.id}
+                        onClick={() => void handleClaim(c.id)}
+                      >
+                        {claimingId === c.id ? 'Mengajukan…' : 'Ajukan untuk Mengampu'}
+                      </button>
+                    )}
+                  </span>
                 </li>
               )
             })}
@@ -1461,9 +1691,11 @@ function MentorHome(props: {
       )}
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Pengumuman</h2>
-          <Link to="/pengumuman">Lihat semua</Link>
+          <Link to="/pengumuman" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {announcements === null ? (
           <p className="empty">Pengumuman belum tersedia.</p>
@@ -1538,6 +1770,17 @@ function AdminHome(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Statistik platform (data asli): filter periode + ring Progress Academy.
+  const [period, setPeriod] = useState<'all' | '7' | '30' | '90'>('all')
+  const [profileTimestamps, setProfileTimestamps] = useState<
+    { role: string; created_at: string }[]
+  >([])
+  const [certIssuedAt, setCertIssuedAt] = useState<string[]>([])
+  const [academyProgress, setAcademyProgress] = useState<{
+    pct: number | null
+    done: number
+    total: number
+  } | null>(null)
 
   async function load() {
     try {
@@ -1547,23 +1790,42 @@ function AdminHome(props: {
       const [
         { data: profiles, error: profilesErr },
         { count: filmCount },
-        { count: enrCount },
+        enrRows,
+        certRows,
         appData,
         subData,
         schoolData,
         dData,
         mData,
       ] = await Promise.all([
-        supabase.from('profiles').select('id,name,role'),
+        supabase.from('profiles').select('id,name,role,created_at'),
         safe(
           async () =>
             supabase.from('films').select('id', { count: 'exact', head: true }),
           { count: 0 } as { count: number | null },
         ),
+        // Enrollment + sertifikat diambil sebagai baris (bukan hitung saja)
+        // supaya bisa difilter periode lewat enrolled_at / issued_at.
         safe(
-          async () =>
-            supabase.from('enrollments').select('id', { count: 'exact', head: true }),
-          { count: 0 } as { count: number | null },
+          async () => {
+            const { data } = await supabase
+              .from('enrollments')
+              .select('id,user_id,course_id,enrolled_at')
+            return (data ?? []) as {
+              id: string
+              user_id: string
+              course_id: string
+              enrolled_at: string
+            }[]
+          },
+          [] as { id: string; user_id: string; course_id: string; enrolled_at: string }[],
+        ),
+        safe(
+          async () => {
+            const { data } = await supabase.from('certificates').select('id,issued_at')
+            return (data ?? []) as { id: string; issued_at: string }[]
+          },
+          [] as { id: string; issued_at: string }[],
         ),
         safe(async () => fetchMentorApplications(), [] as MentorApplication[]),
         safe(async () => fetchSchoolSubmissions(), [] as SchoolSubmission[]),
@@ -1603,7 +1865,16 @@ function AdminHome(props: {
       } else {
         setUsersError(null)
       }
-      const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
+      const profs = (profiles ?? []) as {
+        id: string
+        name: string | null
+        role: string
+        created_at: string
+      }[]
+      setProfileTimestamps(
+        profs.map((p) => ({ role: p.role, created_at: p.created_at })),
+      )
+      setCertIssuedAt(certRows.map((c) => c.issued_at))
       setNames(await fetchProfileNames(profs.map((p) => p.id)))
       const [provMap, regMap] = await Promise.all([
         fetchRefNameMap('ref_provinces'),
@@ -1618,7 +1889,7 @@ function AdminHome(props: {
         admin: profs.filter((p) => p.role === 'admin').length,
         schools: schoolData.length,
         films: filmCount ?? 0,
-        enrollments: enrCount ?? 0,
+        enrollments: enrRows.length,
         pendingApps: appData.filter((a) => a.status === 'pending').length,
         openReports: dData.length + mData.length,
         unverifiedSchools: schoolData.filter((s) => !s.is_verified).length,
@@ -1628,6 +1899,65 @@ function AdminHome(props: {
       setSchools(schoolData)
       setDiscReports(dData)
       setModReports(mData)
+
+      // Progress Academy (data asli): lesson selesai / (siswa terdaftar ×
+      // lesson) di semua course. Hanya progres siswa yang terdaftar di
+      // course lesson itu yang dihitung; gagal memuat → null ("—").
+      const academy = await safe(
+        async () => {
+          const { data: modData } = await supabase
+            .from('modules')
+            .select('id,course_id')
+          const mods = (modData ?? []) as { id: string; course_id: string }[]
+          if (mods.length === 0) return { pct: null, done: 0, total: 0 }
+          const { data: lesData } = await supabase
+            .from('lessons')
+            .select('id,module_id')
+            .in(
+              'module_id',
+              mods.map((m) => m.id),
+            )
+          const lessons = (lesData ?? []) as { id: string; module_id: string }[]
+          if (lessons.length === 0) return { pct: null, done: 0, total: 0 }
+          const modCourse = new Map(mods.map((m) => [m.id, m.course_id]))
+          const lessonCourseMap = new Map(
+            lessons.map((l) => [l.id, modCourse.get(l.module_id) ?? '']),
+          )
+          const lessonsByCourse = new Map<string, number>()
+          for (const l of lessons) {
+            const cid = lessonCourseMap.get(l.id) ?? ''
+            lessonsByCourse.set(cid, (lessonsByCourse.get(cid) ?? 0) + 1)
+          }
+          const enrolledByCourse = new Map<string, Set<string>>()
+          for (const e of enrRows) {
+            if (!enrolledByCourse.has(e.course_id)) {
+              enrolledByCourse.set(e.course_id, new Set())
+            }
+            enrolledByCourse.get(e.course_id)?.add(e.user_id)
+          }
+          let total = 0
+          for (const [cid, users] of enrolledByCourse) {
+            total += users.size * (lessonsByCourse.get(cid) ?? 0)
+          }
+          if (total === 0) return { pct: null, done: 0, total: 0 }
+          const { data: progData } = await supabase
+            .from('lesson_progress')
+            .select('lesson_id,user_id')
+            .eq('status', 'completed')
+            .in(
+              'lesson_id',
+              lessons.map((l) => l.id),
+            )
+          let done = 0
+          for (const p of (progData ?? []) as { lesson_id: string; user_id: string }[]) {
+            const cid = lessonCourseMap.get(p.lesson_id) ?? ''
+            if (enrolledByCourse.get(cid)?.has(p.user_id)) done += 1
+          }
+          return { pct: Math.round((done / total) * 100), done, total }
+        },
+        null as { pct: number | null; done: number; total: number } | null,
+      )
+      setAcademyProgress(academy)
 
       // Selesaikan target laporan moderasi menjadi label yang bisa dibaca
       // manusia (judul/nama + tautan), bukan UUID mentah. Bila target tidak
@@ -1892,19 +2222,82 @@ function AdminHome(props: {
   const firstName = profileName.trim().split(/\s+/)[0] || 'Admin'
   const unverified = schools.filter((s) => !s.is_verified)
 
+  // --- Statistik platform per periode (data asli) ---
+  // Window: profiles.created_at (siswa/mentor), certificates.issued_at.
+  // Total Course TIDAK difilter — itu jumlah katalog, bukan kejadian.
+  // Progress Academy TIDAK difilter — penyelesaian bersifat kumulatif;
+  // memotong pembilang (completed_at) tanpa penyebut yang sepadan akan
+  // menghasilkan persentase yang salah.
+  const periodDays = period === 'all' ? null : Number(period)
+  const periodCutoff = periodDays === null ? null : Date.now() - periodDays * 86400000
+  const inWindow = (ts: string) =>
+    periodCutoff !== null && new Date(ts).getTime() >= periodCutoff
+  const inPrevWindow = (ts: string) =>
+    periodCutoff !== null &&
+    periodDays !== null &&
+    new Date(ts).getTime() >= periodCutoff - periodDays * 86400000 &&
+    new Date(ts).getTime() < periodCutoff
+  const countIn = (rows: { created_at: string; role: string }[], role: string, win: (ts: string) => boolean) =>
+    rows.filter((r) => r.role === role && win(r.created_at)).length
+  const siswaPeriod =
+    periodCutoff === null ? counts.siswa : countIn(profileTimestamps, 'siswa', inWindow)
+  const mentorPeriod =
+    periodCutoff === null ? counts.mentor : countIn(profileTimestamps, 'mentor', inWindow)
+  const certPeriod =
+    periodCutoff === null ? certIssuedAt.length : certIssuedAt.filter(inWindow).length
+  // Delta vs jendela sebelumnya yang sama panjang; null bila jendela
+  // sebelumnya kosong (tidak bisa dihitung) atau periode "Semua" — garis
+  // delta dihilangkan, bukan dikarang.
+  const deltaPct = (curr: number, prev: number): number | null =>
+    periodDays === null || prev <= 0 ? null : Math.round(((curr - prev) / prev) * 100)
+  const siswaDelta = deltaPct(
+    siswaPeriod,
+    countIn(profileTimestamps, 'siswa', inPrevWindow),
+  )
+  const mentorDelta = deltaPct(
+    mentorPeriod,
+    countIn(profileTimestamps, 'mentor', inPrevWindow),
+  )
+  const certDelta = deltaPct(
+    certPeriod,
+    certIssuedAt.filter(inPrevWindow).length,
+  )
+  const deltaLine = (d: number | null) =>
+    d === null || periodDays === null ? null : (
+      <span
+        className="muted"
+        style={{ display: 'block', fontSize: '0.85rem', marginTop: '0.25rem' }}
+      >
+        {d >= 0 ? '↑' : '↓'} {Math.abs(d)}% dari {periodDays} hari sebelumnya
+      </span>
+    )
+  const RING_CIRC = 2 * Math.PI * 42
+  const academyPct = academyProgress?.pct ?? null
+
   return (
     <>
-      <section className="hero">
-        <p className="hero-eyebrow">ADMIN PANEL</p>
-        <h1>Ringkasan SINEVERSE</h1>
-        <p className="hero-sub">
-          Halo, {firstName}! {counts.users} pengguna · {counts.schools} sekolah ·{' '}
-          {courses.length} kursus · {counts.films} film · {counts.enrollments} pendaftaran kursus
-        </p>
-        <div className="hero-actions">
-          <Link to="/admin" className="btn btn-primary">
-            Buka Admin Panel
-          </Link>
+      <section className="dash-hero">
+        <img
+          src="./home-hero-screening.webp"
+          alt="Pemutaran film malam di lapangan dengan layar besar"
+          className="dash-hero-photo"
+        />
+        <div className="dash-hero-shade" aria-hidden="true" />
+        <div className="dash-hero-accent" aria-hidden="true" />
+        <div className="dash-hero-content">
+          <p className="landing-hero-eyebrow" style={{ color: 'var(--mint)' }}>
+            ADMIN PANEL
+          </p>
+          <h1>Ringkasan SINEVERSE</h1>
+          <p>
+            Halo, {firstName}! {counts.users} pengguna · {counts.schools} sekolah ·{' '}
+            {courses.length} kursus · {counts.films} film · {counts.enrollments} pendaftaran kursus
+          </p>
+          <div className="dash-hero-actions">
+            <Link to="/admin" className="btn-mint">
+              Buka Admin Panel
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -1912,6 +2305,111 @@ function AdminHome(props: {
       {usersError && <p className="error-box">{usersError}</p>}
 
       <section className="section" aria-label="Statistik platform">
+        <div className="dash-section-head">
+          <h2>Statistik Platform</h2>
+        </div>
+        <div
+          role="group"
+          aria-label="Filter periode"
+          style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}
+        >
+          {(['all', '7', '30', '90'] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={period === p ? 'btn btn-primary btn-small' : 'btn btn-ghost btn-small'}
+              aria-pressed={period === p}
+              onClick={() => setPeriod(p)}
+            >
+              {p === 'all' ? 'Semua' : `${p}D`}
+            </button>
+          ))}
+        </div>
+        <div className="stat-grid">
+          <div className="stat-card">
+            <span className="stat-num">{siswaPeriod}</span>
+            <span className="stat-label">
+              {period === 'all' ? 'Total Siswa' : `Siswa baru (${period} hari terakhir)`}
+            </span>
+            {deltaLine(siswaDelta)}
+            <Link to="/admin/pengguna">Lihat →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{mentorPeriod}</span>
+            <span className="stat-label">
+              {period === 'all' ? 'Total Mentor' : `Mentor baru (${period} hari terakhir)`}
+            </span>
+            {deltaLine(mentorDelta)}
+            <Link to="/admin/pengguna">Lihat →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{courses.length}</span>
+            <span className="stat-label">Total Course</span>
+            <Link to="/akademi">Lihat →</Link>
+          </div>
+          <div className="stat-card">
+            <span className="stat-num">{certPeriod}</span>
+            <span className="stat-label">
+              {period === 'all'
+                ? 'Sertifikat Diterbitkan'
+                : `Sertifikat diterbitkan (${period} hari terakhir)`}
+            </span>
+            {deltaLine(certDelta)}
+            <Link to="/admin/sertifikat">Lihat →</Link>
+          </div>
+        </div>
+        <div className="ring-card" aria-label="Progress Academy">
+          <div className="ring-wrap">
+            <svg className="ring-svg" viewBox="0 0 96 96" aria-hidden="true">
+              <circle className="ring-bg" cx="48" cy="48" r="42" />
+              <circle
+                className="ring-fg"
+                cx="48"
+                cy="48"
+                r="42"
+                strokeDasharray={RING_CIRC}
+                strokeDashoffset={
+                  academyPct === null ? RING_CIRC : RING_CIRC * (1 - academyPct / 100)
+                }
+              />
+            </svg>
+            <span className="ring-num">{academyPct === null ? '—' : `${academyPct}%`}</span>
+          </div>
+          <div className="ring-body">
+            <h3>Progress Academy</h3>
+            <p>
+              {academyProgress === null
+                ? 'Data progres belum tersedia.'
+                : academyPct === null
+                  ? 'Belum ada enrollment — progres muncul setelah siswa mendaftar course.'
+                  : `${academyProgress.done} dari ${academyProgress.total} lesson selesai di semua enrollment.`}
+            </p>
+            {academyPct !== null && (
+              <div
+                className="progress-track"
+                role="progressbar"
+                aria-valuenow={academyPct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Progress Academy: ${academyPct} persen`}
+              >
+                <div className="progress-fill" style={{ width: `${academyPct}%` }} />
+              </div>
+            )}
+          </div>
+          <span className="ring-action">
+            <Link to="/admin/analitik" className="btn btn-ghost btn-small">
+              Analitik →
+            </Link>
+          </span>
+        </div>
+        <p className="muted">
+          Total Course tidak difilter periode (jumlah katalog). Progress Academy bersifat
+          kumulatif dan tidak difilter periode.
+        </p>
+      </section>
+
+      <section className="section" aria-label="Tindakan yang menunggu">
         <div className="stat-grid">
           <div className="stat-card">
             <span className="stat-num">{counts.pendingApps}</span>
@@ -1940,9 +2438,11 @@ function AdminHome(props: {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Lamaran Mentor ({apps.filter((a) => a.status === 'pending').length} menunggu)</h2>
-          <Link to="/admin#lamaran-mentor">Admin Panel →</Link>
+          <Link to="/admin#lamaran-mentor" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {apps.length === 0 ? (
           <p className="empty">Tidak ada lamaran mentor.</p>
@@ -2026,9 +2526,11 @@ function AdminHome(props: {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} menunggu)</h2>
-          <Link to="/admin#pengajuan-sekolah">Admin Panel →</Link>
+          <Link to="/admin#pengajuan-sekolah" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {schoolSubs.length === 0 ? (
           <p className="empty">Tidak ada pengajuan sekolah.</p>
@@ -2089,9 +2591,11 @@ function AdminHome(props: {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Sekolah Belum Terverifikasi ({unverified.length})</h2>
-          <Link to="/admin#verifikasi-sekolah">Admin Panel →</Link>
+          <Link to="/admin#verifikasi-sekolah" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {unverified.length === 0 ? (
           <p className="empty">Semua sekolah sudah terverifikasi.</p>
@@ -2117,9 +2621,11 @@ function AdminHome(props: {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Laporan Terbuka ({discReports.length + modReports.length})</h2>
-          <Link to="/admin/moderasi">Moderasi →</Link>
+          <Link to="/admin/moderasi" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {discReports.length === 0 && modReports.length === 0 ? (
           <p className="empty">Tidak ada laporan terbuka.</p>
@@ -2222,9 +2728,11 @@ function AdminHome(props: {
       </section>
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Pengumuman</h2>
-          <Link to="/pengumuman">Lihat semua</Link>
+          <Link to="/pengumuman" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {announcements === null ? (
           <p className="empty">Pengumuman belum tersedia.</p>

@@ -12,6 +12,7 @@ import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 import EmptyState from '../components/EmptyState'
+import Icon from '../components/icons'
 
 const KIND_LABELS: Record<LessonResource['kind'], string> = {
   reading: 'Bacaan',
@@ -23,6 +24,13 @@ const KIND_LABELS: Record<LessonResource['kind'], string> = {
 }
 
 const KIND_OPTIONS: LessonResource['kind'][] = ['reading', 'image', 'pdf', 'video', 'file', 'link']
+
+function kindIcon(kind: LessonResource['kind']): 'fileText' | 'book' | 'film' | 'download' {
+  if (kind === 'pdf' || kind === 'file') return 'fileText'
+  if (kind === 'reading') return 'book'
+  if (kind === 'video') return 'film'
+  return 'download'
+}
 
 interface MaterialGroup {
   course: Course
@@ -190,6 +198,10 @@ export default function MentorMaterialsPage() {
       />
       <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
+      <div className="pill-tabs">
+        <Link className="pill-tab active" to="/mentor/materi">Materi</Link>
+        <Link className="pill-tab" to="/mentor/penilaian">Tugas</Link>
+      </div>
       {groups.length === 0 ? (
         <EmptyState message="Belum ada materi. Tambah materi dari Course Builder di lesson masing-masing course." actionLabel="Buka Course Builder" actionTo="/mentor/course-builder" />
       ) : (
@@ -197,13 +209,14 @@ export default function MentorMaterialsPage() {
           <p className="muted">{total} materi di {groups.length} lesson.</p>
           {groups.map((g) => (
             <section className="section" key={`${g.course.id}-${g.lesson.id}`}>
-              <h2>{g.course.title}</h2>
-              <p className="muted">
-                Lesson: <Link to={`/lesson/${g.lesson.id}`}>{g.lesson.title}</Link>
-              </p>
-              <ul className="discussion-list">
+              <div className="dash-section-head">
+                <h2>{g.course.title}</h2>
+                <Link className="dash-more" to={`/lesson/${g.lesson.id}`}>Lihat Lesson →</Link>
+              </div>
+              <p className="muted">Lesson: {g.lesson.title}</p>
+              <ul className="list">
                 {g.resources.map((r) => (
-                  <li key={r.id} className="discussion-item">
+                  <li key={r.id}>
                     {editingId === r.id ? (
                       <form className="form" onSubmit={(e) => void handleSave(e, r.id)}>
                         <label>
@@ -233,10 +246,28 @@ export default function MentorMaterialsPage() {
                       </form>
                     ) : (
                       <>
-                        <p className="discussion-meta">{KIND_LABELS[r.kind]}</p>
-                        <h3>{r.title}</h3>
-                        {r.url && (
-                          <p><a href={r.url} target="_blank" rel="noreferrer">{r.url}</a></p>
+                        {r.url ? (
+                          <a className="file-row" href={r.url} target="_blank" rel="noreferrer">
+                            <span className="file-icon">
+                              <Icon name={kindIcon(r.kind)} size={20} />
+                            </span>
+                            <span className="file-body">
+                              <strong>{r.title}</strong>
+                              <span>{KIND_LABELS[r.kind]}</span>
+                            </span>
+                            <Icon name="download" size={20} />
+                          </a>
+                        ) : (
+                          <Link className="file-row" to={`/lesson/${r.lesson_id}`}>
+                            <span className="file-icon">
+                              <Icon name={kindIcon(r.kind)} size={20} />
+                            </span>
+                            <span className="file-body">
+                              <strong>{r.title}</strong>
+                              <span>{KIND_LABELS[r.kind]}</span>
+                            </span>
+                            <Icon name="chevronRight" size={20} />
+                          </Link>
                         )}
                         {r.body && <p className="muted">{r.body.length > 160 ? `${r.body.slice(0, 160)}…` : r.body}</p>}
                         <p>

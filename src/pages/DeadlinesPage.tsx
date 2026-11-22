@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import EmptyState from '../components/EmptyState'
+import Icon from '../components/icons'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
@@ -26,6 +27,7 @@ interface DeadlineRow {
   courseTitle: string
   lessonTitle: string
   submitted: boolean
+  submittedAt: string | null
   overdue: boolean
 }
 
@@ -33,6 +35,7 @@ export default function DeadlinesPage() {
   const { user } = useAuth()
   const [rows, setRows] = useState<DeadlineRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [tab, setTab] = useState<'aktif' | 'riwayat'>('aktif')
 
   useEffect(() => {
     let cancelled = false
@@ -46,6 +49,7 @@ export default function DeadlinesPage() {
         ])
         const courseById = new Map(courses.map((c) => [c.id, c.title]))
         const submittedIds = new Set(submissions.map((s) => s.assignment_id))
+        const submittedAtById = new Map(submissions.map((s) => [s.assignment_id, s.submitted_at]))
 
         // Lesson semua course yang diambil, diambil paralel (bukan satu per
         // satu) supaya halaman tenggat tidak lama memuat.
@@ -80,6 +84,7 @@ export default function DeadlinesPage() {
               courseTitle: courseById.get(en.course_id) ?? 'Course',
               lessonTitle: lessonById.get(a.lesson_id) ?? 'Pelajaran',
               submitted,
+              submittedAt: submittedAtById.get(a.id) ?? null,
               overdue: Boolean(due && due < new Date() && !submitted),
             })
           }
@@ -108,24 +113,51 @@ export default function DeadlinesPage() {
     .sort((a, b) => (a.assignment.due_date ?? '').localeCompare(b.assignment.due_date ?? ''))
   const noDeadline = rows.filter((r) => !r.submitted && !r.assignment.due_date)
   const done = rows.filter((r) => r.submitted)
+  const aktif = rows.filter((r) => !r.submitted)
 
   function renderRow(r: DeadlineRow) {
+    const due = r.assignment.due_date ? new Date(r.assignment.due_date) : null
+    const soon =
+      !r.submitted &&
+      !r.overdue &&
+      due !== null &&
+      due.getTime() - Date.now() <= 3 * 24 * 60 * 60 * 1000
+    const badgeClass = r.submitted
+      ? 'task-deadline normal'
+      : r.overdue
+        ? 'task-deadline'
+        : !due
+          ? 'task-deadline none'
+          : soon
+            ? 'task-deadline soon'
+            : 'task-deadline normal'
+    const badgeText = r.submitted
+      ? `Terkumpul: ${fmtDate(r.submittedAt)}`
+      : r.overdue
+        ? `Terlambat: ${fmtDate(r.assignment.due_date)}`
+        : !due
+          ? 'Tanpa tenggat'
+          : `Tenggat: ${fmtDate(r.assignment.due_date)}`
+    const description = r.assignment.description?.trim() ?? ''
+    const snippet = description.length > 120 ? `${description.slice(0, 120)}…` : description
     return (
-      <li key={r.assignment.id} className="list-row">
-        <div>
-          <Link to={`/tugas/${r.assignment.id}`}>{r.assignment.title}</Link>
-          <p className="muted">
-            {r.courseTitle} · {r.lessonTitle}
-          </p>
-          <p className="muted">
-            {r.assignment.due_date
-              ? `Tenggat: ${fmtDate(r.assignment.due_date)}`
-              : 'Tidak ada tenggat yang tercatat untuk tugas ini.'}
-          </p>
-        </div>
-        <span className={`chip ${r.overdue ? 'chip-danger' : r.submitted ? 'chip-success' : ''}`}>
-          {r.overdue ? 'Terlambat' : r.submitted ? 'Sudah dikumpulkan' : 'Belum dikumpulkan'}
-        </span>
+      <li key={r.assignment.id}>
+        <Link to={`/tugas/${r.assignment.id}`} className="task-card">
+          <span className="task-icon">
+            <Icon name={r.submitted ? 'check' : 'fileText'} size={24} />
+          </span>
+          <div className="task-body">
+            <h3>{r.assignment.title}</h3>
+            <p>
+              {r.courseTitle} · {r.lessonTitle}
+            </p>
+            {snippet ? <p>{snippet}</p> : null}
+            <span className={badgeClass}>{badgeText}</span>
+          </div>
+          <span className="muted" aria-hidden="true">
+            <Icon name="chevronRight" size={20} />
+          </span>
+        </Link>
       </li>
     )
   }
@@ -141,29 +173,59 @@ export default function DeadlinesPage() {
         <EmptyState message="Belum ada tugas dari course yang kamu ikuti. Daftar ke course di Akademi untuk melihat tenggatmu di sini." actionLabel="Lihat Akademi" actionTo="/akademi" />
       ) : (
         <>
-          {overdue.length > 0 && (
+          <div className="pill-tabs" role="tablist" aria-label="Filter tugas">
+            <button
+              type="button"
+              className={`pill-tab${tab === 'aktif' ? ' active' : ''}`}
+              onClick={() => setTab('aktif')}
+            >
+              Aktif ({aktif.length})
+            </button>
+            <button
+              type="button"
+              className={`pill-tab${tab === 'riwayat' ? ' active' : ''}`}
+              onClick={() => setTab('riwayat')}
+            >
+              Riwayat ({done.length})
+            </button>
+          </div>
+          {tab === 'aktif' ? (
+            <>
+              {overdue.length > 0 && (
+                <section className="section">
+                  <div className="dash-section-head">
+                    <h2>Terlambat ({overdue.length})</h2>
+                  </div>
+                  <ul className="list">{overdue.map(renderRow)}</ul>
+                </section>
+              )}
+              {upcoming.length > 0 && (
+                <section className="section">
+                  <div className="dash-section-head">
+                    <h2>Mendatang ({upcoming.length})</h2>
+                  </div>
+                  <ul className="list">{upcoming.map(renderRow)}</ul>
+                </section>
+              )}
+              {noDeadline.length > 0 && (
+                <section className="section">
+                  <div className="dash-section-head">
+                    <h2>Tugas Lainnya ({noDeadline.length})</h2>
+                  </div>
+                  <ul className="list">{noDeadline.map(renderRow)}</ul>
+                </section>
+              )}
+              {aktif.length === 0 && <p className="empty">Tidak ada tugas aktif.</p>}
+            </>
+          ) : done.length > 0 ? (
             <section className="section">
-              <h2>Terlambat ({overdue.length})</h2>
-              <ul className="list">{overdue.map(renderRow)}</ul>
-            </section>
-          )}
-          {upcoming.length > 0 && (
-            <section className="section">
-              <h2>Mendatang ({upcoming.length})</h2>
-              <ul className="list">{upcoming.map(renderRow)}</ul>
-            </section>
-          )}
-          {noDeadline.length > 0 && (
-            <section className="section">
-              <h2>Tanpa tenggat tercatat ({noDeadline.length})</h2>
-              <ul className="list">{noDeadline.map(renderRow)}</ul>
-            </section>
-          )}
-          {done.length > 0 && (
-            <section className="section">
-              <h2>Sudah dikumpulkan ({done.length})</h2>
+              <div className="dash-section-head">
+                <h2>Sudah dikumpulkan ({done.length})</h2>
+              </div>
               <ul className="list">{done.map(renderRow)}</ul>
             </section>
+          ) : (
+            <p className="empty">Belum ada tugas yang terkumpul.</p>
           )}
         </>
       )}

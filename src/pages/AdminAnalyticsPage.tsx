@@ -1,7 +1,9 @@
 // SINEVERSE — Admin Panel: Analytics & Reports (Tahap 4).
-// Agregat read-only per course + ringkasan platform. Semua angka dihitung
-// dari data Supabase yang ada — tanpa data palsu; kosong ditampilkan "—"
-// atau 0. Rata-rata skor dihitung per siswa terdaftar dulu (skor terbaik
+// Agregat read-only per course + ringkasan platform + tren Bulanan/Tahunan
+// (grafik batang CSS dari data asli: enrollment per bulan/tahun dari
+// enrolled_at, sertifikat diterbitkan dari issued_at, submission masuk dari
+// submitted_at). Semua angka dihitung dari data Supabase yang ada — tanpa
+// data palsu; kosong ditampilkan "—" atau 0. Rata-rata skor dihitung per siswa terdaftar dulu (skor terbaik
 // per kuis, seperti GradebookPage), lalu dirata-rata lintas siswa yang
 // punya nilai. Nilai akhir memakai bobot + passing grade baris RPS
 // SVS-SEM1, dengan fallback ke bobot master prompt bila baris tidak ada.
@@ -58,6 +60,106 @@ function fmtScore(v: number | null): string {
   return v === null ? '—' : v.toFixed(1)
 }
 
+const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
+
+interface TrendBucket {
+  label: string
+  value: number
+}
+
+/** 12 bulan kalender terakhir (termasuk bulan berjalan), nol tetap tampil. */
+function monthBuckets(timestamps: string[]): TrendBucket[] {
+  const now = new Date()
+  const buckets: (TrendBucket & { key: string })[] = []
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    buckets.push({
+      label: `${MONTHS_ID[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
+      value: 0,
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+    })
+  }
+  const byKey = new Map(buckets.map((b) => [b.key, b]))
+  for (const ts of timestamps) {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) continue
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const b = byKey.get(key)
+    if (b) b.value += 1
+  }
+  return buckets
+}
+
+/** Tahun dari tahun data paling awal sampai tahun berjalan. */
+function yearBuckets(timestamps: string[]): TrendBucket[] {
+  const years = timestamps
+    .map((ts) => new Date(ts).getFullYear())
+    .filter((y) => !Number.isNaN(y))
+  if (years.length === 0) return []
+  const buckets: TrendBucket[] = []
+  for (let y = Math.min(...years); y <= new Date().getFullYear(); y++) {
+    buckets.push({ label: String(y), value: 0 })
+  }
+  const byYear = new Map(buckets.map((b) => [b.label, b]))
+  for (const y of years) {
+    const b = byYear.get(String(y))
+    if (b) b.value += 1
+  }
+  return buckets
+}
+
+/** Grafik batang CSS murni (tanpa library baru) dari bucket data asli. */
+function BarChart({ data }: { data: TrendBucket[] }) {
+  const max = Math.max(0, ...data.map((d) => d.value))
+  if (data.length === 0) return <p className="empty">Belum ada data.</p>
+  return (
+    <div>
+      <div
+        style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', height: '10rem' }}
+        role="img"
+        aria-label={`Grafik batang: ${data.map((d) => `${d.label} ${d.value}`).join(', ')}`}
+      >
+        {data.map((d) => (
+          <div
+            key={d.label}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              height: '100%',
+            }}
+          >
+            <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>{d.value}</span>
+            <div
+              title={`${d.label}: ${d.value}`}
+              style={{
+                width: '100%',
+                maxWidth: '2.5rem',
+                height: max > 0 ? `${Math.max(d.value > 0 ? 4 : 0, (d.value / max) * 130)}px` : '2px',
+                background: 'var(--film-green)',
+                borderRadius: '4px 4px 0 0',
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        {data.map((d) => (
+          <span
+            key={d.label}
+            style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: '0.75rem', color: '#5b6b7c' }}
+          >
+            {d.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminAnalyticsPage() {
   const { profile } = useAuth()
   const [rows, setRows] = useState<CourseRow[] | null>(null)
@@ -65,6 +167,11 @@ export default function AdminAnalyticsPage() {
   const [summary, setSummary] = useState<PlatformSummary | null>(null)
   const [weights, setWeights] = useState(FALLBACK_WEIGHTS)
   const [passing, setPassing] = useState(PASSING_GRADE)
+  const [trendTab, setTrendTab] = useState<'bulanan' | 'tahunan'>('bulanan')
+  const [trend, setTrend] = useState<{
+    bulanan: { enrollments: TrendBucket[]; certificates: TrendBucket[]; submissions: TrendBucket[] }
+    tahunan: { enrollments: TrendBucket[]; certificates: TrendBucket[]; submissions: TrendBucket[] }
+  } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,17 +188,24 @@ export default function AdminAnalyticsPage() {
           { data: enrRowsRaw },
           { data: modRowsRaw },
           { data: rpsRow },
-          { count: certCount },
+          { data: certRowsRaw },
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
-          supabase.from('enrollments').select('id,user_id,course_id'),
+          supabase.from('enrollments').select('id,user_id,course_id,enrolled_at'),
           supabase.from('modules').select('id,course_id'),
           supabase.from('rps').select('*').eq('code', BRAND.rpsCode).maybeSingle(),
-          supabase.from('certificates').select('id', { count: 'exact', head: true }),
+          supabase.from('certificates').select('id,issued_at'),
         ])
         const profs = (profileRows ?? []) as { id: string; role: string }[]
-        const enrRows = (enrRowsRaw ?? []) as { id: string; user_id: string; course_id: string }[]
+        const enrRows = (enrRowsRaw ?? []) as {
+          id: string
+          user_id: string
+          course_id: string
+          enrolled_at: string
+        }[]
+        const certRows = (certRowsRaw ?? []) as { id: string; issued_at: string }[]
+        const certCount = certRows.length
         const modRows = (modRowsRaw ?? []) as { id: string; course_id: string }[]
         const rps = rpsRow as unknown as Rps | null
         const w = {
@@ -135,11 +249,16 @@ export default function AdminAnalyticsPage() {
             .in('quiz_id', quizRows.length > 0 ? quizRows.map((q) => q.id) : noId),
           supabase
             .from('submissions')
-            .select('assignment_id,user_id,score')
+            .select('assignment_id,user_id,score,submitted_at')
             .in('assignment_id', assignRows.length > 0 ? assignRows.map((a) => a.id) : noId),
         ])
         const attRows = (attRaw ?? []) as { quiz_id: string; user_id: string; score: number | null }[]
-        const subRows = (subRaw ?? []) as { assignment_id: string; user_id: string; score: number | null }[]
+        const subRows = (subRaw ?? []) as {
+          assignment_id: string
+          user_id: string
+          score: number | null
+          submitted_at: string
+        }[]
 
         // Nama mentor (batch, bukan per course).
         const mentorIds = courseList.map((c) => c.mentor_id).filter((id): id is string => Boolean(id))
@@ -314,6 +433,23 @@ export default function AdminAnalyticsPage() {
         setTopLessons(top)
         setWeights(w)
         setPassing(pass)
+        // Tren dari timestamp asli: enrollment (enrolled_at), sertifikat
+        // (issued_at), submission (submitted_at).
+        const enrTs = enrRows.map((e) => e.enrolled_at)
+        const certTs = certRows.map((c) => c.issued_at)
+        const subTs = subRows.map((s) => s.submitted_at)
+        setTrend({
+          bulanan: {
+            enrollments: monthBuckets(enrTs),
+            certificates: monthBuckets(certTs),
+            submissions: monthBuckets(subTs),
+          },
+          tahunan: {
+            enrollments: yearBuckets(enrTs),
+            certificates: yearBuckets(certTs),
+            submissions: yearBuckets(subTs),
+          },
+        })
         setSummary({
           siswa: profs.filter((p) => p.role === 'siswa').length,
           mentor: profs.filter((p) => p.role === 'mentor').length,
@@ -354,22 +490,64 @@ export default function AdminAnalyticsPage() {
       <WorkspaceNav entries={ADMIN_NAV} />
 
       <section className="section">
-        <h2>Ringkasan platform</h2>
+        <div className="dash-section-head"><h2>Ringkasan platform</h2></div>
         {summary === null ? (
           <p className="empty">Belum ada data platform.</p>
         ) : (
-          <dl className="profile-list">
-            <div><dt>Total siswa</dt><dd>{summary.siswa}</dd></div>
-            <div><dt>Total mentor</dt><dd>{summary.mentor}</dd></div>
-            <div><dt>Total enrollment</dt><dd>{summary.enrollments}</dd></div>
-            <div><dt>Sertifikat diterbitkan</dt><dd>{summary.certificates}</dd></div>
-            <div><dt>Total postingan diskusi</dt><dd>{summary.discussionPosts}</dd></div>
-          </dl>
+          <div className="stat-grid">
+            <div className="stat-card"><span className="stat-num">{summary.siswa}</span><span className="stat-label">Total siswa</span></div>
+            <div className="stat-card"><span className="stat-num">{summary.mentor}</span><span className="stat-label">Total mentor</span></div>
+            <div className="stat-card"><span className="stat-num">{summary.enrollments}</span><span className="stat-label">Total enrollment</span></div>
+            <div className="stat-card"><span className="stat-num">{summary.certificates}</span><span className="stat-label">Sertifikat diterbitkan</span></div>
+            <div className="stat-card"><span className="stat-num">{summary.discussionPosts}</span><span className="stat-label">Postingan diskusi</span></div>
+          </div>
         )}
       </section>
 
       <section className="section">
-        <h2>Per course</h2>
+        <div className="dash-section-head">
+          <h2>Tren</h2>
+          <div role="group" aria-label="Periode tren" style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className={trendTab === 'bulanan' ? 'btn btn-primary btn-small' : 'btn btn-ghost btn-small'}
+              aria-pressed={trendTab === 'bulanan'}
+              onClick={() => setTrendTab('bulanan')}
+            >
+              Bulanan
+            </button>
+            <button
+              type="button"
+              className={trendTab === 'tahunan' ? 'btn btn-primary btn-small' : 'btn btn-ghost btn-small'}
+              aria-pressed={trendTab === 'tahunan'}
+              onClick={() => setTrendTab('tahunan')}
+            >
+              Tahunan
+            </button>
+          </div>
+        </div>
+        {trend === null ? (
+          <p className="empty">Belum ada data tren.</p>
+        ) : (
+          <>
+            <h3>Enrollment baru</h3>
+            <BarChart data={trend[trendTab].enrollments} />
+            <h3 style={{ marginTop: '1.25rem' }}>Sertifikat diterbitkan</h3>
+            <BarChart data={trend[trendTab].certificates} />
+            <h3 style={{ marginTop: '1.25rem' }}>Submission masuk</h3>
+            <BarChart data={trend[trendTab].submissions} />
+            <p className="muted">
+              {trendTab === 'bulanan'
+                ? 'Bulanan = 12 bulan kalender terakhir, termasuk bulan berjalan.'
+                : 'Tahunan = tahun data paling awal sampai tahun berjalan.'}{' '}
+              Dihitung dari enrolled_at, issued_at, dan submitted_at yang tersimpan.
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="dash-section-head"><h2>Per course</h2></div>
         {rows !== null && rows.length === 0 ? (
           <p className="empty">Belum ada course.</p>
         ) : (
@@ -423,7 +601,7 @@ export default function AdminAnalyticsPage() {
       </section>
 
       <section className="section">
-        <h2>Lesson paling banyak didiskusikan</h2>
+        <div className="dash-section-head"><h2>Lesson paling banyak didiskusikan</h2></div>
         {topLessons.length === 0 ? (
           <p className="empty">Belum ada postingan diskusi.</p>
         ) : (

@@ -15,6 +15,8 @@ import type { Course, CourseClaim, MentorApplication, MentorApplicationInput } f
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
+import Icon from '../components/icons'
+import { fmtDate } from '../lib/guarded'
 
 interface MentorCourseRow {
   course: Course
@@ -33,14 +35,34 @@ function toInput(app: MentorApplication): Partial<MentorApplicationInput> {
   }
 }
 
+type ClaimTab = 'diampu' | 'pengajuan'
+
+function claimLabel(status: string): string {
+  if (status === 'pending') return 'Menunggu'
+  if (status === 'approved') return 'Disetujui'
+  if (status === 'rejected') return 'Ditolak'
+  if (status === 'revision_required') return 'Revisi'
+  return status
+}
+
+function claimBadgeClass(status: string): string {
+  if (status === 'approved') return 'task-deadline normal'
+  if (status === 'pending' || status === 'revision_required') return 'task-deadline soon'
+  return 'task-deadline'
+}
+
 export default function MentorPage() {
   const { user, profile } = useAuth()
   const [rows, setRows] = useState<MentorCourseRow[]>([])
+  const [totalStudents, setTotalStudents] = useState(0)
+  const [totalPending, setTotalPending] = useState(0)
   const [unassigned, setUnassigned] = useState<Course[]>([])
   const [claims, setClaims] = useState<CourseClaim[]>([])
+  const [allCourses, setAllCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [tab, setTab] = useState<ClaimTab>('diampu')
   // Lamaran mentor milik pengguna (migrasi 027): status ditampilkan apa
   // adanya — pending, disetujui, ditolak (dengan alasan), atau diminta
   // revisi (dengan catatan + bisa diajukan ulang).
@@ -76,13 +98,15 @@ export default function MentorPage() {
         // enrollments + modules paralel, lalu lessons → assignments →
         // submissions belum dinilai; jumlah siswa/pending dihitung di JS.
         let out: MentorCourseRow[] = []
+        let enrRows: { id: string; course_id: string; user_id: string }[] = []
+        const pendingByCourse = new Map<string, number>()
         if (mine.length > 0) {
           const mineIds = mine.map((c) => c.id)
           const [{ data: enr }, { data: mods }] = await Promise.all([
-            supabase.from('enrollments').select('id,course_id').in('course_id', mineIds),
+            supabase.from('enrollments').select('id,course_id,user_id').in('course_id', mineIds),
             supabase.from('modules').select('id,course_id').in('course_id', mineIds),
           ])
-          const enrRows = (enr ?? []) as { id: string; course_id: string }[]
+          enrRows = (enr ?? []) as { id: string; course_id: string; user_id: string }[]
           const modRows = (mods ?? []) as { id: string; course_id: string }[]
           const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
           let lessonRows: { id: string; module_id: string }[] = []
@@ -116,7 +140,6 @@ export default function MentorPage() {
           for (const e of enrRows) {
             studentsByCourse.set(e.course_id, (studentsByCourse.get(e.course_id) ?? 0) + 1)
           }
-          const pendingByCourse = new Map<string, number>()
           for (const s of subRows) {
             const cid = assignCourse.get(s.assignment_id)
             if (!cid) continue
@@ -130,8 +153,14 @@ export default function MentorPage() {
         }
         if (!cancelled) {
           setRows(out)
+          // Total siswa = siswa UNIK di semua course yang diampu (satu siswa
+          // yang mengambil dua course dihitung sekali); total tugas menunggu
+          // = jumlah submission belum dinilai di course yang diampu.
+          setTotalStudents(new Set(enrRows.map((e) => e.user_id)).size)
+          setTotalPending([...pendingByCourse.values()].reduce((a, b) => a + b, 0))
           setUnassigned(courses.filter((c) => !c.mentor_id))
           setClaims((cl ?? []) as CourseClaim[])
+          setAllCourses(courses)
           setMyApplication(myApp)
         }
       } catch (err) {
@@ -196,6 +225,8 @@ export default function MentorPage() {
   if (loading) return <div className="page"><p className="muted">Memuat Mentor Workspace…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
+  const courseById = new Map(allCourses.map((c) => [c.id, c]))
+
   return (
     <div className="page">
       <PageHeader
@@ -208,7 +239,9 @@ export default function MentorPage() {
 
       {isSiswa && (
         <section className="section">
-          <h2>Gabung sebagai Mentor</h2>
+          <div className="dash-section-head">
+            <h2>Gabung sebagai Mentor</h2>
+          </div>
           {myApplication?.status === 'pending' && (
             <p className="notice-box">Lamaran kamu masih menunggu persetujuan admin. Peran mentor aktif begitu lamaran disetujui.</p>
           )}
@@ -255,23 +288,104 @@ export default function MentorPage() {
 
       {isMentor && (
         <>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <span className="stat-num">{rows.length}</span>
+              <span className="stat-label">Course Diampu</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-num">{totalStudents}</span>
+              <span className="stat-label">Total Siswa</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-num">{totalPending}</span>
+              <span className="stat-label">Tugas Menunggu Penilaian</span>
+              <Link to="/mentor/penilaian">Lihat antrean →</Link>
+            </div>
+          </div>
           <section className="section">
-            <h2>{isAdmin ? 'Semua Course' : 'Course Saya'}</h2>
-            {rows.length === 0 ? (
-              <p className="empty">Kamu belum mengampu course apa pun. Ajukan course tanpa mentor di bawah.</p>
-            ) : (
-              <ul className="course-list">
-                {rows.map((r) => (
-                  <li key={r.course.id} className="course-card">
-                    <Link to={`/mentor/course/${r.course.id}`}>
-                      <h3>{r.course.title}</h3>
-                      <p className="muted">
-                        {r.students} siswa · {r.pending} submission menunggu penilaian
-                      </p>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+            <div className="dash-section-head">
+              <h2>{isAdmin ? 'Semua Course' : 'Course Saya'}</h2>
+              <Link className="dash-more" to="/mentor/course-builder">Lihat Semua →</Link>
+            </div>
+            <div className="pill-tabs">
+              <button type="button" className={`pill-tab${tab === 'diampu' ? ' active' : ''}`} onClick={() => setTab('diampu')}>
+                Diampu ({rows.length})
+              </button>
+              <button type="button" className={`pill-tab${tab === 'pengajuan' ? ' active' : ''}`} onClick={() => setTab('pengajuan')}>
+                Pengajuan ({claims.length})
+              </button>
+            </div>
+            {tab === 'diampu' && (
+              <>
+                {rows.length === 0 ? (
+                  <p className="empty">Kamu belum mengampu course apa pun. Ajukan course tanpa mentor di bawah.</p>
+                ) : (
+                  <ul className="course-list">
+                    {rows.map((r) => (
+                      <li key={r.course.id}>
+                        <Link className="dash-course" to={`/mentor/course/${r.course.id}`}>
+                          <span className="dash-course-cover">
+                            {r.course.cover_url ? (
+                              <img src={r.course.cover_url} alt="" />
+                            ) : (
+                              <Icon name="academy" size={40} />
+                            )}
+                            <span className="dash-course-status">Aktif</span>
+                          </span>
+                          <span className="dash-course-body">
+                            <h3>{r.course.title}</h3>
+                            <p className="dash-course-meta">
+                              {r.students} siswa • {r.pending} tugas menunggu penilaian
+                            </p>
+                          </span>
+                          <span className="dash-course-play">
+                            <Icon name="play" size={20} />
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+            {tab === 'pengajuan' && (
+              <>
+                {claims.length === 0 ? (
+                  <p className="empty">Belum ada pengajuan mengampu course.</p>
+                ) : (
+                  <ul className="list">
+                    {claims.map((cl) => {
+                      const course = courseById.get(cl.course_id)
+                      return (
+                        <li key={cl.id} className="task-card">
+                          <span className="task-icon">
+                            <Icon name="academy" size={24} />
+                          </span>
+                          <span className="task-body">
+                            <h3>{course?.title ?? 'Course'}</h3>
+                            <p>
+                              Diajukan {fmtDate(cl.created_at)}
+                              {cl.decision_note ? ` • ${cl.decision_note}` : ''}
+                            </p>
+                            <p>
+                              <span className={claimBadgeClass(cl.status)}>{claimLabel(cl.status)}</span>
+                              {cl.status === 'rejected' && (
+                                <>
+                                  {' '}
+                                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(cl.course_id)}>
+                                    Ajukan Lagi
+                                  </button>
+                                </>
+                              )}
+                            </p>
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </>
             )}
             <p>
               <Link to="/mentor/penilaian" className="btn btn-primary">Antrean Penilaian</Link>{' '}
@@ -289,26 +403,28 @@ export default function MentorPage() {
           </section>
 
           <section className="section">
-            <h2>Ajukan untuk Mengampu</h2>
+            <div className="dash-section-head">
+              <h2>Ajukan untuk Mengampu</h2>
+            </div>
             {unassigned.length === 0 ? (
               <p className="empty">Tidak ada course tanpa mentor saat ini.</p>
             ) : (
-              <ul>
+              <ul className="list">
                 {unassigned.map((c) => {
                   const claim = claims.find((cl) => cl.course_id === c.id)
                   return (
-                    <li key={c.id}>
-                      {c.title}{' '}
+                    <li key={c.id} className="list-row">
+                      <span>{c.title}</span>
                       {claim ? (
                         claim.status === 'rejected' ? (
-                          <>
-                            <span className="muted">— pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
+                          <span>
+                            <span className="muted">Pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
                             <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>
                               Ajukan Lagi
                             </button>
-                          </>
+                          </span>
                         ) : (
-                          <span className="muted">— pengajuan: {claim.status === 'approved' ? 'Disetujui' : 'Menunggu persetujuan'}</span>
+                          <span className="chip">{claim.status === 'approved' ? 'Disetujui' : 'Menunggu persetujuan'}</span>
                         )
                       ) : (
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>

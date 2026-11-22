@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchAssignmentsForLessons,
@@ -70,6 +71,7 @@ export default function LessonDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [access, setAccess] = useState<'checking' | 'allowed' | 'locked'>('checking')
+  const [lockedReason, setLockedReason] = useState<string | null>(null)
   const [assignError, setAssignError] = useState<string | null>(null)
   const [quizError, setQuizError] = useState<string | null>(null)
   const [discussionError, setDiscussionError] = useState<string | null>(null)
@@ -150,6 +152,7 @@ export default function LessonDetailPage() {
       setDiscussions([])
       setSiblings([])
       setNotice(null)
+      setLockedReason(null)
 
       // 1. Lesson dulu. Hanya kegagalan di sini yang boleh menampilkan
       // error seluruh halaman.
@@ -200,6 +203,12 @@ export default function LessonDetailPage() {
             const course = await fetchCourse(courseInfo.courseId)
             if (course && course.mentor_id === user.id) {
               allowed = true
+            } else if (course && !course.mentor_id) {
+              // Master Prompt §3: siswa belum boleh memulai course sebelum
+              // mentor ditetapkan — berlaku juga untuk akses langsung via URL,
+              // bukan hanya lewat tautan lesson di halaman course.
+              setLockedReason('Course ini belum memiliki mentor — lesson belum bisa dimulai.')
+              allowed = false
             } else {
               try {
                 const enr = await fetchEnrollment(user.id, courseInfo.courseId)
@@ -397,7 +406,7 @@ export default function LessonDetailPage() {
   if (access === 'locked') {
     return (
       <div className="page">
-        <p className="error-box">Lesson ini hanya untuk peserta course.</p>
+        <p className="error-box">{lockedReason ?? 'Lesson ini hanya untuk peserta course.'}</p>
         {courseId ? (
           <Link to={`/course/${courseId}`}>
             Buka halaman course{courseTitle ? `: ${courseTitle}` : ''}
@@ -668,18 +677,21 @@ export default function LessonDetailPage() {
           ← {courseTitle || 'Course'}
         </Link>
       )}
+      <p className="muted">Materi {lesson.order_index}</p>
       <h1>
         {lesson.lesson_code ? `${lesson.lesson_code}, ` : ''}
         {lesson.title}
       </h1>
-      <p className="muted">
-        Status: {!user
-          ? 'Masuk untuk melacak progres'
-          : status === 'completed'
-            ? 'Selesai'
-            : status === 'in_progress'
-              ? 'Sedang dipelajari'
-              : 'Belum dimulai'}
+      <p>
+        <span className={`chip ${status === 'completed' ? 'chip-success' : ''}`}>
+          {!user
+            ? 'Masuk untuk melacak progres'
+            : status === 'completed'
+              ? 'Selesai'
+              : status === 'in_progress'
+                ? 'Sedang dipelajari'
+                : 'Belum dimulai'}
+        </span>
       </p>
 
       <ol className="flow-strip" aria-label="Alur belajar">
@@ -702,11 +714,13 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Video">
-        <h2>WATCH</h2>
+        <div className="dash-section-head">
+          <h2>Video Materi</h2>
+        </div>
         {!lesson.video_url ? (
-          <p className="empty">Belum ada video untuk lesson ini.</p>
+          <div className="lesson-video-empty">Materi ini tidak memiliki video. Baca materi di bawah ini.</div>
         ) : embed && embed.kind !== 'link' && embed.embedUrl ? (
-          <div className="video-wrap">
+          <div className="lesson-video">
             <iframe
               src={embed.embedUrl}
               title={`Video: ${lesson.title}`}
@@ -716,15 +730,17 @@ export default function LessonDetailPage() {
           </div>
         ) : (
           <p>
-            <a href={lesson.video_url} target="_blank" rel="noreferrer" className="btn btn-secondary">
+            <a href={lesson.video_url} target="_blank" rel="noreferrer" className="btn-mint">
               Buka Video (tautan eksternal)
             </a>
           </p>
         )}
       </section>
 
-      <section className="section" aria-label="Materi bacaan">
-        <h2>READ</h2>
+      <section className="section" aria-label="Tentang Materi">
+        <div className="dash-section-head">
+          <h2>Tentang Materi</h2>
+        </div>
         {lesson.content ? (
           <div className="lesson-content">{lesson.content}</div>
         ) : (
@@ -734,69 +750,55 @@ export default function LessonDetailPage() {
 
       {resourcesError && <p className="muted">{resourcesError}</p>}
       {resources.length > 0 && (
-        <section className="section" aria-label="Materi tambahan">
-          <h2>Materi Tambahan</h2>
-          <ul>
-            {resources.map((r) => (
-              <li key={r.id}>
-                {r.kind === 'pdf' ? (
-                  <>
+        <section className="section" aria-label="File Pendukung">
+          <div className="dash-section-head">
+            <h2>File Pendukung</h2>
+          </div>
+          <ul className="list">
+            {resources.map((r) => {
+              const kindLabel =
+                r.kind === 'pdf'
+                  ? 'PDF'
+                  : r.kind === 'reading'
+                    ? 'Bacaan'
+                    : r.kind === 'video'
+                      ? 'Video'
+                      : r.kind === 'image'
+                        ? 'Gambar'
+                        : r.kind === 'link'
+                          ? 'Tautan'
+                          : 'File'
+              const iconName = r.kind === 'reading' ? 'book' : r.kind === 'video' ? 'film' : 'fileText'
+              const rowBody = (
+                <>
+                  <span className="file-icon">
+                    <Icon name={iconName} size={20} />
+                  </span>
+                  <span className="file-body">
                     <strong>{r.title}</strong>
-                    {r.url ? (
-                      <>
-                        {' — '}
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          Unduh PDF
-                        </a>
-                      </>
-                    ) : null}
-                  </>
-                ) : r.kind === 'video' ? (
-                  <>
-                    <strong>{r.title}</strong>
-                    {r.url ? (
-                      <>
-                        {' — '}
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          Tonton video
-                        </a>
-                      </>
-                    ) : null}
-                  </>
-                ) : r.kind === 'reading' ? (
-                  <>
-                    <strong>{r.title}</strong>
-                    {r.body ? <p>{r.body}</p> : r.url ? (
-                      <>
-                        {' — '}
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          Baca materi
-                        </a>
-                      </>
-                    ) : null}
-                  </>
-                ) : r.kind === 'image' ? (
-                  <>
-                    <strong>{r.title}</strong>
-                    {r.url ? (
-                      <div>
-                        <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {r.url ? (
-                      <a href={r.url} target="_blank" rel="noreferrer">
-                        {r.title}
-                      </a>
-                    ) : (
-                      <strong>{r.title}</strong>
-                    )}
-                  </>
-                )}
-              </li>
-            ))}
+                    <span>{kindLabel}</span>
+                  </span>
+                  {r.url ? <Icon name="download" size={18} /> : null}
+                </>
+              )
+              return (
+                <li key={r.id}>
+                  {r.url ? (
+                    <a className="file-row" href={r.url} target="_blank" rel="noreferrer">
+                      {rowBody}
+                    </a>
+                  ) : (
+                    <div className="file-row">{rowBody}</div>
+                  )}
+                  {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+                  {r.kind === 'image' && r.url ? (
+                    <div>
+                      <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
+                    </div>
+                  ) : null}
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}
@@ -843,7 +845,10 @@ export default function LessonDetailPage() {
       </section>
 
       {user && (
-        <>
+        <section className="section" aria-label="Selesai dan Lanjutkan">
+          <div className="dash-section-head">
+            <h2>Selesai &amp; Lanjutkan</h2>
+          </div>
           {notice && <p className="notice-box">{notice}</p>}
           {isAdmin ? (
             <p className="muted">
@@ -852,14 +857,20 @@ export default function LessonDetailPage() {
           ) : (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn-mint"
               onClick={handleComplete}
               disabled={status === 'completed' || saving}
             >
-              {saving ? 'Menyimpan…' : status === 'completed' ? 'Lesson Selesai' : 'Tandai Selesai'}
+              {saving
+                ? 'Menyimpan…'
+                : status === 'completed'
+                  ? 'Lesson Selesai'
+                  : next
+                    ? 'Selesai & Lanjutkan →'
+                    : 'Tandai Selesai'}
             </button>
           )}
-        </>
+        </section>
       )}
 
       <nav className="lesson-nav" aria-label="Navigasi lesson">

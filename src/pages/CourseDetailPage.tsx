@@ -11,11 +11,24 @@
 //
 // Course dimuat dulu; nama mentor dan modul dimuat independen agar
 // kegagalannya tidak menenggelamkan halaman course.
+//
+// Desain dashboard (22 Nov 2026): hero foto, baris judul + pil status,
+// tab garis bawah (Deskripsi / Materi / Tugas / Diskusi; admin:
+// Ringkasan / Aktivitas), kartu tugas dengan lencana tenggat.
+//
+// Baris statistik mentor/admin (22 Nov 2026): Total Siswa +
+// Tingkat Selesai dihitung dari enrollments + lesson_progress asli
+// (statsTask di load(); "—" bila belum ada enrollment atau query
+// gagal). CTA "Kelola Course" tetap tautan struktural tanpa angka.
+// Nilai per Komponen dan Kelas Live tetap memakai data asli yang
+// sudah dimuat sebelumnya. Gate §3: lesson terkunci untuk siswa bila
+// course belum punya mentor, termasuk peserta yang sudah terdaftar.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
-import { GRADEBOOK_WEIGHTS, PASSING_GRADE, courseCoverKey, rpsWeekLabel } from '../lib/brand'
+import { GRADEBOOK_WEIGHTS, PASSING_GRADE, RPS_COURSE_ORDER, rpsWeekLabel } from '../lib/brand'
 import {
   avgOrNull,
   bestScoresByQuiz,
@@ -53,6 +66,35 @@ import type {
   QuizAttempt,
   Submission,
 } from '../lib/types'
+
+// Ilustrasi course menurut urutan RPS (index+1 = nomor file).
+const COURSE_ILLUSTRATIONS = [
+  './illustrations/course-01-dasar-sinematografi.jpg',
+  './illustrations/course-02-penulisan-skenario.jpg',
+  './illustrations/course-03-storyboard.jpg',
+  './illustrations/course-04-penyutradaraan.jpg',
+  './illustrations/course-05-editing-film.jpg',
+  './illustrations/course-06-tata-suara.jpg',
+  './illustrations/course-07-film-dokumenter.jpg',
+  './illustrations/course-08-jobdesk-crew.jpg',
+  './illustrations/course-09-produksi-manajemen.jpg',
+  './illustrations/course-10-akting-kamera.jpg',
+] as const
+
+/** Lencana tenggat tugas dari due_date asli: terlewat (merah), dekat
+ *  (≤3 hari, kuning), jauh (hijau), atau tanpa tenggat (abu-abu). */
+function deadlineInfo(dueDate: string | null | undefined): { cls: string; text: string } {
+  if (!dueDate) return { cls: 'task-deadline none', text: 'Tanpa tenggat' }
+  const due = new Date(dueDate)
+  const dateText = due.toLocaleDateString('id-ID', { dateStyle: 'medium' })
+  if (due.getTime() < Date.now()) {
+    return { cls: 'task-deadline', text: `Terlewat: ${dateText}` }
+  }
+  if (due.getTime() - Date.now() <= 3 * 24 * 60 * 60 * 1000) {
+    return { cls: 'task-deadline soon', text: `Tenggat: ${dateText}` }
+  }
+  return { cls: 'task-deadline normal', text: `Tenggat: ${dateText}` }
+}
 
 /** Lima komponen nilai satu course untuk satu pengguna — perhitungan yang
  *  sama dengan GradebookPage (formula master prompt Tahap 3). Kuis biasa
@@ -142,6 +184,19 @@ export default function CourseDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Tugas + diskusi course untuk panel tab (dimuat dari lesson course).
+  const [courseAssignments, setCourseAssignments] = useState<Assignment[]>([])
+  const [courseDiscussions, setCourseDiscussions] = useState<Discussion[]>([])
+  // Baris statistik mentor/admin (22 Nov 2026): Total Siswa +
+  // Tingkat Selesai dari enrollments + lesson_progress asli.
+  // null = belum dimuat; students null = query gagal (tampil "—").
+  const [courseStats, setCourseStats] = useState<{
+    students: number | null
+    completionPct: number | null
+  } | null>(null)
+  // Tab aktif: siswa/mentor Deskripsi / Materi / Tugas / Diskusi;
+  // admin Ringkasan / Aktivitas.
+  const [activeTab, setActiveTab] = useState('deskripsi')
 
   const [code, setCode] = useState('')
   const [askCode, setAskCode] = useState(false)
@@ -275,6 +330,82 @@ export default function CourseDetailPage() {
           }
         })()
 
+        const listsTask = (async () => {
+          // Tugas + diskusi course untuk panel tab: satu query per daftar
+          // untuk semua lesson course (fungsi yang sama dipakai gradesTask).
+          try {
+            const lessons = await modulesTask
+            if (lessons.length === 0) return
+            const lessonIds = lessons.map((l) => l.id)
+            const [a, d] = await Promise.all([
+              fetchAssignmentsForLessons(lessonIds),
+              fetchDiscussionsForLessons(lessonIds),
+            ])
+            if (!cancelled) {
+              setCourseAssignments(a)
+              setCourseDiscussions(d)
+            }
+          } catch {
+            // Gagal dimuat: panel menampilkan keadaan kosong, bukan angka palsu.
+          }
+        })()
+
+        const statsTask = (async () => {
+          // Baris statistik mentor/admin: Total Siswa (jumlah enrollment
+          // course ini) dan Tingkat Selesai (% peserta yang menyelesaikan
+          // SEMUA lesson course). Tanpa enrollment, Tingkat Selesai "—".
+          // Hanya mentor pengampu + admin yang melihat baris ini.
+          const canViewStats =
+            (user !== null && c.mentor_id === user.id) || profile?.role === 'admin'
+          if (!canViewStats) return
+          try {
+            const lessons = await modulesTask
+            const { data: enrData, error: enrErr } = await supabase
+              .from('enrollments')
+              .select('user_id')
+              .eq('course_id', c.id)
+            if (enrErr) throw enrErr
+            const enrolledIds = [
+              ...new Set(((enrData ?? []) as { user_id: string }[]).map((e) => e.user_id)),
+            ]
+            if (enrolledIds.length === 0 || lessons.length === 0) {
+              if (!cancelled) {
+                setCourseStats({ students: enrolledIds.length, completionPct: null })
+              }
+              return
+            }
+            const lessonIds = lessons.map((l) => l.id)
+            const { data: progData, error: progErr } = await supabase
+              .from('lesson_progress')
+              .select('lesson_id,user_id')
+              .eq('status', 'completed')
+              .in('lesson_id', lessonIds)
+              .in('user_id', enrolledIds)
+            if (progErr) throw progErr
+            const doneByUser = new Map<string, Set<string>>()
+            for (const p of (progData ?? []) as { lesson_id: string; user_id: string }[]) {
+              let s = doneByUser.get(p.user_id)
+              if (!s) {
+                s = new Set()
+                doneByUser.set(p.user_id, s)
+              }
+              s.add(p.lesson_id)
+            }
+            let fullyDone = 0
+            for (const uid of enrolledIds) {
+              if ((doneByUser.get(uid)?.size ?? 0) >= lessonIds.length) fullyDone += 1
+            }
+            if (!cancelled) {
+              setCourseStats({
+                students: enrolledIds.length,
+                completionPct: Math.round((fullyDone / enrolledIds.length) * 100),
+              })
+            }
+          } catch {
+            if (!cancelled) setCourseStats({ students: null, completionPct: null })
+          }
+        })()
+
         const userTasks = user
           ? Promise.all([
               (async () => {
@@ -325,7 +456,7 @@ export default function CourseDetailPage() {
             ])
           : Promise.resolve()
 
-        await Promise.all([mentorTask, modulesTask, userTasks, gradesTask, liveTask])
+        await Promise.all([mentorTask, modulesTask, userTasks, gradesTask, liveTask, listsTask, statsTask])
       } catch {
         if (!cancelled) setError('Gagal memuat course. Periksa koneksi lalu coba lagi.')
       } finally {
@@ -364,7 +495,6 @@ export default function CourseDetailPage() {
   const hasKey = Boolean(course.enrollment_key)
   const noMentor = course.mentor_id === null
   const week = rpsWeekLabel(course.id)
-  const coverKey = courseCoverKey(course.title)
   const isCourseMentor = user !== null && course.mentor_id !== null && course.mentor_id === user.id
   const isOtherMentor =
     profile?.role === 'mentor' && course.mentor_id !== null && course.mentor_id !== user?.id
@@ -388,6 +518,19 @@ export default function CourseDetailPage() {
       const label = m.order_index === 1 ? 'Section 1' : 'Section 2'
       return `${label}: ${done >= 5 ? 'Selesai' : `${done}/5`}`
     })
+  // Hero: cover_url bila ada, kalau tidak ilustrasi RPS, kalau tidak ada
+  // keduanya (course di luar urutan RPS) tampilkan fallback gradasi.
+  const rpsIdx = (RPS_COURSE_ORDER as readonly string[]).indexOf(course.id)
+  const heroSrc = course.cover_url ?? (rpsIdx === -1 ? null : COURSE_ILLUSTRATIONS[rpsIdx])
+  const isComplete = enrolled && allLessons.length > 0 && percent === 100
+  const lessonTitleById = new Map(allLessons.map((l) => [l.id, l.title]))
+  // Jumlah balasan dihitung dari baris diskusi itu sendiri (parent_id),
+  // bukan dari kolom hitungan — tidak ada data like di aplikasi ini.
+  const replyCounts = new Map<string, number>()
+  for (const d of courseDiscussions) {
+    if (d.parent_id) replyCounts.set(d.parent_id, (replyCounts.get(d.parent_id) ?? 0) + 1)
+  }
+  const topDiscussions = courseDiscussions.filter((d) => !d.parent_id)
 
   async function doEnroll() {
     if (!user || !course) return
@@ -490,318 +633,515 @@ export default function CourseDetailPage() {
     }
   }
 
+  // Blok pendaftaran (tidak berubah isinya; tombol utama memakai btn-mint).
+  // Untuk admin blok ini tidak ditampilkan — admin hanya memantau.
+  const enrollBlock = !enrolled ? (
+    <div className="enroll-block">
+      {isAdmin ? (
+        <p className="muted">
+          Kamu masuk sebagai admin. Admin hanya memantau progres course, admin tidak
+          mengambil course.
+        </p>
+      ) : isCourseMentor ? (
+        <p className="muted">
+          Kamu mengampu course ini. Lesson sudah terbuka untukmu.
+        </p>
+      ) : noMentor ? (
+        <>
+          <p className="muted">
+            Course ini belum memiliki mentor. Ikuti daftar tunggu, kamu akan diberi tahu
+            saat mentor ditugaskan.
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn-mint"
+              onClick={handleWaitlist}
+              disabled={busy || onWaitlist}
+            >
+              {onWaitlist ? 'Sudah di Daftar Tunggu' : 'Ikuti untuk Bergabung'}
+            </button>
+            {profile?.role === 'mentor' && (
+              myClaim?.status === 'rejected' ? (
+                <>
+                  <p className="error-box">
+                    Pengajuan mengampu kamu ditolak{myClaim.decision_note ? `: ${myClaim.decision_note}` : '.'}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleClaim}
+                    disabled={claimBusy}
+                  >
+                    {claimBusy ? 'Mengirim…' : 'Ajukan Lagi'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleClaim}
+                  disabled={claimBusy || claimed}
+                >
+                  {claimed
+                    ? 'Pengajuan Mengampu Terkirim'
+                    : claimBusy
+                      ? 'Mengirim…'
+                      : 'Ajukan untuk Mengampu'}
+                </button>
+              )
+            )}
+          </div>
+        </>
+      ) : isOtherMentor ? (
+        <p className="notice-box">Course ini diampu mentor lain.</p>
+      ) : (
+        <>
+          <button type="button" className="btn-mint" onClick={handleEnrollClick} disabled={busy}>
+            {busy ? 'Memproses…' : 'Ambil Course'}
+          </button>
+          {askCode && (
+            <form className="form form-inline" onSubmit={handleCodeSubmit}>
+              <label>
+                Kode Akses
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="Masukkan kode akses course"
+                  autoComplete="off"
+                />
+              </label>
+              <button type="submit" className="btn btn-secondary" disabled={busy}>
+                Konfirmasi Kode
+              </button>
+            </form>
+          )}
+        </>
+      )}
+      {codeError && <p className="error-box">{codeError}</p>}
+      {!user && <p className="muted">Masuk terlebih dahulu untuk mengambil course ini.</p>}
+    </div>
+  ) : null
+
+  // "Yang akan kamu pelajari": semua judul lesson asli di course ini.
+  const learnList =
+    allLessons.length > 0 ? (
+      <>
+        <h3>Yang akan kamu pelajari</h3>
+        <ul className="learn-list">
+          {allLessons.map((l) => (
+            <li key={l.id} className="learn-item">
+              <span className="learn-check">
+                <Icon name="check" size={13} />
+              </span>
+              <span>{l.title}</span>
+            </li>
+          ))}
+        </ul>
+      </>
+    ) : null
+
+  const deskripsiPanel = (
+    <section className="section" aria-label="Deskripsi">
+      {isCourseMentor && <h2>Tentang Course</h2>}
+      {course.description && <p>{course.description}</p>}
+      {learnList}
+      {enrolled && nextLesson && !noMentor && (
+        <p>
+          <Link to={`/lesson/${nextLesson.id}`} className="btn-mint">
+            Lanjut Belajar →
+          </Link>
+        </p>
+      )}
+      {enrolled && noMentor && (
+        <p className="muted">
+          Menunggu mentor — lesson belum bisa dimulai sampai mentor ditetapkan.
+        </p>
+      )}
+      {isComplete && (
+        <p>
+          Course selesai.{' '}
+          <Link to="/sertifikat" className="btn-mint">
+            Lihat Sertifikat
+          </Link>
+        </p>
+      )}
+      {enrollBlock}
+    </section>
+  )
+
+  const materiPanel = (
+    <section className="section" aria-label="Materi">
+      <h2>Kurikulum</h2>
+      {enrolled && sectionSummaries.length > 0 && (
+        <p className="muted">{sectionSummaries.join(' · ')}</p>
+      )}
+      {modulesError && <p className="error-box">{modulesError}</p>}
+      {modules.length === 0 ? (
+        <p className="empty">Belum ada modul di course ini.</p>
+      ) : (
+        modules.map((m) => {
+          // Section = modul order_index 1 (Section 1) atau 2 (Section 2);
+          // Orientasi (order_index 0) tampil sebagai grup kecil sendiri.
+          const isSection = m.order_index === 1 || m.order_index === 2
+          const sectionDone = m.lessons.filter((l) => doneIds.has(l.id)).length
+          const sectionComplete = isSection && sectionDone >= 5
+          const groupTitle =
+            m.title && m.title.trim()
+              ? m.title
+              : m.order_index === 0
+                ? 'Orientasi'
+                : m.order_index === 1
+                  ? 'Section 1'
+                  : m.order_index === 2
+                    ? 'Section 2'
+                    : `Modul ${m.order_index + 1}`
+          return (
+          <div key={m.id} className="module-block">
+            <h3>
+              {groupTitle}
+              {m.release_label ? ` · ${m.release_label}` : ''}
+              {isSection && (
+                <>
+                  {' · '}
+                  <span className="muted">
+                    {sectionDone}/5 selesai
+                  </span>
+                  {sectionComplete && (
+                    <>
+                      {' '}
+                      <span className="badge-pass">Selesai</span>
+                    </>
+                  )}
+                </>
+              )}
+            </h3>
+            {m.lessons.length === 0 ? (
+              <p className="empty">Belum ada lesson di modul ini.</p>
+            ) : (
+              <ol className="lesson-list">
+                {m.lessons.map((l) => {
+                  const done = doneIds.has(l.id)
+                  // Gate Master Prompt §3: siswa belum boleh memulai
+                  // course sebelum mentor ditetapkan. Peserta yang sudah
+                  // terdaftar pun terkunci bila mentor course hilang
+                  // (mis. mentor dilepas setelah pendaftaran); mentor
+                  // pengampu dan admin tetap bisa membuka lesson.
+                  const locked =
+                    (!enrolled || noMentor) &&
+                    course.mentor_id !== user?.id &&
+                    profile?.role !== 'admin'
+                  return (
+                    <li key={l.id}>
+                      {locked ? (
+                        <span className="lesson-locked">
+                          {l.lesson_code ? `${l.lesson_code}, ` : ''}
+                          {l.title}{' '}
+                          {noMentor
+                            ? '(menunggu mentor — lesson belum bisa dimulai)'
+                            : '(daftar dulu untuk membuka)'}
+                        </span>
+                      ) : (
+                        <Link to={`/lesson/${l.id}`}>
+                          {l.lesson_code ? `${l.lesson_code}, ` : ''}
+                          {l.title}
+                          {done ? ' ✓' : ''}
+                        </Link>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </div>
+          )
+        })
+      )}
+    </section>
+  )
+
+  const tugasPanel = (
+    <section className="section" aria-label="Tugas">
+      <h2>Tugas</h2>
+      {courseAssignments.length === 0 ? (
+        <p className="empty">Belum ada tugas di course ini.</p>
+      ) : (
+        <div className="course-list">
+          {courseAssignments.map((a) => {
+            const dl = deadlineInfo(a.due_date)
+            const lessonTitle = lessonTitleById.get(a.lesson_id)
+            return (
+              <Link key={a.id} to={`/tugas/${a.id}`} className="task-card">
+                <span className="task-icon">
+                  <Icon name="fileText" size={24} />
+                </span>
+                <span className="task-body">
+                  <h3>{a.title}</h3>
+                  {lessonTitle && <p>{lessonTitle}</p>}
+                  {a.description && <p>{a.description}</p>}
+                  <span className={dl.cls}>{dl.text}</span>
+                </span>
+              </Link>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+
+  const diskusiPanel = (
+    <section className="section" aria-label="Diskusi">
+      <h2>Diskusi</h2>
+      {topDiscussions.length === 0 ? (
+        <p className="empty">Belum ada diskusi di course ini.</p>
+      ) : (
+        <ul className="discussion-list">
+          {topDiscussions.map((d) => {
+            const replies = replyCounts.get(d.id) ?? 0
+            return (
+              <li key={d.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {d.author?.name ?? 'Anggota'} ·{' '}
+                  {new Date(d.created_at).toLocaleString('id-ID')}
+                  {d.is_pinned ? ' · Disematkan' : ''}
+                  {d.is_resolved ? ' · Selesai' : ''}
+                </p>
+                <p>{d.body}</p>
+                {replies > 0 && <p className="muted">{replies} balasan</p>}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+
+  const gradesSection = showGrades ? (
+    <section className="section" aria-label="Nilai per Komponen">
+      <h2>Nilai per Komponen</h2>
+      {gradeError ? (
+        <p className="error-box">{gradeError}</p>
+      ) : gradeComponents === null ? (
+        <p className="muted">Memuat nilai…</p>
+      ) : (
+        <>
+          <ul>
+            <li>
+              Pretest (5%):{' '}
+              {gradeComponents.pretest === null
+                ? 'belum ada nilai'
+                : gradeComponents.pretest.toFixed(1)}
+            </li>
+            <li>
+              Posttest (15%):{' '}
+              {gradeComponents.posttest === null
+                ? 'belum ada nilai'
+                : gradeComponents.posttest.toFixed(1)}
+            </li>
+            <li>
+              Tugas mingguan (30%):{' '}
+              {gradeComponents.weeklyAssignments === null
+                ? 'belum ada nilai'
+                : gradeComponents.weeklyAssignments.toFixed(1)}
+            </li>
+            <li>
+              Tugas praktik akhir (40%):{' '}
+              {gradeComponents.finalPractice === null
+                ? 'belum ada nilai'
+                : gradeComponents.finalPractice.toFixed(1)}
+            </li>
+            <li>
+              Diskusi (10%):{' '}
+              {gradeComponents.discussion === null
+                ? 'belum ada nilai'
+                : gradeComponents.discussion.toFixed(1)}
+            </li>
+          </ul>
+          <p>
+            Nilai akhir:{' '}
+            {hasAnyGrade ? (
+              <>
+                <strong>{gradeComponents.final.toFixed(1)}</strong>{' '}
+                <span className={gradeComponents.passed ? 'badge-pass' : 'badge-fail'}>
+                  {gradeComponents.passed ? 'Lulus' : 'Belum lulus'}
+                </span>
+              </>
+            ) : (
+              'belum ada nilai'
+            )}
+          </p>
+          <p className="muted">
+            Nilai akhir dihitung ulang dari komponen yang sudah ada nilainya saja;{' '}
+            <Link to="/nilai">lihat semua nilai kamu di Gradebook</Link>.
+          </p>
+        </>
+      )}
+    </section>
+  ) : null
+
+  const liveSection = (
+    <section className="section" aria-label="Kelas Live">
+      <h2>Kelas Live</h2>
+      {liveError && <p className="error-box">{liveError}</p>}
+      {liveClasses.length === 0 ? (
+        <p className="empty">Segera hadir — belum ada kelas live yang dijadwalkan untuk course ini.</p>
+      ) : (
+        <ul>
+          {liveClasses.map((lc) => (
+            <li key={lc.id}>
+              <strong>{lc.title}</strong>
+              {lc.scheduled_at && (
+                <>
+                  {' · '}
+                  {new Date(lc.scheduled_at).toLocaleString('id-ID', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                </>
+              )}
+              {lc.meet_url && (
+                <>
+                  {' '}
+                  <a href={lc.meet_url} target="_blank" rel="noreferrer">
+                    Gabung
+                  </a>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+
+  // Panel admin: Ringkasan = deskripsi + yang dipelajari + nilai;
+  // Aktivitas = tugas + diskusi + kelas live. Baris statistik
+  // mentor/admin (Total Siswa, Tingkat Selesai) dihitung dari
+  // enrollments + lesson_progress asli — lihat statsTask di load().
+  const ringkasanPanel = (
+    <>
+      <section className="section" aria-label="Ringkasan">
+        {course.description && <p>{course.description}</p>}
+        {learnList}
+        {enrollBlock}
+      </section>
+      {gradesSection}
+    </>
+  )
+  const aktivitasPanel = (
+    <>
+      {tugasPanel}
+      {diskusiPanel}
+      {liveSection}
+    </>
+  )
+
+  const tabList = isAdmin
+    ? [
+        { id: 'ringkasan', label: 'Ringkasan' },
+        { id: 'aktivitas', label: 'Aktivitas' },
+      ]
+    : [
+        { id: 'deskripsi', label: 'Deskripsi' },
+        { id: 'materi', label: 'Materi' },
+        { id: 'tugas', label: 'Tugas' },
+        { id: 'diskusi', label: 'Diskusi' },
+      ]
+  const activeTabId = tabList.some((t) => t.id === activeTab) ? activeTab : tabList[0].id
+
   return (
     <div className="page">
       <Link to="/akademi" className="back-link">
         ← Akademi
       </Link>
-      {course.cover_url ? (
-        <div className="course-cover course-cover-img" aria-hidden="true">
-          <img src={course.cover_url} alt="" />
-          {week && <span className="course-cover-week">{week}</span>}
-          <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
-        </div>
+      {heroSrc ? (
+        <img className="detail-hero-img" src={heroSrc} alt="" />
       ) : (
-        <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
-          {week && <span className="course-cover-week">{week}</span>}
-          <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+        <div className="detail-hero-fallback">
+          <Icon name="film" size={48} />
         </div>
       )}
-      <h1>{course.title}</h1>
+      <div className="detail-title-row">
+        <h1>{course.title}</h1>
+        {enrolled && allLessons.length > 0 && (
+          <span className="pill-active">{isComplete ? 'Selesai' : 'Aktif'}</span>
+        )}
+      </div>
       <p className="muted">
         {course.category ?? 'Lainnya'} · {course.level ?? 'Semua level'}
         {week ? ` · ${week}` : ''} · Mentor:{' '}
         {mentorFailed ? 'gagal dimuat' : (mentorName ?? 'Belum ditugaskan')}
       </p>
-      {course.description && <p>{course.description}</p>}
+      {enrolled && allLessons.length > 0 && (
+        <div className="progress-block">
+          <p className="muted">
+            {doneCount} dari {allLessons.length} materi · {percent}%
+          </p>
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Progres ${course.title}: ${percent} persen`}
+          >
+            <div className="progress-fill" style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+      )}
 
       {notice && <p className="notice-box">{notice}</p>}
 
-      {enrolled && allLessons.length > 0 && (
-        <div className="progress-block">
-          <p>
-            Progress: {doneCount} dari {allLessons.length} lesson selesai ({percent}%)
-          </p>
-          <div className="progress-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
-            <div className="progress-fill" style={{ width: `${percent}%` }} />
+      {isCourseMentor && (
+        <p>
+          <Link to={`/mentor/course/${course.id}`} className="btn btn-secondary">
+            Kelola Course
+          </Link>
+        </p>
+      )}
+
+      {(isCourseMentor || isAdmin) && courseStats !== null && (
+        <div className="stat-grid" role="group" aria-label="Statistik course">
+          <div className="stat-card">
+            <span className="stat-num">{courseStats.students ?? '—'}</span>
+            <span className="stat-label">Total Siswa</span>
           </div>
-          {percent === 100 ? (
-            <p>
-              Course selesai.{' '}
-              <Link to="/sertifikat">Lihat sertifikat kamu.</Link>
-            </p>
-          ) : (
-            nextLesson && (
-              <Link to={`/lesson/${nextLesson.id}`} className="btn btn-primary">
-                Lanjutkan: {nextLesson.title}
-              </Link>
-            )
-          )}
+          <div className="stat-card">
+            <span className="stat-num">
+              {courseStats.completionPct === null ? '—' : `${courseStats.completionPct}%`}
+            </span>
+            <span className="stat-label">Tingkat Selesai</span>
+          </div>
         </div>
       )}
 
-      {showGrades && (
-        <section className="section">
-          <h2>Nilai per Komponen</h2>
-          {gradeError ? (
-            <p className="error-box">{gradeError}</p>
-          ) : gradeComponents === null ? (
-            <p className="muted">Memuat nilai…</p>
-          ) : (
-            <>
-              <ul>
-                <li>
-                  Pretest (5%):{' '}
-                  {gradeComponents.pretest === null
-                    ? 'belum ada nilai'
-                    : gradeComponents.pretest.toFixed(1)}
-                </li>
-                <li>
-                  Posttest (15%):{' '}
-                  {gradeComponents.posttest === null
-                    ? 'belum ada nilai'
-                    : gradeComponents.posttest.toFixed(1)}
-                </li>
-                <li>
-                  Tugas mingguan (30%):{' '}
-                  {gradeComponents.weeklyAssignments === null
-                    ? 'belum ada nilai'
-                    : gradeComponents.weeklyAssignments.toFixed(1)}
-                </li>
-                <li>
-                  Tugas praktik akhir (40%):{' '}
-                  {gradeComponents.finalPractice === null
-                    ? 'belum ada nilai'
-                    : gradeComponents.finalPractice.toFixed(1)}
-                </li>
-                <li>
-                  Diskusi (10%):{' '}
-                  {gradeComponents.discussion === null
-                    ? 'belum ada nilai'
-                    : gradeComponents.discussion.toFixed(1)}
-                </li>
-              </ul>
-              <p>
-                Nilai akhir:{' '}
-                {hasAnyGrade ? (
-                  <>
-                    <strong>{gradeComponents.final.toFixed(1)}</strong>{' '}
-                    <span className={gradeComponents.passed ? 'badge-pass' : 'badge-fail'}>
-                      {gradeComponents.passed ? 'Lulus' : 'Belum lulus'}
-                    </span>
-                  </>
-                ) : (
-                  'belum ada nilai'
-                )}
-              </p>
-              <p className="muted">
-                Nilai akhir dihitung ulang dari komponen yang sudah ada nilainya saja;{' '}
-                <Link to="/nilai">lihat semua nilai kamu di Gradebook</Link>.
-              </p>
-            </>
-          )}
-        </section>
+      <div className="detail-tabs" role="tablist" aria-label="Bagian course">
+        {tabList.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`detail-tab ${activeTabId === t.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(t.id)}
+            aria-pressed={activeTabId === t.id}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {isAdmin ? (
+        activeTabId === 'ringkasan' ? ringkasanPanel : aktivitasPanel
+      ) : (
+        <>
+          {activeTabId === 'deskripsi' && deskripsiPanel}
+          {activeTabId === 'materi' && materiPanel}
+          {activeTabId === 'tugas' && tugasPanel}
+          {activeTabId === 'diskusi' && diskusiPanel}
+          {gradesSection}
+          {liveSection}
+        </>
       )}
-
-      {!enrolled && (
-        <div className="enroll-block">
-          {isAdmin ? (
-            <p className="muted">
-              Kamu masuk sebagai admin. Admin hanya memantau progres course, admin tidak
-              mengambil course.
-            </p>
-          ) : isCourseMentor ? (
-            <p className="muted">
-              Kamu mengampu course ini. Lesson sudah terbuka untukmu.
-            </p>
-          ) : noMentor ? (
-            <>
-              <p className="muted">
-                Course ini belum memiliki mentor. Ikuti daftar tunggu, kamu akan diberi tahu
-                saat mentor ditugaskan.
-              </p>
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleWaitlist}
-                  disabled={busy || onWaitlist}
-                >
-                  {onWaitlist ? 'Sudah di Daftar Tunggu' : 'Ikuti untuk Bergabung'}
-                </button>
-                {profile?.role === 'mentor' && (
-                  myClaim?.status === 'rejected' ? (
-                    <>
-                      <p className="error-box">
-                        Pengajuan mengampu kamu ditolak{myClaim.decision_note ? `: ${myClaim.decision_note}` : '.'}
-                      </p>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={handleClaim}
-                        disabled={claimBusy}
-                      >
-                        {claimBusy ? 'Mengirim…' : 'Ajukan Lagi'}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={handleClaim}
-                      disabled={claimBusy || claimed}
-                    >
-                      {claimed
-                        ? 'Pengajuan Mengampu Terkirim'
-                        : claimBusy
-                          ? 'Mengirim…'
-                          : 'Ajukan untuk Mengampu'}
-                    </button>
-                  )
-                )}
-              </div>
-            </>
-          ) : isOtherMentor ? (
-            <p className="notice-box">Course ini diampu mentor lain.</p>
-          ) : (
-            <>
-              <button type="button" className="btn btn-primary" onClick={handleEnrollClick} disabled={busy}>
-                {busy ? 'Memproses…' : 'Ambil Course'}
-              </button>
-              {askCode && (
-                <form className="form form-inline" onSubmit={handleCodeSubmit}>
-                  <label>
-                    Kode Akses
-                    <input
-                      type="text"
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                      placeholder="Masukkan kode akses course"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <button type="submit" className="btn btn-secondary" disabled={busy}>
-                    Konfirmasi Kode
-                  </button>
-                </form>
-              )}
-            </>
-          )}
-          {codeError && <p className="error-box">{codeError}</p>}
-          {!user && <p className="muted">Masuk terlebih dahulu untuk mengambil course ini.</p>}
-        </div>
-      )}
-
-      <section className="section">
-        <h2>Kurikulum</h2>
-        {enrolled && sectionSummaries.length > 0 && (
-          <p className="muted">{sectionSummaries.join(' · ')}</p>
-        )}
-        {modulesError && <p className="error-box">{modulesError}</p>}
-        {modules.length === 0 ? (
-          <p className="empty">Belum ada modul di course ini.</p>
-        ) : (
-          modules.map((m) => {
-            // Section = modul order_index 1 (Section 1) atau 2 (Section 2);
-            // Orientasi (order_index 0) tampil sebagai grup kecil sendiri.
-            const isSection = m.order_index === 1 || m.order_index === 2
-            const sectionDone = m.lessons.filter((l) => doneIds.has(l.id)).length
-            const sectionComplete = isSection && sectionDone >= 5
-            const groupTitle =
-              m.title && m.title.trim()
-                ? m.title
-                : m.order_index === 0
-                  ? 'Orientasi'
-                  : m.order_index === 1
-                    ? 'Section 1'
-                    : m.order_index === 2
-                      ? 'Section 2'
-                      : `Modul ${m.order_index + 1}`
-            return (
-            <div key={m.id} className="module-block">
-              <h3>
-                {groupTitle}
-                {m.release_label ? ` · ${m.release_label}` : ''}
-                {isSection && (
-                  <>
-                    {' · '}
-                    <span className="muted">
-                      {sectionDone}/5 selesai
-                    </span>
-                    {sectionComplete && (
-                      <>
-                        {' '}
-                        <span className="badge-pass">Selesai</span>
-                      </>
-                    )}
-                  </>
-                )}
-              </h3>
-              {m.lessons.length === 0 ? (
-                <p className="empty">Belum ada lesson di modul ini.</p>
-              ) : (
-                <ol className="lesson-list">
-                  {m.lessons.map((l) => {
-                    const done = doneIds.has(l.id)
-                    const locked =
-                      !enrolled && course.mentor_id !== user?.id && profile?.role !== 'admin'
-                    return (
-                      <li key={l.id}>
-                        {locked ? (
-                          <span className="lesson-locked">
-                            {l.lesson_code ? `${l.lesson_code}, ` : ''}
-                            {l.title} (daftar dulu untuk membuka)
-                          </span>
-                        ) : (
-                          <Link to={`/lesson/${l.id}`}>
-                            {l.lesson_code ? `${l.lesson_code}, ` : ''}
-                            {l.title}
-                            {done ? ' ✓' : ''}
-                          </Link>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ol>
-              )}
-            </div>
-            )
-          })
-        )}
-      </section>
-
-      <section className="section">
-        <h2>Kelas Live</h2>
-        {liveError && <p className="error-box">{liveError}</p>}
-        {liveClasses.length === 0 ? (
-          <p className="empty">Segera hadir — belum ada kelas live yang dijadwalkan untuk course ini.</p>
-        ) : (
-          <ul>
-            {liveClasses.map((lc) => (
-              <li key={lc.id}>
-                <strong>{lc.title}</strong>
-                {lc.scheduled_at && (
-                  <>
-                    {' · '}
-                    {new Date(lc.scheduled_at).toLocaleString('id-ID', {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })}
-                  </>
-                )}
-                {lc.meet_url && (
-                  <>
-                    {' '}
-                    <a href={lc.meet_url} target="_blank" rel="noreferrer">
-                      Gabung
-                    </a>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   )
 }

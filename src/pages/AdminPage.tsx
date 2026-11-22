@@ -107,6 +107,8 @@ export default function AdminPage() {
   const [schoolSubs, setSchoolSubs] = useState<SchoolSubmission[]>([])
   const [provinceNames, setProvinceNames] = useState<Map<string, string>>(new Map())
   const [regencyNames, setRegencyNames] = useState<Map<string, string>>(new Map())
+  // Tab filter lamaran mentor (jumlah asli dari apps, termasuk 0).
+  const [appTab, setAppTab] = useState<'pending' | 'approved' | 'rejected' | 'revision_required'>('pending')
   // Penolakan/revisi lamaran mentor meminta catatan (migrasi 027).
   const [appAction, setAppAction] = useState<{ id: string; kind: 'reject' | 'revision' } | null>(null)
   const [appNote, setAppNote] = useState('')
@@ -120,6 +122,9 @@ export default function AdminPage() {
   const [progress, setProgress] = useState<ProgressRow[]>([])
   const [mentorLoad, setMentorLoad] = useState<{ name: string; courses: number; pending: number }[]>([])
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  // Foto profil pelamar untuk avatar kartu lamaran (diambil dari query
+  // profiles yang sama, tanpa query tambahan).
+  const [photos, setPhotos] = useState<Map<string, string | null>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -155,7 +160,7 @@ export default function AdminPage() {
         { data: enrData },
         subData,
       ] = await Promise.all([
-        supabase.from('profiles').select('id,name,role'),
+        supabase.from('profiles').select('id,name,role,photo_url'),
         supabase.from('enrollments').select('id', { count: 'exact', head: true }),
         fetchCourses(),
         fetchMentorApplications(),
@@ -169,7 +174,7 @@ export default function AdminPage() {
         supabase.from('enrollments').select('user_id,course_id'),
         fetchSchoolSubmissions(),
       ])
-      const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
+      const profs = (profiles ?? []) as { id: string; name: string | null; role: string; photo_url: string | null }[]
       const mentors = profs.filter((p) => p.role === 'mentor')
       // Nama profil, beban mentor, dan nama wilayah independen satu sama
       // lain — paralel.
@@ -180,6 +185,7 @@ export default function AdminPage() {
         fetchRefNameMap('ref_regencies'),
       ])
       setNames(namesMap)
+      setPhotos(new Map(profs.map((p) => [p.id, p.photo_url ?? null])))
       setProvinceNames(provMap)
       setRegencyNames(regMap)
       setCounts({
@@ -512,6 +518,15 @@ export default function AdminPage() {
     }
   }
 
+  // Jumlah lamaran per status (asli dari apps) + daftar yang tampil di tab aktif.
+  const appTabCounts = {
+    pending: apps.filter((a) => a.status === 'pending').length,
+    revision_required: apps.filter((a) => a.status === 'revision_required').length,
+    approved: apps.filter((a) => a.status === 'approved').length,
+    rejected: apps.filter((a) => a.status === 'rejected').length,
+  }
+  const visibleApps = apps.filter((a) => a.status === appTab)
+
   return (
     <div className="page">
       <PageHeader
@@ -523,7 +538,7 @@ export default function AdminPage() {
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">
-        <h2>Ringkasan</h2>
+        <div className="dash-section-head"><h2>Ringkasan</h2><Link className="dash-more" to="/admin/pengguna">Lihat Semua →</Link></div>
         <dl className="profile-list">
           <div><dt>Pengguna</dt><dd>{counts.users} (Siswa {counts.siswa} · Mentor {counts.mentor})</dd></div>
           <div><dt>Course</dt><dd>{counts.courses}</dd></div>
@@ -534,7 +549,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section">
-        <h2>Kelola Academy</h2>
+        <div className="dash-section-head"><h2>Kelola Academy</h2></div>
         <p>
           <Link to="/admin/sections" className="btn btn-secondary">Section &amp; Lesson</Link>{' '}
           <Link to="/admin/enrollment" className="btn btn-secondary">Enrollment</Link>{' '}
@@ -547,25 +562,46 @@ export default function AdminPage() {
       </section>
 
       <section className="section" id="lamaran-mentor">
-        <h2>Lamaran Mentor ({apps.filter((a) => a.status === 'pending').length} pending)</h2>
-        {apps.length === 0 ? <p className="empty">Tidak ada lamaran mentor.</p> : (
-          <ul className="discussion-list">
-            {apps.map((a) => (
-              <li key={a.id} className="discussion-item">
-                <p><strong>{names.get(a.user_id) ?? 'Pelamar'}</strong> — {mentorStatusLabel(a.status)}</p>
-                <p>Profesi: {a.profession ?? '—'}</p>
-                <p>Keahlian: {(a.expertise ?? []).join(', ') || '—'}</p>
-                <p>Pengalaman: {a.experience ?? '—'}</p>
-                {a.portfolio_link && <p><a href={a.portfolio_link} target="_blank" rel="noreferrer">Portofolio</a></p>}
-                <p>Alasan: {a.reason ?? '—'}</p>
-                <p>Sukarela: {a.volunteer_agreed ? 'Ya — menyetujui pernyataan sukarela' : 'Belum menyetujui'}</p>
-                {a.decided_at && (
-                  <p className="muted">
-                    Diputuskan {fmtDate(a.decided_at)}
-                    {a.decided_by ? ` oleh ${names.get(a.decided_by) ?? 'admin'}` : ''}
-                    {a.decision_note ? ` — ${a.decision_note}` : ''}
-                  </p>
-                )}
+        <div className="dash-section-head"><h2>Lamaran Mentor</h2></div>
+        <div className="pill-tabs" role="tablist" aria-label="Filter lamaran mentor">
+          <button type="button" className={appTab === 'pending' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('pending')}>Menunggu ({appTabCounts.pending})</button>
+          <button type="button" className={appTab === 'revision_required' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('revision_required')}>Revisi ({appTabCounts.revision_required})</button>
+          <button type="button" className={appTab === 'approved' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('approved')}>Disetujui ({appTabCounts.approved})</button>
+          <button type="button" className={appTab === 'rejected' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('rejected')}>Ditolak ({appTabCounts.rejected})</button>
+        </div>
+        {visibleApps.length === 0 ? <p className="empty">Tidak ada lamaran mentor dengan status ini.</p> : (
+          <ul className="list">
+            {visibleApps.map((a) => {
+              const applicantName = names.get(a.user_id) ?? 'Pelamar'
+              const metaLine = [a.profession, (a.expertise ?? []).join(', ')].filter(Boolean).join(' · ')
+              const statusPillClass = a.status === 'approved' ? 'pill-active' : a.status === 'rejected' ? 'task-deadline' : a.status === 'revision_required' ? 'task-deadline soon' : 'chip'
+              return (
+              <li key={a.id} className="post-card">
+                <div className="post-head">
+                  {photos.get(a.user_id) ? (
+                    <img className="post-avatar" src={photos.get(a.user_id) as string} alt={applicantName} />
+                  ) : (
+                    <div className="post-avatar">{applicantName.charAt(0).toUpperCase()}</div>
+                  )}
+                  <div>
+                    <p className="post-name">{applicantName}</p>
+                    <p className="post-time">{metaLine || '—'} · {fmtDate(a.created_at)}</p>
+                  </div>
+                  <span className={statusPillClass} style={{ marginLeft: 'auto' }}>{mentorStatusLabel(a.status)}</span>
+                </div>
+                <div className="post-body">
+                  <p>Pengalaman: {a.experience ?? '—'}</p>
+                  {a.portfolio_link && <p><a href={a.portfolio_link} target="_blank" rel="noreferrer">Portofolio</a></p>}
+                  <p>Alasan: {a.reason ?? '—'}</p>
+                  <p>Sukarela: {a.volunteer_agreed ? 'Ya, menyetujui pernyataan sukarela' : 'Belum menyetujui'}</p>
+                  {a.decided_at && (
+                    <p className="muted">
+                      Diputuskan {fmtDate(a.decided_at)}
+                      {a.decided_by ? ` oleh ${names.get(a.decided_by) ?? 'admin'}` : ''}
+                      {a.decision_note ? ` — ${a.decision_note}` : ''}
+                    </p>
+                  )}
+                </div>
                 {a.status === 'pending' && (
                   <div className="form-actions">
                     <button type="button" className="btn btn-primary btn-small" onClick={() => void decideApp(a, 'approved')}>Setujui</button>{' '}
@@ -596,13 +632,14 @@ export default function AdminPage() {
                   </div>
                 )}
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
 
       <section className="section" id="pengajuan-sekolah">
-        <h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} pending)</h2>
+        <div className="dash-section-head"><h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} pending)</h2></div>
         {schoolSubs.length === 0 ? <p className="empty">Tidak ada pengajuan sekolah.</p> : (
           <ul className="discussion-list">
             {schoolSubs.map((s) => (
@@ -645,7 +682,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section">
-        <h2>Klaim Mengampu ({claims.filter((c) => c.status === 'pending').length} pending)</h2>
+        <div className="dash-section-head"><h2>Klaim Mengampu ({claims.filter((c) => c.status === 'pending').length} pending)</h2></div>
         {claims.filter((c) => c.status === 'pending').length === 0 ? <p className="empty">Tidak ada klaim mengampu yang menunggu.</p> : (
           <ul>
             {claims.filter((c) => c.status === 'pending').map((c) => {
@@ -693,7 +730,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section" id="buat-course">
-        <h2>Pembagian Mentor Kurikulum &amp; Buat Course</h2>
+        <div className="dash-section-head"><h2>Pembagian Mentor Kurikulum &amp; Buat Course</h2></div>
         <form className="form" onSubmit={handleAssignMentor}>
           <label>
             Course
@@ -720,7 +757,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section" id="verifikasi-sekolah">
-        <h2>Verifikasi Sekolah</h2>
+        <div className="dash-section-head"><h2>Verifikasi Sekolah</h2></div>
         {schools.length === 0 ? <p className="empty">Belum ada sekolah.</p> : (
           <ul>
             {schools.map((s) => (
@@ -736,7 +773,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section">
-        <h2>Usulan Komunitas ({proposals.length} pending)</h2>
+        <div className="dash-section-head"><h2>Usulan Komunitas ({proposals.length} pending)</h2></div>
         {proposals.length === 0 ? <p className="empty">Tidak ada usulan komunitas yang menunggu.</p> : (
           <ul>
             {proposals.map((p) => (
@@ -760,7 +797,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section" id="pengumuman">
-        <h2>Pengumuman</h2>
+        <div className="dash-section-head"><h2>Pengumuman</h2></div>
         <form className="form" onSubmit={handleCreateAnnouncement}>
           <label>Judul<input value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} required /></label>
           <label>Isi<textarea value={annBody} onChange={(e) => setAnnBody(e.target.value)} rows={3} /></label>
@@ -793,7 +830,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section">
-        <h2>Progress Lengkap — Siswa</h2>
+        <div className="dash-section-head"><h2>Progress Lengkap, Siswa</h2></div>
         {progress.length === 0 ? <p className="empty">Belum ada siswa.</p> : (
           <div className="grade-table-wrap">
             <table className="grade-table">
@@ -811,7 +848,7 @@ export default function AdminPage() {
             </table>
           </div>
         )}
-        <h2 style={{ marginTop: '1rem' }}>Beban Mentor</h2>
+        <div className="dash-section-head" style={{ marginTop: '1rem' }}><h2>Beban Mentor</h2></div>
         {mentorLoad.length === 0 ? <p className="empty">Belum ada mentor.</p> : (
           <ul>
             {mentorLoad.map((m) => (

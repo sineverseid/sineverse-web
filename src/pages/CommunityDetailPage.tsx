@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import Icon from '../components/icons'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
@@ -34,6 +35,7 @@ export default function CommunityDetailPage() {
   const [body, setBody] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [replyBody, setReplyBody] = useState('')
+  const [tab, setTab] = useState<'diskusi' | 'pengumuman'>('diskusi')
 
   async function loadPosts(communityId: string) {
     const { data, error: qErr } = await supabase
@@ -272,6 +274,108 @@ export default function CommunityDetailPage() {
     else await loadPosts(currentCommunity.id)
   }
 
+  const allPosts = posts ?? []
+  const pinnedPosts = allPosts.filter((p) => p.is_pinned)
+  const visiblePosts = tab === 'pengumuman' ? pinnedPosts : allPosts
+
+  function scrollToPostForm() {
+    const form = document.getElementById('buat-post')
+    if (!form) return
+    form.scrollIntoView({ behavior: 'smooth' })
+    form.querySelector('textarea')?.focus({ preventScroll: true })
+  }
+
+  function renderPostCard(p: CommunityPost) {
+    const postReplies = replies.filter((r) => r.post_id === p.id)
+    const authorName = p.author?.name ?? 'Anggota'
+    return (
+      <article key={p.id} className="post-card">
+        <div className="post-head">
+          {p.author?.photo_url ? (
+            <img src={p.author.photo_url} alt="" className="post-avatar" />
+          ) : (
+            <div className="post-avatar" aria-hidden="true">
+              {authorName.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div>
+            <p className="post-name">
+              {authorName}
+              {p.is_pinned ? ' · Disematkan' : ''}
+            </p>
+            <p className="post-time">{fmtDate(p.created_at)}</p>
+          </div>
+        </div>
+        <p className="post-body">{p.body}</p>
+        <div className="post-actions">
+          <span>
+            <Icon name="message" size={16} />
+            {postReplies.length} Balasan
+          </span>
+        </div>
+        {postReplies.length > 0 && (
+          <ul className="discussion-replies">
+            {postReplies.map((r) => (
+              <li key={r.id}>
+                <p className="discussion-meta">
+                  {r.author?.name ?? 'Anggota'} · {fmtDate(r.created_at)}
+                </p>
+                <p>{r.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        {isMember && (
+          <div className="form-actions">
+            {replyTo !== p.id && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => setReplyTo(p.id)}
+              >
+                Balas
+              </button>
+            )}
+            {canPin && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => void handlePin(p)}
+              >
+                {p.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
+              </button>
+            )}
+          </div>
+        )}
+        {isMember && replyTo === p.id && (
+          <form className="form form-inline" onSubmit={(e) => handleReply(e, p.id)}>
+            <label>
+              Balasan
+              <textarea
+                value={replyBody}
+                onChange={(e) => setReplyBody(e.target.value)}
+                rows={2}
+                required
+              />
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="btn btn-primary btn-small">
+                Kirim
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => setReplyTo(null)}
+              >
+                Batal
+              </button>
+            </div>
+          </form>
+        )}
+      </article>
+    )
+  }
+
   return (
     <div className="page">
       <Link to="/komunitas" className="back-link">← Semua Komunitas</Link>
@@ -335,8 +439,35 @@ export default function CommunityDetailPage() {
       {canReadFeed && (
         <>
           {postsError && <p className="notice-box">{postsError}</p>}
-          {isMember && (
-            <form className="form" onSubmit={handlePost}>
+          <div className="pill-tabs" role="tablist" aria-label="Feed komunitas">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'diskusi'}
+              className={tab === 'diskusi' ? 'pill-tab active' : 'pill-tab'}
+              onClick={() => setTab('diskusi')}
+            >
+              Diskusi
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'pengumuman'}
+              className={tab === 'pengumuman' ? 'pill-tab active' : 'pill-tab'}
+              onClick={() => setTab('pengumuman')}
+            >
+              Pengumuman
+            </button>
+          </div>
+          {tab === 'diskusi' && isMember && (
+            <p>
+              <button type="button" className="btn-mint" onClick={scrollToPostForm}>
+                + Buat Post
+              </button>
+            </p>
+          )}
+          {tab === 'diskusi' && isMember && (
+            <form id="buat-post" className="form" onSubmit={handlePost}>
               <label>
                 Tulis postingan
                 <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} required placeholder="Bagikan kabar, karya, atau ajakan…" />
@@ -344,52 +475,14 @@ export default function CommunityDetailPage() {
               <button type="submit" className="btn btn-primary">Kirim Postingan</button>
             </form>
           )}
-          {(posts ?? []).length === 0 ? (
+          {tab === 'pengumuman' && pinnedPosts.length === 0 ? (
+            <p className="empty">Belum ada pengumuman.</p>
+          ) : visiblePosts.length === 0 ? (
             <p className="empty">Belum ada postingan di komunitas ini.</p>
           ) : (
-            <ul className="discussion-list">
-              {posts.map((p) => (
-                <li key={p.id} className="discussion-item">
-              <p className="discussion-meta">
-                {p.author?.name ?? 'Anggota'} · {fmtDate(p.created_at)}
-                {p.is_pinned ? ' · Disematkan' : ''}
-              </p>
-              <p>{p.body}</p>
-              <ul className="discussion-replies">
-                {replies.filter((r) => r.post_id === p.id).map((r) => (
-                  <li key={r.id}>
-                    <p className="discussion-meta">{r.author?.name ?? 'Anggota'} · {fmtDate(r.created_at)}</p>
-                    <p>{r.body}</p>
-                  </li>
-                ))}
-              </ul>
-              {isMember && (
-                <div className="form-actions">
-                  {replyTo !== p.id && (
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(p.id)}>Balas</button>
-                  )}
-                  {canPin && (
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => void handlePin(p)}>
-                      {p.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
-                    </button>
-                  )}
-                </div>
-              )}
-              {isMember && replyTo === p.id && (
-                <form className="form form-inline" onSubmit={(e) => handleReply(e, p.id)}>
-                  <label>
-                    Balasan
-                    <textarea value={replyBody} onChange={(e) => setReplyBody(e.target.value)} rows={2} required />
-                  </label>
-                  <div className="form-actions">
-                    <button type="submit" className="btn btn-primary btn-small">Kirim</button>
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(null)}>Batal</button>
-                  </div>
-                </form>
-              )}
-                </li>
-              ))}
-            </ul>
+            <div className="post-list">
+              {visiblePosts.map((p) => renderPostCard(p))}
+            </div>
           )}
         </>
       )}

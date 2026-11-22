@@ -649,7 +649,7 @@ export default function AdminCertificatesPage() {
         subtitle="Daftar sertifikat yang sudah terbit, manajemen sertifikat (cari, filter, cabut, aktifkan, riwayat), kelayakan sertifikat course, dan penerbitan sertifikat apresiasi mentor, kelulusan Academy, dan event. Sertifikat course diterbitkan di Tahap 5."
       />
       <section className="section">
-        <h2>Sertifikat Terbit ({certificates.length})</h2>
+        <div className="dash-section-head"><h2>Sertifikat Terbit ({certificates.length})</h2><Link className="dash-more" to="/admin/sertifikat/terbitkan">Terbitkan →</Link></div>
         {certificates.length === 0 ? (
           <p className="empty">Belum ada sertifikat yang terbit.</p>
         ) : (
@@ -676,21 +676,26 @@ export default function AdminCertificatesPage() {
       </section>
 
       <section className="section">
-        <h2>Manajemen Sertifikat</h2>
+        <div className="dash-section-head"><h2>Manajemen Sertifikat</h2></div>
         <p className="muted">
           Cari berdasarkan nama penerima atau nomor serial, filter berdasarkan jenis, status, dan
           tanggal terbit. Pencabutan membutuhkan konfirmasi + alasan, dan setiap perubahan status
           tercatat di riwayat (audit log). QR sertifikat yang dicabut tetap mengarah ke halaman
           verifikasi yang menampilkan status REVOKED.
         </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
-          <label>
+        <div className="pill-tabs" role="tablist" aria-label="Filter status sertifikat">
+          <button type="button" className={mgmtStatus === 'all' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('all')}>Semua ({certificates.length})</button>
+          <button type="button" className={mgmtStatus === 'valid' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('valid')}>Valid ({certificates.filter((c) => c.status === 'valid').length})</button>
+          <button type="button" className={mgmtStatus === 'revoked' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('revoked')}>Dicabut ({certificates.filter((c) => c.status === 'revoked').length})</button>
+        </div>
+        <p className="muted">Sertifikat berstatus Tidak aktif hanya tampil di tab Semua. Gunakan filter Status di bawah untuk menampilkan sertifikat Tidak aktif.</p>
+        <div className="form" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label style={{ flex: '1 1 16rem' }}>
             Cari (nama / serial)
             <input
               value={mgmtSearch}
               onChange={(e) => setMgmtSearch(e.target.value)}
               placeholder="Nama penerima atau SVS-…"
-              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
             />
           </label>
           <label>
@@ -698,7 +703,6 @@ export default function AdminCertificatesPage() {
             <select
               value={mgmtType}
               onChange={(e) => setMgmtType(e.target.value as 'all' | Certificate['type'])}
-              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
             >
               <option value="all">Semua jenis</option>
               <option value="course">Course</option>
@@ -714,7 +718,6 @@ export default function AdminCertificatesPage() {
             <select
               value={mgmtStatus}
               onChange={(e) => setMgmtStatus(e.target.value as 'all' | Certificate['status'])}
-              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
             >
               <option value="all">Semua status</option>
               <option value="valid">Valid</option>
@@ -728,7 +731,6 @@ export default function AdminCertificatesPage() {
               type="date"
               value={mgmtDateFrom}
               onChange={(e) => setMgmtDateFrom(e.target.value)}
-              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
             />
           </label>
           <label>
@@ -737,7 +739,6 @@ export default function AdminCertificatesPage() {
               type="date"
               value={mgmtDateTo}
               onChange={(e) => setMgmtDateTo(e.target.value)}
-              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
             />
           </label>
         </div>
@@ -758,7 +759,7 @@ export default function AdminCertificatesPage() {
                     <td>{typeLabel(c.type)}</td>
                     <td>{c.course_id ? courseById.get(c.course_id) ?? 'Course' : c.program_name ?? '—'}</td>
                     <td>{c.serial}</td>
-                    <td>{statusLabel(c.status)}</td>
+                    <td>{c.status === 'valid' ? <span className="pill-active">{statusLabel(c.status)}</span> : c.status === 'revoked' ? <span className="task-deadline">{statusLabel(c.status)}</span> : <span className="chip">{statusLabel(c.status)}</span>}</td>
                     <td>{formatDate(c.issued_at)}</td>
                     <td>{c.issued_by ? names.get(c.issued_by) ?? 'Admin' : '—'}</td>
                     <td>
@@ -856,7 +857,7 @@ export default function AdminCertificatesPage() {
       </section>
 
       <section className="section">
-        <h2>Sertifikat Apresiasi Mentor</h2>
+        <div className="dash-section-head"><h2>Sertifikat Apresiasi Mentor</h2></div>
         <p className="muted">
           Terbitkan sertifikat apresiasi (SVS-MNT) untuk mentor yang mengampu sebuah course.
           Satu mentor hanya punya satu sertifikat apresiasi per course; bila sudah pernah
@@ -910,7 +911,7 @@ export default function AdminCertificatesPage() {
       </section>
 
       <section className="section">
-        <h2>Sertifikat Kelulusan Academy</h2>
+        <div className="dash-section-head"><h2>Sertifikat Kelulusan Academy</h2></div>
         <p className="muted">
           Terbitkan sertifikat kelulusan Academy (SVS-ACD) untuk siswa yang sudah memegang
           sertifikat course untuk ke-10 course. Satu siswa hanya punya satu sertifikat Academy;
@@ -957,7 +958,7 @@ export default function AdminCertificatesPage() {
       </section>
 
       <section className="section">
-        <h2>Sertifikat Event</h2>
+        <div className="dash-section-head"><h2>Sertifikat Event</h2></div>
         <p className="muted">
           Terbitkan sertifikat partisipasi event (SVS-EVT). Satu penerima hanya punya satu
           sertifikat per event; bila sudah pernah diterbitkan, nomor serial yang sudah ada
@@ -1021,7 +1022,7 @@ export default function AdminCertificatesPage() {
       </section>
 
       <section className="section">
-        <h2>Kelayakan Sertifikat Course</h2>
+        <div className="dash-section-head"><h2>Kelayakan Sertifikat Course</h2></div>
         <label>
           Course
           <select
@@ -1067,7 +1068,7 @@ export default function AdminCertificatesPage() {
                     <td>{r.components.finalPractice === null ? '—' : r.components.finalPractice.toFixed(1)}</td>
                     <td>{r.components.discussion === null ? '—' : r.components.discussion.toFixed(1)}</td>
                     <td>{r.components.final.toFixed(1)}</td>
-                    <td>{r.components.passed ? 'Layak' : 'Belum layak'}</td>
+                    <td>{r.components.passed ? <span className="pill-active">Layak</span> : <span className="chip">Belum layak</span>}</td>
                     <td>{r.missing.length === 0 ? '—' : r.missing.join(', ')}</td>
                   </tr>
                 ))}

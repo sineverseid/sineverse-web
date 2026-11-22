@@ -39,6 +39,7 @@ import type {
   Submission,
 } from '../lib/types'
 import PageHeader from '../components/PageHeader'
+import Icon from '../components/icons'
 
 interface CourseGrade {
   course: Course
@@ -206,6 +207,35 @@ export default function GradebookPage() {
     )
   }
 
+  // Rata-rata dari course yang sudah ada nilainya saja: sebuah course
+  // dianggap "dinilai" bila minimal satu komponennya bukan null (nilai
+  // akhir selalu berupa angka karena dinormalisasi ulang, jadi 0 dari
+  // course tanpa komponen apa pun tidak boleh ikut menarik rata-rata).
+  const gradedCourses = grades.filter((g) =>
+    g.components.pretest !== null ||
+    g.components.posttest !== null ||
+    g.components.weeklyAssignments !== null ||
+    g.components.finalPractice !== null ||
+    g.components.discussion !== null,
+  )
+  const avg =
+    gradedCourses.length > 0
+      ? Math.round(
+          gradedCourses.reduce((sum, g) => sum + g.components.final, 0) /
+            gradedCourses.length,
+        )
+      : null
+  const predikat =
+    avg === null
+      ? null
+      : avg >= 85
+        ? 'Sangat Baik'
+        : avg >= 70
+          ? 'Baik'
+          : avg >= 60
+            ? 'Cukup'
+            : 'Perlu Latihan'
+
   return (
     <div className="page">
       <PageHeader
@@ -213,69 +243,97 @@ export default function GradebookPage() {
         title="Nilai Saya"
         subtitle={`Bobot: Pretest 5% · Posttest 15% · Tugas mingguan 30% · Tugas praktik akhir 40% · Diskusi 10% · Nilai lulus: ${PASSING_GRADE}. Hanya nilai kamu sendiri yang ditampilkan di sini.`}
       />
+      {avg !== null && (
+        <div className="grade-hero">
+          <span className="grade-trophy">
+            <Icon name="trophy" size={56} />
+          </span>
+          <div className="grade-hero-body">
+            <p>Rata-rata Nilai</p>
+            <span className="grade-avg">{avg} / 100</span>
+            {predikat && (
+              <span className="grade-predikat">
+                <Icon name="check" size={14} />
+                {predikat}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       {grades.length === 0 ? (
         <p className="empty">
           Kamu belum mengambil course apa pun.{' '}
           <Link to="/akademi">Jelajahi Akademi</Link> untuk memulai.
         </p>
       ) : (
-        <div className="grade-table-wrap">
-          <table className="grade-table">
-            <thead>
-              <tr>
-                <th>Course</th>
-                <th>Pretest (5%)</th>
-                <th>Posttest (15%)</th>
-                <th>Tugas Mingguan (30%)</th>
-                <th>Tugas Akhir (40%)</th>
-                <th>Diskusi (10%)</th>
-                <th>Nilai Akhir</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grades.map((g) => (
-                <tr key={g.course.id}>
-                  <td>
-                    <Link to={`/course/${g.course.id}`}>{g.course.title}</Link>
-                  </td>
-                  <td>
-                    {g.components.pretest === null ? '—' : g.components.pretest.toFixed(1)}
-                  </td>
-                  <td>
-                    {g.components.posttest === null
-                      ? '—'
-                      : g.components.posttest.toFixed(1)}
-                  </td>
-                  <td>
-                    {g.components.weeklyAssignments === null
-                      ? '—'
-                      : g.components.weeklyAssignments.toFixed(1)}
-                  </td>
-                  <td>
-                    {g.components.finalPractice === null
-                      ? '—'
-                      : g.components.finalPractice.toFixed(1)}
-                  </td>
-                  <td>
-                    {g.components.discussion === null
-                      ? '—'
-                      : g.components.discussion.toFixed(1)}
-                  </td>
-                  <td>
-                    <strong>{g.components.final.toFixed(1)}</strong>
-                  </td>
-                  <td>
-                    <span className={g.components.passed ? 'badge-pass' : 'badge-fail'}>
-                      {g.components.passed ? 'Lulus' : 'Belum lulus'}
-                    </span>
-                  </td>
+        <>
+          <div className="dash-section-head">
+            <h2>Detail Nilai</h2>
+          </div>
+          <div className="grade-table-wrap">
+            <table className="grade-table">
+              <thead>
+                <tr>
+                  <th>Course</th>
+                  <th>Pretest (5%)</th>
+                  <th>Posttest (15%)</th>
+                  <th>Tugas Mingguan (30%)</th>
+                  <th>Tugas Akhir (40%)</th>
+                  <th>Diskusi (10%)</th>
+                  <th>Nilai Akhir</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {grades.map((g) => (
+                  <tr key={g.course.id}>
+                    <td>
+                      <Link to={`/course/${g.course.id}`}>{g.course.title}</Link>
+                    </td>
+                    <td>
+                      {g.components.pretest === null ? '—' : g.components.pretest.toFixed(1)}
+                    </td>
+                    <td>
+                      {g.components.posttest === null
+                        ? '—'
+                        : g.components.posttest.toFixed(1)}
+                    </td>
+                    <td>
+                      {g.components.weeklyAssignments === null
+                        ? '—'
+                        : g.components.weeklyAssignments.toFixed(1)}
+                    </td>
+                    <td>
+                      {g.components.finalPractice === null
+                        ? '—'
+                        : g.components.finalPractice.toFixed(1)}
+                    </td>
+                    <td>
+                      {g.components.discussion === null
+                        ? '—'
+                        : g.components.discussion.toFixed(1)}
+                    </td>
+                    <td>
+                      <strong>{g.components.final.toFixed(1)}</strong>
+                    </td>
+                    <td>
+                      <span className={g.components.passed ? 'badge-pass' : 'badge-fail'}>
+                        {g.components.passed ? 'Lulus' : 'Belum lulus'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
+      <div className="grade-motivation">
+        <span className="announce-icon">
+          <Icon name="star" size={24} />
+        </span>
+        <span>Terus semangat belajar untuk hasil yang lebih baik!</span>
+      </div>
       <p className="muted">
         Tanda &ldquo;—&rdquo; berarti komponen itu belum ada nilainya (belum ada pretest,
         posttest, tugas yang dinilai, atau aktivitas diskusi). Nilai akhir dihitung ulang

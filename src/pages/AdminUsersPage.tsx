@@ -82,10 +82,14 @@ export default function AdminUsersPage() {
       {error && <p className="error-box">{error}</p>}
       {!loading && !error && profiles !== null && (
         <>
-          <p className="muted">
-            Total {counts.semua} · Siswa {counts.siswa} · Mentor {counts.mentor} · Admin{' '}
-            {counts.admin}
-          </p>
+          <div className="dash-section-head"><h2>Daftar Pengguna</h2></div>
+          <div className="pill-tabs" role="tablist" aria-label="Filter pengguna per peran">
+            <button type="button" className={filter === 'semua' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('semua')}>Semua ({counts.semua})</button>
+            <button type="button" className={filter === 'siswa' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('siswa')}>Siswa ({counts.siswa})</button>
+            <button type="button" className={filter === 'mentor' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('mentor')}>Mentor ({counts.mentor})</button>
+            <button type="button" className={filter === 'admin' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('admin')}>Admin ({counts.admin})</button>
+          </div>
+          <p className="muted">Peran tidak diubah dari halaman ini. Peran mentor berubah otomatis saat lamaran disetujui.</p>
           <div className="form" style={{ marginBottom: '1rem' }}>
             <label>
               Cari nama / username / email / kota
@@ -94,19 +98,6 @@ export default function AdminUsersPage() {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Mis. Nadia, nadia-01, sineverse.id@gmail.com, Tangerang"
               />
-            </label>
-            <label>
-              Peran
-              <select
-                value={filter}
-                onChange={(e) => setFilter(e.target.value as 'semua' | Role)}
-                style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
-              >
-                <option value="semua">Semua peran</option>
-                <option value="siswa">Siswa</option>
-                <option value="mentor">Mentor</option>
-                <option value="admin">Admin</option>
-              </select>
             </label>
           </div>
           {filtered.length === 0 ? (
@@ -131,7 +122,7 @@ export default function AdminUsersPage() {
                       <td>{p.name ?? '—'}</td>
                       <td>{p.username ?? '—'}</td>
                       <td>{p.email ?? '—'}</td>
-                      <td>{ROLE_LABEL[p.role]}</td>
+                      <td><span className="chip">{ROLE_LABEL[p.role]}</span></td>
                       <td>{p.city ?? '—'}</td>
                       <td>
                         {p.school ?? '—'}

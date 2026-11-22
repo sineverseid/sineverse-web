@@ -1,8 +1,10 @@
 // SINEVERSE — Admin Panel: Analitik Akademi (Tahap 6).
 // Pelengkap AdminAnalyticsPage (Tahap 4, frozen): halaman ini hanya berisi
 // celah yang belum ada di sana — turnaround penilaian per course,
-// keterlambatan pengumpulan, dan beban kerja mentor. Semua angka dihitung
-// dari data Supabase yang ada — tanpa data palsu; kosong ditampilkan "—".
+// keterlambatan pengumpulan, beban kerja mentor, dan tren Bulanan/Tahunan
+// (grafik batang CSS dari data asli: submission masuk dari submitted_at
+// dan enrollment baru dari enrolled_at). Semua angka dihitung dari data
+// Supabase yang ada — tanpa data palsu; kosong ditampilkan "—".
 // Turnaround = graded_at − submitted_at, hanya untuk submission yang sudah
 // dinilai (score tidak null) dan punya graded_at. Terlambat = flag is_late
 // (migrasi 009) ATAU submitted_at melewati assignments.due_date.
@@ -65,6 +67,106 @@ function fmtDuration(hours: number | null): string {
   return `${(hours / 24).toFixed(1)} hari`
 }
 
+const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
+
+interface TrendBucket {
+  label: string
+  value: number
+}
+
+/** 12 bulan kalender terakhir (termasuk bulan berjalan), nol tetap tampil. */
+function monthBuckets(timestamps: string[]): TrendBucket[] {
+  const now = new Date()
+  const buckets: (TrendBucket & { key: string })[] = []
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    buckets.push({
+      label: `${MONTHS_ID[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
+      value: 0,
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+    })
+  }
+  const byKey = new Map(buckets.map((b) => [b.key, b]))
+  for (const ts of timestamps) {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) continue
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const b = byKey.get(key)
+    if (b) b.value += 1
+  }
+  return buckets
+}
+
+/** Tahun dari tahun data paling awal sampai tahun berjalan. */
+function yearBuckets(timestamps: string[]): TrendBucket[] {
+  const years = timestamps
+    .map((ts) => new Date(ts).getFullYear())
+    .filter((y) => !Number.isNaN(y))
+  if (years.length === 0) return []
+  const buckets: TrendBucket[] = []
+  for (let y = Math.min(...years); y <= new Date().getFullYear(); y++) {
+    buckets.push({ label: String(y), value: 0 })
+  }
+  const byYear = new Map(buckets.map((b) => [b.label, b]))
+  for (const y of years) {
+    const b = byYear.get(String(y))
+    if (b) b.value += 1
+  }
+  return buckets
+}
+
+/** Grafik batang CSS murni (tanpa library baru) dari bucket data asli. */
+function BarChart({ data }: { data: TrendBucket[] }) {
+  const max = Math.max(0, ...data.map((d) => d.value))
+  if (data.length === 0) return <p className="empty">Belum ada data.</p>
+  return (
+    <div>
+      <div
+        style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', height: '10rem' }}
+        role="img"
+        aria-label={`Grafik batang: ${data.map((d) => `${d.label} ${d.value}`).join(', ')}`}
+      >
+        {data.map((d) => (
+          <div
+            key={d.label}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              height: '100%',
+            }}
+          >
+            <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>{d.value}</span>
+            <div
+              title={`${d.label}: ${d.value}`}
+              style={{
+                width: '100%',
+                maxWidth: '2.5rem',
+                height: max > 0 ? `${Math.max(d.value > 0 ? 4 : 0, (d.value / max) * 130)}px` : '2px',
+                background: 'var(--film-green)',
+                borderRadius: '4px 4px 0 0',
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        {data.map((d) => (
+          <span
+            key={d.label}
+            style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: '0.75rem', color: '#5b6b7c' }}
+          >
+            {d.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminAcademyAnalyticsPage() {
   const { profile } = useAuth()
   const [turnaround, setTurnaround] = useState<TurnaroundRow[] | null>(null)
@@ -73,6 +175,11 @@ export default function AdminAcademyAnalyticsPage() {
   const [gradedNoTimestamp, setGradedNoTimestamp] = useState(0)
   const [coursesWithoutMentor, setCoursesWithoutMentor] = useState(0)
   const [mentorsWithoutCourse, setMentorsWithoutCourse] = useState(0)
+  const [trendTab, setTrendTab] = useState<'bulanan' | 'tahunan'>('bulanan')
+  const [trend, setTrend] = useState<{
+    bulanan: { submissions: TrendBucket[]; enrollments: TrendBucket[] }
+    tahunan: { submissions: TrendBucket[]; enrollments: TrendBucket[] }
+  } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -93,14 +200,19 @@ export default function AdminAcademyAnalyticsPage() {
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
-          supabase.from('enrollments').select('id,user_id,course_id'),
+          supabase.from('enrollments').select('id,user_id,course_id,enrolled_at'),
           supabase.from('modules').select('id,course_id'),
           supabase
             .from('submissions')
             .select('id,assignment_id,user_id,score,submitted_at,graded_at,is_late'),
         ])
         const profs = (profileRows ?? []) as { id: string; role: string }[]
-        const enrRows = (enrRowsRaw ?? []) as { id: string; user_id: string; course_id: string }[]
+        const enrRows = (enrRowsRaw ?? []) as {
+          id: string
+          user_id: string
+          course_id: string
+          enrolled_at: string
+        }[]
         const modRows = (modRowsRaw ?? []) as { id: string; course_id: string }[]
         const subRows = (subRowsRaw ?? []) as {
           id: string
@@ -270,6 +382,21 @@ export default function AdminAcademyAnalyticsPage() {
         setLateRows(lateOut)
         setMentorRows(mentorOut)
         setGradedNoTimestamp(noTimestamp)
+        // Tren dari timestamp asli: submission masuk (submitted_at) dan
+        // enrollment baru (enrolled_at). Seri sertifikat tidak dimuat di
+        // halaman ini (ada di Analytics & Reports) sehingga tidak dibuat.
+        const subTs = subRows.map((s) => s.submitted_at)
+        const enrTs = enrRows.map((e) => e.enrolled_at)
+        setTrend({
+          bulanan: {
+            submissions: monthBuckets(subTs),
+            enrollments: monthBuckets(enrTs),
+          },
+          tahunan: {
+            submissions: yearBuckets(subTs),
+            enrollments: yearBuckets(enrTs),
+          },
+        })
         setCoursesWithoutMentor(courseList.filter((c) => !c.mentor_id).length)
         setMentorsWithoutCourse(
           profs.filter((p) => p.role === 'mentor' && !mentorCourseIds.has(p.id)).length,
@@ -307,7 +434,7 @@ export default function AdminAcademyAnalyticsPage() {
       <WorkspaceNav entries={ADMIN_NAV} />
 
       <section className="section">
-        <h2>Turnaround penilaian per course</h2>
+        <div className="dash-section-head"><h2>Turnaround penilaian per course</h2></div>
         {turnaround !== null && turnaround.length === 0 ? (
           <p className="empty">Belum ada course.</p>
         ) : (
@@ -358,7 +485,7 @@ export default function AdminAcademyAnalyticsPage() {
       </section>
 
       <section className="section">
-        <h2>Keterlambatan pengumpulan per course</h2>
+        <div className="dash-section-head"><h2>Keterlambatan pengumpulan per course</h2></div>
         {lateRows !== null && lateRows.length === 0 ? (
           <p className="empty">Belum ada course.</p>
         ) : (
@@ -399,7 +526,7 @@ export default function AdminAcademyAnalyticsPage() {
       </section>
 
       <section className="section">
-        <h2>Beban kerja mentor</h2>
+        <div className="dash-section-head"><h2>Beban kerja mentor</h2></div>
         {mentorRows !== null && mentorRows.length === 0 ? (
           <p className="empty">Belum ada mentor yang mengampu course.</p>
         ) : (
@@ -441,6 +568,46 @@ export default function AdminAcademyAnalyticsPage() {
           {coursesWithoutMentor > 0 && ` ${coursesWithoutMentor} course belum punya mentor.`}
           {mentorsWithoutCourse > 0 && ` ${mentorsWithoutCourse} mentor terdaftar belum mengampu course.`}
         </p>
+      </section>
+
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Tren pengumpulan &amp; enrollment</h2>
+          <div role="group" aria-label="Periode tren" style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className={trendTab === 'bulanan' ? 'btn btn-primary btn-small' : 'btn btn-ghost btn-small'}
+              aria-pressed={trendTab === 'bulanan'}
+              onClick={() => setTrendTab('bulanan')}
+            >
+              Bulanan
+            </button>
+            <button
+              type="button"
+              className={trendTab === 'tahunan' ? 'btn btn-primary btn-small' : 'btn btn-ghost btn-small'}
+              aria-pressed={trendTab === 'tahunan'}
+              onClick={() => setTrendTab('tahunan')}
+            >
+              Tahunan
+            </button>
+          </div>
+        </div>
+        {trend === null ? (
+          <p className="empty">Belum ada data tren.</p>
+        ) : (
+          <>
+            <h3>Submission masuk</h3>
+            <BarChart data={trend[trendTab].submissions} />
+            <h3 style={{ marginTop: '1.25rem' }}>Enrollment baru</h3>
+            <BarChart data={trend[trendTab].enrollments} />
+            <p className="muted">
+              {trendTab === 'bulanan'
+                ? 'Bulanan = 12 bulan kalender terakhir, termasuk bulan berjalan.'
+                : 'Tahunan = tahun data paling awal sampai tahun berjalan.'}{' '}
+              Dihitung dari submitted_at dan enrolled_at yang tersimpan.
+            </p>
+          </>
+        )}
       </section>
 
       <p className="muted">
