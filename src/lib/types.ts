@@ -688,6 +688,11 @@ export interface SineEvent {
   ends_at: string | null
   location: string | null
   capacity: number | null
+  // Migrasi 031 (belum diterapkan): URL publik poster acara di bucket
+  // event-posters. null = acara belum punya poster (placeholder tampil).
+  // Baris yang diambil sebelum migrasi 031 tidak punya kunci ini
+  // (undefined) dan diperlakukan sama seperti null.
+  poster_url: string | null
   created_by: string | null
   created_at: string
 }

@@ -61,6 +61,12 @@ async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Promise<T>
   const hit = readCache.get(key)
   if (hit && hit.expiresAt > Date.now()) return hit.data as T
   const data = await fetcher()
+  // Jangan cache hasil kosong: query katalog yang jalan sebagai anon
+  // (sesi Supabase belum pulih saat halaman mount) mengembalikan 0 baris
+  // secara diam-diam karena RLS — bukan error. Hasil kosong yang ter-cache
+  // akan meracuni katalog selama TTL meski sesi sudah pulih. Kembalikan
+  // datanya tanpa menyimpan, supaya percobaan berikutnya memanggil ulang.
+  if (Array.isArray(data) && data.length === 0) return data
   readCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS })
   return data
 }
