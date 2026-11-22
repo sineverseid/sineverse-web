@@ -5,7 +5,8 @@
 // masuk). Enam info yang diminta master prompt "Pendaftaran Siswa dan
 // Mentor" §2 — TIDAK ADA CV/KTP/sertifikat/surat/dokumen wajib; portofolio
 // hanya berupa tautan opsional. Peran mentor baru aktif setelah admin
-// menyetujui (trigger database 008).
+// menyetujui (trigger database 008). Migrasi 033 menambah info ke-7
+// opsional (afiliasi sekolah/institusi, teks bebas) — bukan syarat.
 
 import { useEffect, useRef, useState } from 'react'
 import type { MentorApplicationInput } from '../lib/types'
@@ -82,6 +83,9 @@ export default function MentorApplicationForm({
   const [otherExpertise, setOtherExpertise] = useState(initialOther.join(', '))
   const [experience, setExperience] = useState(initial?.experience ?? '')
   const [portfolioLink, setPortfolioLink] = useState(initial?.portfolio_link ?? '')
+  // Migrasi 033: sekolah/institusi afiliasi — opsional, teks bebas
+  // (institusi mentor sering bukan SMA/SMK referensi).
+  const [affiliation, setAffiliation] = useState(initial?.affiliation ?? '')
   const [reason, setReason] = useState(initial?.reason ?? '')
   const [volunteerAgreed, setVolunteerAgreed] = useState(initial?.volunteer_agreed ?? false)
   const [error, setError] = useState('')
@@ -101,6 +105,7 @@ export default function MentorApplicationForm({
     expertise: resolvedExpertise,
     experience,
     portfolio_link: portfolioLink.trim() || null,
+    affiliation: affiliation.trim() || null,
     reason: reason.trim(),
     volunteer_agreed: volunteerAgreed,
   }
@@ -120,7 +125,7 @@ export default function MentorApplicationForm({
     onValuesChangeRef.current?.(values, valid)
     // Sengaja: hanya nilai yang berubah yang memicu laporan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, profession, expertise, otherExpertise, experience, portfolioLink, reason, volunteerAgreed])
+  }, [embedded, profession, expertise, otherExpertise, experience, portfolioLink, affiliation, reason, volunteerAgreed])
 
   function toggleExpertise(item: string) {
     if (item === OTHER_EXPERTISE_LABEL && expertise.includes(item)) {
@@ -215,6 +220,19 @@ export default function MentorApplicationForm({
           onChange={(e) => setPortfolioLink(e.target.value)}
           placeholder="https://…"
         />
+      </label>
+      <label>
+        Sekolah/institusi afiliasi (opsional)
+        <input
+          value={affiliation}
+          onChange={(e) => setAffiliation(e.target.value)}
+          maxLength={120}
+          placeholder="Contoh: SMAN 8 Jakarta / ISI Yogyakarta"
+        />
+        <span className="muted" style={{ fontWeight: 400 }}>
+          Sekolah atau institusi tempat kamu mengajar atau menempuh pendidikan. Tampil di
+          kartu mentormu agar siswa tahu latar belakangmu.
+        </span>
       </label>
       <label>
         Alasan menjadi mentor
