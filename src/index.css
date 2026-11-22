@@ -933,9 +933,19 @@ p {
   text-align: center;
 }
 
+@media (max-width: 639px) {
+  .admin-action-grid > :last-child:nth-child(odd) {
+    grid-column: span 2;
+  }
+}
+
 @media (min-width: 640px) {
   .admin-action-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .admin-action-grid > :last-child:nth-child(3n+1) {
+    grid-column: span 3;
   }
 }
 
@@ -960,9 +970,19 @@ p {
   text-align: center;
 }
 
+@media (max-width: 639px) {
+  .action-grid > :last-child:nth-child(odd) {
+    grid-column: span 2;
+  }
+}
+
 @media (min-width: 640px) {
   .action-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .action-grid > :last-child:nth-child(3n+1) {
+    grid-column: span 3;
   }
 }
 
