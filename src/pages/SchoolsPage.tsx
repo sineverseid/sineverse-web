@@ -145,7 +145,7 @@ export default function SchoolsPage() {
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, profile?.role, profile?.school_id])
+  }, [user?.id, profile?.role, profile?.school_id, profile?.school])
 
   // Provinsi untuk filter pencarian mentor.
   useEffect(() => {
@@ -212,6 +212,11 @@ export default function SchoolsPage() {
     setSettingSchool(s.id)
     try {
       await updateProfile(user.id, { school_id: s.id, school: s.name })
+      // Tampilkan langsung dari objek sekolah yang dipilih — jangan
+      // menunggu round-trip refreshProfile + effect, supaya kartu
+      // "Sekolahmu" tidak sempat menampilkan pesan manual yang salah
+      // saat schools masih kosong padahal school_id sudah terisi.
+      setSchools([s])
       await refreshProfile()
       setNotice(`Sekolahmu diatur ke ${s.name}.`)
     } catch {
@@ -313,7 +318,11 @@ export default function SchoolsPage() {
       <section className="section">
         <h2>{scopedToOwnSchool ? 'Sekolahmu' : 'Sekolah'}</h2>
         {scopedToOwnSchool && schools.length === 0 ? (
-          profile?.school ? (
+          // Kartu manual HANYA bila memang tidak ada school_id (afiliasi
+          // teks bebas saja). Bila school_id terisi tapi schools masih
+          // kosong, itu jendela muat ulang — jangan pernah menampilkan
+          // pesan "belum terdaftar" yang salah untuk sekolah referensi.
+          !profile?.school_id && profile?.school ? (
             <ul className="course-list">
               <li className="course-card">
                 <div style={{ padding: '1.1rem 1.25rem' }}>
