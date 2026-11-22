@@ -27,21 +27,21 @@ type NavEntry = {
 // Menu utama, sama persis dengan navItems artefak (urutan dan label).
 const NAV_ITEMS: NavEntry[] = [
   { to: '/', label: 'Beranda', icon: 'home', end: true },
-  { to: '/akademi', label: 'Academy', icon: 'academy' },
-  { to: '/proyek', label: 'Projects', icon: 'project' },
+  { to: '/akademi', label: 'Akademi', icon: 'academy' },
+  { to: '/proyek', label: 'Proyek', icon: 'project' },
   { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
-  { to: '/kru', label: 'Crew Finder', icon: 'crew' },
+  { to: '/kru', label: 'Pencari Kru', icon: 'crew' },
   { to: '/sekolah', label: 'Sekolah', icon: 'school' },
-  { to: '/komunitas', label: 'Community', icon: 'community' },
-  { to: '/showcase', label: 'Showcase', icon: 'showcase' },
-  { to: '/acara', label: 'Events', icon: 'event' },
-  { to: '/growth', label: 'Growth', icon: 'growth' },
-  { to: '/pustaka', label: 'Library', icon: 'library' },
-  { to: '/mentors', label: 'Mentors', icon: 'mentor' },
+  { to: '/komunitas', label: 'Komunitas', icon: 'community' },
+  { to: '/showcase', label: 'Etalase', icon: 'showcase' },
+  { to: '/acara', label: 'Acara', icon: 'event' },
+  { to: '/growth', label: 'Pertumbuhan', icon: 'growth' },
+  { to: '/pustaka', label: 'Pustaka', icon: 'library' },
+  { to: '/mentors', label: 'Mentor', icon: 'mentor' },
   { to: '/portofolio', label: 'Portofolio', icon: 'portfolio' },
   // Menu khusus peran (artefak): Penilaian + Workspace mentor dan admin.
   { to: '/mentor/penilaian', label: 'Penilaian', icon: 'grade', roles: ['mentor', 'admin'] },
-  { to: '/mentor', label: 'Workspace', icon: 'mentor', roles: ['mentor', 'admin'] },
+  { to: '/mentor', label: 'Ruang Kerja', icon: 'mentor', roles: ['mentor', 'admin'] },
   // Admin hanya admin.
   { to: '/admin', label: 'Admin', icon: 'admin', roles: ['admin'] },
 ]
