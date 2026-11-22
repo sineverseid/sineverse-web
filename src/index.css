@@ -1093,6 +1093,49 @@ p {
   margin-top: 0.15rem;
 }
 
+/* Baris filter direktori sekolah (Admin Panel): pencarian + 3 select,
+   membungkus rapi di layar kecil. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.filter-bar .search-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.filter-bar select {
+  font-family: var(--font);
+  font-size: 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  background: var(--soft-white);
+  color: var(--text);
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.filter-bar select:disabled {
+  opacity: 0.55;
+}
+
+/* Baris meta kecil di bawah judul baris daftar (NPSN, alamat, wilayah). */
+.list-row-meta {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.list-row-meta .pill-active,
+.list-row-meta .pill-waiting {
+  margin-left: 0.35rem;
+}
+
 .course-list {
   list-style: none;
   margin: 0;
