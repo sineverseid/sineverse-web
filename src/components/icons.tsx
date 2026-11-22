@@ -42,6 +42,8 @@ export type IconName =
   | 'info'
   | 'shield'
   | 'fileText'
+  | 'play'
+  | 'download'
 
 const PATHS: Record<IconName, ReactNode> = {
   home: (
@@ -282,6 +284,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </>
+  ),
+  play: <polygon points="5 3 19 12 5 21 5 3" />,
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
     </>
   ),
 }

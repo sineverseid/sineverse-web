@@ -128,7 +128,10 @@ export default function Layout() {
       <header className="topbar">
         <Link to="/" className="brand">
           <img src="./pwa-192x192.png" alt="Logo SINEVERSE" className="brand-logo" />
-          <span className="brand-name">SINEVERSE</span>
+          <span className="brand-text">
+            <span className="brand-name">SINEVERSE</span>
+            <span className="brand-tagline">LEARN. CREATE. COLLABORATE.</span>
+          </span>
         </Link>
         {user ? (
           <>
@@ -141,6 +144,9 @@ export default function Layout() {
               ))}
             </nav>
             <div className="header-actions">
+              <Link to="/akademi" className="header-bell" aria-label="Cari kursus">
+                <Icon name="search" size={20} />
+              </Link>
               <Link to="/notifikasi" className="header-bell" aria-label="Notifikasi">
                 <Icon name="bell" size={20} />
                 {unread !== null && unread > 0 ? (

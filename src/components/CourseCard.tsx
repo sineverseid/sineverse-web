@@ -1,39 +1,57 @@
-// SINEVERSE — kartu course bersama (Beranda + Akademi).
-//
-// Tampilan mengikuti kartu course di artefak: sampul visual di atas,
-// judul, deskripsi, lalu chip kategori/level + status mentor.
-// Sampul memakai pita brand + label minggu RPS karena Supabase tidak
-// menyimpan gambar sampul (cover_url null untuk semua course seed).
+// SINEVERSE — kartu course horizontal (desain dashboard): sampul kiri,
+// judul, meta, bilah progres, tombol putar navy.
+// Sampul memakai cover_url bila ada; bila tidak, gradasi navy + ikon film
+// (Supabase tidak menyimpan gambar sampul untuk course seed).
+// Props baru bersifat opsional: pemanggil lama yang tidak mengopernya
+// tetap mendapat kartu tanpa pil status dan tanpa bilah progres.
 import { Link } from 'react-router-dom'
-import { courseCoverKey, rpsWeekLabel } from '../lib/brand'
+import Icon from './icons'
 import type { Course } from '../lib/types'
 
-export default function CourseCard({ course }: { course: Course }) {
-  const week = rpsWeekLabel(course.id)
-  const coverKey = courseCoverKey(course.title)
+export type CourseStatus = 'Aktif' | 'Selesai'
+
+export interface CourseCardProps {
+  course: Course
+  status?: CourseStatus | null
+  progress?: { done: number; total: number } | null
+  mentorName?: string | null
+}
+
+export default function CourseCard({ course, status, progress, mentorName }: CourseCardProps) {
+  const pct =
+    progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
+  const meta = [course.category ?? 'Perfilman', course.level ?? 'Semua level', mentorName ?? null]
+    .filter((v): v is string => !!v)
+    .join(' • ')
   return (
-    <li className="course-card">
-      <Link to={`/course/${course.id}`}>
+    <Link to={`/course/${course.id}`} className="dash-course">
+      <div className="dash-course-cover">
         {course.cover_url ? (
-          <div className="course-cover course-cover-img" aria-hidden="true">
-            <img src={course.cover_url} alt="" loading="lazy" />
-            {week && <span className="course-cover-week">{week}</span>}
-            <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
-          </div>
+          <img src={course.cover_url} alt="" loading="lazy" />
         ) : (
-          <div className={`course-cover cover-${coverKey}`} aria-hidden="true">
-            {week && <span className="course-cover-week">{week}</span>}
-            <span className="course-cover-cat">{course.category ?? 'Perfilman'}</span>
+          <Icon name="film" size={36} />
+        )}
+        {status && <span className="dash-course-status">{status}</span>}
+      </div>
+      <div className="dash-course-body">
+        <h3>{course.title}</h3>
+        <p className="dash-course-meta">{meta}</p>
+        {progress && progress.total > 0 && (
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Progres ${course.title}: ${pct} persen`}
+          >
+            <div className="progress-fill" style={{ width: `${pct}%` }} />
           </div>
         )}
-        <div className="course-card-body">
-          <h3>{course.title}</h3>
-          <p>{course.description}</p>
-          <span className="chip">{course.category ?? 'Lainnya'}</span>{' '}
-          <span className="chip">{course.level ?? 'Semua level'}</span>
-          {course.mentor_id === null && <span className="chip chip-waitlist">Tanpa mentor</span>}
-        </div>
-      </Link>
-    </li>
+      </div>
+      <span className="dash-course-play">
+        <Icon name="play" size={20} />
+      </span>
+    </Link>
   )
 }
