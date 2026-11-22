@@ -1912,6 +1912,24 @@ p {
   .topnav::-webkit-scrollbar {
     display: none;
   }
+
+  /* K1 tepi kiri: fade kiri hanya saat nav sudah digeser (is-scrolled);
+     fade kanan hilang saat sudah mentok kanan (is-end); bila isi nav muat
+     tanpa scroll, tidak ada fade sama sekali. */
+  .topnav.is-scrolled {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%);
+  }
+
+  .topnav.is-scrolled.is-end {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 100%);
+  }
+
+  .topnav.is-end:not(.is-scrolled) {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 
 /* --- Landing homepage redesign (Master Prompt 21 Nov 2026) --- */
