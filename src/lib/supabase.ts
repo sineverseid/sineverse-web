@@ -710,16 +710,6 @@ export async function fetchMyCertificates(userId: string): Promise<Certificate[]
   return (data ?? []) as Certificate[]
 }
 
-export async function verifyCertificate(serial: string): Promise<Certificate | null> {
-  const { data, error } = await supabase
-    .from('certificates')
-    .select('*')
-    .eq('serial', serial.trim().toUpperCase())
-    .maybeSingle()
-  if (error) throw error
-  return data as Certificate | null
-}
-
 /** Notifications are inserted ONLY through the create_notification() RPC. */
 export async function sendNotification(
   userId: string,

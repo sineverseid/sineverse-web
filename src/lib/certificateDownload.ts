@@ -47,10 +47,16 @@ export interface RenderCertificateArgs {
   mentorName: string | null
 }
 
-function verificationLink(serial: string): string {
-  // Sama dengan CertificatesPage.verificationLink: appBaseUrl() sudah
-  // mencakup segmen /sineverse-web/ dan rute hash (#/).
-  return `${appBaseUrl()}#/sertifikat/verifikasi?serial=${serial}`
+function verificationLink(cert: Certificate): string {
+  // 024: QR di dalam PNG mengodekan URL verifikasi token
+  // (?token=<hash>). Fallback ke URL serial hanya bila hash belum ada
+  // (baris pra-024 yang belum di-backfill — setelah migrasi 024 semua
+  // baris punya hash). appBaseUrl() sudah mencakup segmen
+  // /sineverse-web/ dan rute hash (#/).
+  if (cert.verification_token_hash) {
+    return `${appBaseUrl()}#/sertifikat/verifikasi?token=${cert.verification_token_hash}`
+  }
+  return `${appBaseUrl()}#/sertifikat/verifikasi?serial=${cert.serial}`
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -1004,7 +1010,7 @@ export async function renderCertificate(
   let qrImg: HTMLImageElement | null = null
   if (!isMentor) {
     try {
-      const dataUrl = await QRCode.toDataURL(verificationLink(cert.serial), { width: 220, margin: 1 })
+      const dataUrl = await QRCode.toDataURL(verificationLink(cert), { width: 220, margin: 1 })
       qrImg = await loadImage(dataUrl)
     } catch {
       qrImg = null

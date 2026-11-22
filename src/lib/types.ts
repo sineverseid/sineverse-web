@@ -323,13 +323,60 @@ export interface Rps {
 export interface Certificate {
   id: string
   user_id: string
-  course_id: string
-  type: 'course' | 'exam' | 'work' | 'mentor'
+  // 024: NULL untuk sertifikat academy/event (tidak punya course).
+  course_id: string | null
+  type: 'course' | 'exam' | 'work' | 'mentor' | 'academy' | 'event'
   serial: string
   score: number | null
   // 023: alasan apresiasi pada sertifikat mentor (null untuk jenis lain).
   note: string | null
   issued_at: string
+  // 024 (Sistem Validasi Sertifikat): hash SHA-256 dari token acak
+  // 32 byte — hash inilah yang dibawa URL verifikasi (?token=<hash>);
+  // token mentah tidak pernah disimpan. status 'valid' default.
+  verification_token_hash: string | null
+  status: 'valid' | 'revoked' | 'inactive'
+  revoked_at: string | null
+  revocation_reason: string | null
+  issued_by: string | null
+  recipient_name_snapshot: string | null
+  program_name: string | null
+  achievement_description: string | null
+  event_id: string | null
+  project_id: string | null
+  pdf_storage_path: string | null
+}
+
+/** 024: satu baris riwayat perubahan status sertifikat (audit log). */
+export interface CertificateAuditLog {
+  id: string
+  certificate_id: string
+  action: string
+  performed_by: string | null
+  previous_status: string | null
+  new_status: string | null
+  notes: string | null
+  created_at: string
+}
+
+/** 024: hasil verifikasi publik dari RPC verify_certificate_by_token /
+ *  verify_certificate_by_serial — hanya kolom yang aman untuk publik. */
+export interface VerificationResult {
+  serial: string
+  type: Certificate['type']
+  status: 'valid' | 'revoked' | 'inactive'
+  issued_at: string
+  revoked_at: string | null
+  revocation_reason: string | null
+  recipient_name: string | null
+  course_id: string | null
+  course_title: string | null
+  program_name: string | null
+  score: number | null
+  note: string | null
+  achievement_description: string | null
+  event_name: string | null
+  verification_token_hash: string | null
 }
 
 // --- 004: Community / Schools / Clubs --------------------------------------

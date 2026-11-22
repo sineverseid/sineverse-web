@@ -14,10 +14,11 @@ import {
   buildGradeComponents,
   discussionParticipationScore,
 } from './grading'
-import { supabase } from './supabase'
+import { supabase, appBaseUrl } from './supabase'
 import type {
   Assignment,
   Certificate,
+  CertificateAuditLog,
   Discussion,
   Enrollment,
   GradeComponents,
@@ -26,6 +27,7 @@ import type {
   Quiz,
   QuizAttempt,
   Submission,
+  VerificationResult,
 } from './types'
 
 export const DEFAULT_CERT_WEIGHTS = { pretest: 5, posttest: 15, tugasMingguan: 30, tugasAkhir: 40, diskusi: 10 }
@@ -254,4 +256,111 @@ export async function fetchIssuedCourseCertificates(courseId: string): Promise<C
     .order('issued_at', { ascending: false })
   if (error) throw error
   return (data ?? []) as Certificate[]
+}
+
+// ---------------------------------------------------------------------------
+// Sistem Validasi Sertifikat (migrasi 024).
+// ---------------------------------------------------------------------------
+
+/** URL verifikasi publik dari hash token. Token mentah tidak pernah
+ *  disimpan: yang dibawa URL adalah verification_token_hash itu sendiri
+ *  (SHA-256 dari 32 byte acak, 256-bit, tidak bisa ditebak). */
+export function verificationLinkForHash(hash: string): string {
+  return `${appBaseUrl()}#/sertifikat/verifikasi?token=${hash}`
+}
+
+/** URL verifikasi untuk satu sertifikat: token URL bila hash ada,
+ *  fallback ke URL serial hanya bila hash belum ada (baris pra-024 yang
+ *  belum di-backfill — setelah migrasi 024 semua baris punya hash). */
+export function verificationLinkForCert(cert: Certificate): string {
+  if (cert.verification_token_hash) return verificationLinkForHash(cert.verification_token_hash)
+  return `${appBaseUrl()}#/sertifikat/verifikasi?serial=${cert.serial}`
+}
+
+/** Verifikasi publik via RPC (migrasi 024): cocokkan hash token dengan
+ *  database. Mengembalikan null bila tidak ditemukan (NOT FOUND). */
+export async function verifyByToken(token: string): Promise<VerificationResult | null> {
+  const { data, error } = await supabase.rpc('verify_certificate_by_token', {
+    p_token: token.trim(),
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
+  return row ?? null
+}
+
+/** Verifikasi publik via RPC berdasarkan nomor serial (pencarian manual). */
+export async function verifyBySerial(serial: string): Promise<VerificationResult | null> {
+  const { data, error } = await supabase.rpc('verify_certificate_by_serial', {
+    p_serial: serial.trim().toUpperCase(),
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
+  return row ?? null
+}
+
+/** Cabut sertifikat (admin). Mengembalikan status baru ('revoked'). */
+export async function revokeCertificate(certId: string, reason: string | null): Promise<string> {
+  const { data, error } = await supabase.rpc('revoke_certificate', {
+    p_cert_id: certId,
+    p_reason: reason,
+  })
+  if (error) throw error
+  return (data as string) ?? 'revoked'
+}
+
+/** Aktifkan kembali sertifikat yang dicabut (admin). */
+export async function reactivateCertificate(certId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('reactivate_certificate', {
+    p_cert_id: certId,
+  })
+  if (error) throw error
+  return (data as string) ?? 'valid'
+}
+
+/** Riwayat perubahan status satu sertifikat (admin; RLS admin-only). */
+export async function fetchCertificateAuditLog(certId: string): Promise<CertificateAuditLog[]> {
+  const { data, error } = await supabase
+    .from('certificate_audit_logs')
+    .select('*')
+    .eq('certificate_id', certId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as CertificateAuditLog[]
+}
+
+/** Terbitkan sertifikat kelulusan Academy via RPC (migrasi 024).
+ *  RPC menolak bila siswa belum memegang sertifikat course ke-10 course. */
+export async function issueAcademyCertificate(
+  userId: string,
+): Promise<{ serial: string; alreadyIssued: boolean }> {
+  const { data, error } = await supabase.rpc('issue_academy_certificate', {
+    p_user_id: userId,
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    serial: string
+    already_issued: boolean
+  } | null
+  if (!row) throw new Error('RPC issue_academy_certificate tidak mengembalikan data.')
+  return { serial: row.serial, alreadyIssued: row.already_issued }
+}
+
+/** Terbitkan sertifikat partisipasi event via RPC (migrasi 024). */
+export async function issueEventCertificate(
+  userId: string,
+  eventId: string,
+  note: string | null,
+): Promise<{ serial: string; alreadyIssued: boolean }> {
+  const { data, error } = await supabase.rpc('issue_event_certificate', {
+    p_user_id: userId,
+    p_event_id: eventId,
+    p_note: note,
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    serial: string
+    already_issued: boolean
+  } | null
+  if (!row) throw new Error('RPC issue_event_certificate tidak mengembalikan data.')
+  return { serial: row.serial, alreadyIssued: row.already_issued }
 }
