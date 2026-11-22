@@ -67,7 +67,20 @@ export default function AkademiPage() {
   const isMentor = profile?.role === 'mentor'
   const isAdmin = profile?.role === 'admin'
 
+  // Muat katalog HANYA setelah auth selesai dan ada user: query courses
+  // sebagai anon mengembalikan 0 baris secara diam-diam (RLS), jadi fetch
+  // saat sesi belum pulih akan menampilkan katalog kosong. Bila auth selesai
+  // tanpa user, hentikan loading dan kosongkan katalog (tamu memang tidak
+  // melihat katalog; jangan biarkan daftar course pengguna sebelumnya
+  // tampil, dan jangan biarkan "Memuat course…" macet di Semua Kursus).
   useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      setCourses([])
+      setCoursesLoaded(true)
+      setLoading(false)
+      return
+    }
     let cancelled = false
     fetchCourses()
       .then(async (data) => {
@@ -94,7 +107,7 @@ export default function AkademiPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [authLoading, user?.id])
 
   // Progres Academy untuk admin: siswa, lesson selesai, dan total lesson
   // per course, dihitung dari enrollments + lesson_progress asli.

@@ -20,6 +20,13 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
+import {
+  COMMUNITY_AVATAR_PRESETS,
+  communityAvatarLetter,
+  coverValueFromChoice,
+  resolveCommunityAvatar,
+  uploadCommunityAvatar,
+} from '../lib/communityAvatar'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchCommunities, fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
 import type {
@@ -60,6 +67,170 @@ function friendlyDbError(): string {
   return 'Gagal menyimpan perubahan. Coba lagi nanti.'
 }
 
+/** Avatar bulat komunitas: foto bila cover_url berupa URL, ubin inisial bila preset/kosong. */
+function CommunityAvatarBadge({
+  coverUrl,
+  name,
+  size,
+}: {
+  coverUrl: string | null
+  name: string
+  size?: number
+}) {
+  const avatar = resolveCommunityAvatar(coverUrl, name)
+  const px = size ?? 48
+  if (avatar.kind === 'image') {
+    return (
+      <img
+        src={avatar.url}
+        alt=""
+        style={{ width: px, height: px, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+      />
+    )
+  }
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: px,
+        height: px,
+        borderRadius: '50%',
+        background: avatar.bg,
+        color: avatar.fg,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 800,
+        fontSize: px * 0.45,
+        flexShrink: 0,
+      }}
+    >
+      {avatar.letter}
+    </span>
+  )
+}
+
+interface CommunityAvatarPickerProps {
+  /** Nama komunitas yang diketik (huruf awalnya tampil di ubin preset). */
+  name: string
+  presetId: string | null
+  uploadUrl: string | null
+  uploading: boolean
+  error: string | null
+  onSelectPreset: (id: string | null) => void
+  onUploadFile: (file: File | null) => void
+  onClear: () => void
+}
+
+/**
+ * Picker avatar komunitas: 8 preset ubin inisial + unggah foto sendiri.
+ * Preset dan foto saling meniadakan (yang terakhir dipilih yang berlaku);
+ * "Hapus pilihan avatar" mengembalikan ke ubin inisial baku.
+ */
+function CommunityAvatarPicker({
+  name,
+  presetId,
+  uploadUrl,
+  uploading,
+  error,
+  onSelectPreset,
+  onUploadFile,
+  onClear,
+}: CommunityAvatarPickerProps) {
+  const letter = communityAvatarLetter(name)
+  return (
+    <div>
+      <p style={{ fontWeight: 700, margin: '0 0 0.5rem' }}>Pilih avatar</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+        {COMMUNITY_AVATAR_PRESETS.map((p) => {
+          const selected = presetId === p.id && !uploadUrl
+          return (
+            <button
+              key={p.id}
+              type="button"
+              title={p.label}
+              aria-label={`Avatar ${p.label}`}
+              aria-pressed={selected}
+              onClick={() => onSelectPreset(selected ? null : p.id)}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: '50%',
+                border: 'none',
+                background: p.bg,
+                color: p.fg,
+                fontWeight: 800,
+                fontSize: '1.1rem',
+                cursor: 'pointer',
+                outline: selected ? '2px solid #172438' : '2px solid transparent',
+                outlineOffset: 2,
+              }}
+            >
+              {letter}
+            </button>
+          )
+        })}
+      </div>
+      <p style={{ fontWeight: 700, margin: '1rem 0 0.5rem' }}>Unggah foto sendiri</p>
+      {uploadUrl ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <img
+            src={uploadUrl}
+            alt="Pratinjau avatar komunitas"
+            style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }}
+          />
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => onUploadFile(null)}>
+            Hapus foto
+          </button>
+        </div>
+      ) : (
+        <>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => onUploadFile(e.target.files?.[0] ?? null)}
+          />
+          {uploading && <p className="muted">Mengunggah foto…</p>}
+        </>
+      )}
+      {error && <p className="error-box">{error}</p>}
+      {(presetId || uploadUrl) && (
+        <p>
+          <button type="button" className="btn btn-ghost btn-small" onClick={onClear}>
+            Hapus pilihan avatar
+          </button>
+        </p>
+      )}
+    </div>
+  )
+}
+
+// Pilihan avatar pengusul disimpan lokal per id usulan sampai migrasi 031
+// menambahkan community_proposals.cover_url (lihat laporan TUGAS 3).
+// Hanya pengusul yang melihatnya di "Usulan Saya"; admin belum bisa
+// melihat pilihan ini sebelum 031 diterapkan.
+const PROPOSAL_AVATARS_KEY = 'sineverse:proposal-avatars'
+
+function readProposalAvatars(): Map<string, string> {
+  try {
+    const raw = localStorage.getItem(PROPOSAL_AVATARS_KEY)
+    if (!raw) return new Map()
+    return new Map(Object.entries(JSON.parse(raw) as Record<string, string>))
+  } catch {
+    return new Map()
+  }
+}
+
+function saveProposalAvatar(proposalId: string, coverUrl: string) {
+  try {
+    const map = readProposalAvatars()
+    map.set(proposalId, coverUrl)
+    localStorage.setItem(PROPOSAL_AVATARS_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch {
+    // Penyimpanan lokal gagal: usulan tetap terkirim, avatarnya saja hilang.
+  }
+}
+
 export default function CommunitiesPage() {
   const { user, profile, loading: authLoading } = useAuth()
   const [items, setItems] = useState<Community[] | null>(null)
@@ -79,6 +250,21 @@ export default function CommunitiesPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
+  // Pilihan avatar di form usulan: preset atau foto yang diunggah (saling
+  // meniadakan). Nilai efektifnya dibawa handlePropose (lihat di bawah).
+  const [avatarPreset, setAvatarPreset] = useState<string | null>(null)
+  const [avatarUploadUrl, setAvatarUploadUrl] = useState<string | null>(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarError, setAvatarError] = useState<string | null>(null)
+  // Pilihan avatar pengusul yang tersimpan lokal per id usulan (pra-031).
+  const [proposalAvatars, setProposalAvatars] = useState<Map<string, string>>(new Map())
+
+  // Nilai cover_url efektif dari picker form usulan.
+  const proposeCoverUrl = coverValueFromChoice(avatarUploadUrl, avatarPreset)
+
+  useEffect(() => {
+    setProposalAvatars(readProposalAvatars())
+  }, [])
 
   const isAdmin = profile?.role === 'admin'
   const isMentor = profile?.role === 'mentor'
@@ -324,20 +510,75 @@ export default function CommunitiesPage() {
     await load()
   }
 
+  // Avatar usulan: baca dari kolom community_proposals.cover_url bila
+  // sudah ada (migrasi 031), kalau belum dari simpanan lokal pengusul.
+  function proposalCoverOf(p: CommunityProposal): string | null {
+    const stored = (p as unknown as { cover_url?: string | null }).cover_url
+    if (stored) return stored
+    return proposalAvatars.get(p.id) ?? null
+  }
+
+  // Unggah foto avatar dari picker form usulan (downscale di browser,
+  // lalu ke bucket community-avatars; butuh migrasi 031).
+  async function handleAvatarFile(file: File | null) {
+    if (!file) {
+      setAvatarUploadUrl(null)
+      return
+    }
+    if (!user) return
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('Avatar harus berupa gambar (JPG, PNG, atau WebP).')
+      return
+    }
+    setAvatarError(null)
+    setAvatarUploading(true)
+    const url = await uploadCommunityAvatar(user.id, file).catch(() => null)
+    setAvatarUploading(false)
+    if (!url) {
+      setAvatarError(
+        'Foto belum terunggah: bucket community-avatars belum tersedia. Coba lagi nanti atau hubungi admin.',
+      )
+      return
+    }
+    setAvatarUploadUrl(url)
+    setAvatarPreset(null)
+  }
+
   async function handlePropose(e: FormEvent) {
     e.preventDefault()
     if (!user || !name.trim()) return
-    const { error } = await supabase.from('community_proposals').insert({
-      name: name.trim(),
-      description: desc.trim() || null,
-      proposer_id: user.id,
-      status: 'pending',
-    })
+    // Pilihan avatar dikirim bersama usulan (community_proposals.cover_url,
+    // migrasi 031) supaya terbawa saat admin "Setujui & Buat". Salinan
+    // lokal tetap disimpan supaya pengusul melihatnya di "Usulan Saya".
+    const { data: inserted, error } = await supabase
+      .from('community_proposals')
+      .insert({
+        name: name.trim(),
+        description: desc.trim() || null,
+        proposer_id: user.id,
+        status: 'pending',
+        cover_url: proposeCoverUrl,
+      })
+      .select('id')
+      .single()
     if (error) setNotice(friendlyDbError())
     else {
-      setNotice('Usulan komunitas terkirim. Admin akan meninjau. Bila disetujui, komunitas dibuat dan kamu langsung menjadi anggotanya.')
+      if (proposeCoverUrl && inserted) {
+        const proposalId = (inserted as { id: string }).id
+        saveProposalAvatar(proposalId, proposeCoverUrl)
+        setProposalAvatars((m) => new Map(m).set(proposalId, proposeCoverUrl))
+      }
+      setNotice(
+        'Usulan komunitas terkirim. Admin akan meninjau. Bila disetujui, komunitas dibuat dan kamu langsung menjadi anggotanya.' +
+          (proposeCoverUrl
+            ? ' Pilihan avatarmu akan dipakai bila admin menyetujui.'
+            : ''),
+      )
       setName('')
       setDesc('')
+      setAvatarPreset(null)
+      setAvatarUploadUrl(null)
+      setAvatarError(null)
       await load()
     }
   }
@@ -354,9 +595,19 @@ export default function CommunitiesPage() {
       return
     }
     if (approve) {
+      // Avatar usulan ikut ke komunitas yang dibuat. Pra-031
+      // proposalCoverOf mengembalikan null (kolom belum ada) sehingga
+      // komunitas dibuat dengan ubin inisial baku; pasca-031 nilai
+      // "preset:..." / URL foto pengusul tersimpan di cover_url.
       const { data: comm, error: cErr } = await supabase
         .from('communities')
-        .insert({ name: p.name, description: p.description, created_by: p.proposer_id, is_approved: true })
+        .insert({
+          name: p.name,
+          description: p.description,
+          created_by: p.proposer_id,
+          is_approved: true,
+          cover_url: proposalCoverOf(p),
+        })
         .select()
         .single()
       if (cErr) {
@@ -414,13 +665,18 @@ export default function CommunitiesPage() {
       <ul className="discussion-list">
         {myProposals.map((p) => (
           <li key={p.id} className="discussion-item">
-            <p>
-              <strong>{p.name}</strong>
-            </p>
-            {p.description && <p>{p.description}</p>}
-            <p className="muted">
-              Status: {proposalStatusLabel(p.status)} · {fmtDate(p.created_at)}
-            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <CommunityAvatarBadge coverUrl={proposalCoverOf(p)} name={p.name} size={44} />
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0 }}>
+                  <strong>{p.name}</strong>
+                </p>
+                {p.description && <p>{p.description}</p>}
+                <p className="muted">
+                  Status: {proposalStatusLabel(p.status)} · {fmtDate(p.created_at)}
+                </p>
+              </div>
+            </div>
           </li>
         ))}
       </ul>
@@ -450,13 +706,18 @@ export default function CommunitiesPage() {
             <ul className="discussion-list">
               {proposals.map((p) => (
                 <li key={p.id} className="discussion-item">
-                  <p>
-                    <strong>{p.name}</strong>
-                  </p>
-                  {p.description && <p>{p.description}</p>}
-                  <p className="muted">
-                    Pengusul: {proposalNames.get(p.proposer_id) ?? '—'} · {fmtDate(p.created_at)}
-                  </p>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <CommunityAvatarBadge coverUrl={proposalCoverOf(p)} name={p.name} size={44} />
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0 }}>
+                        <strong>{p.name}</strong>
+                      </p>
+                      {p.description && <p>{p.description}</p>}
+                      <p className="muted">
+                        Pengusul: {proposalNames.get(p.proposer_id) ?? '—'} · {fmtDate(p.created_at)}
+                      </p>
+                    </div>
+                  </div>
                   <div className="form-actions">
                     <button
                       type="button"
@@ -540,15 +801,20 @@ export default function CommunitiesPage() {
             <ul className="discussion-list">
               {items.map((c) => (
                 <li key={c.id} className="discussion-item">
-                  <p className="discussion-meta">
-                    {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
-                    {memberCounts.get(c.id) ?? 0} anggota
-                    {c.seeking_mentor ? ' · Mencari pembimbing' : ''}
-                  </p>
-                  <h3>
-                    <Link to={`/komunitas/${c.id}`}>{c.name}</Link>
-                  </h3>
-                  {c.description && <p>{c.description}</p>}
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <CommunityAvatarBadge coverUrl={c.cover_url} name={c.name} size={44} />
+                    <div style={{ minWidth: 0 }}>
+                      <p className="discussion-meta">
+                        {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
+                        {memberCounts.get(c.id) ?? 0} anggota
+                        {c.seeking_mentor ? ' · Mencari pembimbing' : ''}
+                      </p>
+                      <h3>
+                        <Link to={`/komunitas/${c.id}`}>{c.name}</Link>
+                      </h3>
+                      {c.description && <p>{c.description}</p>}
+                    </div>
+                  </div>
                   <div className="form-actions">
                     <button
                       type="button"
@@ -595,11 +861,16 @@ export default function CommunitiesPage() {
               {seeking.map((c) => (
                 <li key={c.id} className="course-card">
                   <Link to={`/komunitas/${c.id}`}>
-                    <h3>{c.name}</h3>
-                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                    <p className="muted">
-                      Mencari pembimbing · {memberCounts.get(c.id) ?? 0} anggota
-                    </p>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.25rem 0' }}>
+                      <CommunityAvatarBadge coverUrl={c.cover_url} name={c.name} size={48} />
+                      <div style={{ minWidth: 0 }}>
+                        <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
+                        <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                        <p className="muted" style={{ margin: 0 }}>
+                          Mencari pembimbing · {memberCounts.get(c.id) ?? 0} anggota
+                        </p>
+                      </div>
+                    </div>
                   </Link>
                   <div style={{ padding: '0 1.25rem 1rem' }}>
                     <button
@@ -625,12 +896,17 @@ export default function CommunitiesPage() {
               {joined.map((c) => (
                 <li key={c.id} className="course-card">
                   <Link to={`/komunitas/${c.id}`}>
-                    <h3>{c.name}</h3>
-                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                    <p className="muted">
-                      Status: {memberRoleLabel(myRoles.get(c.id) ?? 'member')} ·{' '}
-                      {memberCounts.get(c.id) ?? 0} anggota
-                    </p>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.25rem 0' }}>
+                      <CommunityAvatarBadge coverUrl={c.cover_url} name={c.name} size={48} />
+                      <div style={{ minWidth: 0 }}>
+                        <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
+                        <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                        <p className="muted" style={{ margin: 0 }}>
+                          Status: {memberRoleLabel(myRoles.get(c.id) ?? 'member')} ·{' '}
+                          {memberCounts.get(c.id) ?? 0} anggota
+                        </p>
+                      </div>
+                    </div>
                   </Link>
                   <div style={{ padding: '0 1.25rem 1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <Link to={`/komunitas/${c.id}`} className="btn btn-primary btn-small">
@@ -668,9 +944,14 @@ export default function CommunitiesPage() {
               {others.map((c) => (
                 <li key={c.id} className="course-card">
                   <Link to={`/komunitas/${c.id}`}>
-                    <h3>{c.name}</h3>
-                    <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                    <p className="muted">{memberCounts.get(c.id) ?? 0} anggota</p>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.25rem 0' }}>
+                      <CommunityAvatarBadge coverUrl={c.cover_url} name={c.name} size={48} />
+                      <div style={{ minWidth: 0 }}>
+                        <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
+                        <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                        <p className="muted" style={{ margin: 0 }}>{memberCounts.get(c.id) ?? 0} anggota</p>
+                      </div>
+                    </div>
                   </Link>
                   {user && (
                     <div style={{ padding: '0 1.25rem 1rem' }}>
@@ -701,6 +982,23 @@ export default function CommunitiesPage() {
                 Deskripsi
                 <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} placeholder="Komunitas ini tentang…" />
               </label>
+              <CommunityAvatarPicker
+                name={name}
+                presetId={avatarPreset}
+                uploadUrl={avatarUploadUrl}
+                uploading={avatarUploading}
+                error={avatarError}
+                onSelectPreset={(id) => {
+                  setAvatarPreset(id)
+                  if (id) setAvatarUploadUrl(null)
+                }}
+                onUploadFile={(file) => void handleAvatarFile(file)}
+                onClear={() => {
+                  setAvatarPreset(null)
+                  setAvatarUploadUrl(null)
+                  setAvatarError(null)
+                }}
+              />
               <button type="submit" className="btn btn-primary">Kirim Usulan</button>
             </form>
           </section>
@@ -727,9 +1025,14 @@ export default function CommunitiesPage() {
           {items.map((c) => (
             <li key={c.id} className="course-card">
               <Link to={`/komunitas/${c.id}`}>
-                <h3>{c.name}</h3>
-                <p>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                <p className="muted">{memberCounts.get(c.id) ?? 0} anggota</p>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', padding: '1rem 1.25rem 0' }}>
+                  <CommunityAvatarBadge coverUrl={c.cover_url} name={c.name} size={48} />
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
+                    <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
+                    <p className="muted" style={{ margin: 0 }}>{memberCounts.get(c.id) ?? 0} anggota</p>
+                  </div>
+                </div>
               </Link>
               {user && (
                 <div style={{ padding: '0 1.25rem 1rem' }}>
@@ -754,6 +1057,23 @@ export default function CommunitiesPage() {
               Deskripsi
               <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} placeholder="Komunitas ini tentang…" />
             </label>
+            <CommunityAvatarPicker
+              name={name}
+              presetId={avatarPreset}
+              uploadUrl={avatarUploadUrl}
+              uploading={avatarUploading}
+              error={avatarError}
+              onSelectPreset={(id) => {
+                setAvatarPreset(id)
+                if (id) setAvatarUploadUrl(null)
+              }}
+              onUploadFile={(file) => void handleAvatarFile(file)}
+              onClear={() => {
+                setAvatarPreset(null)
+                setAvatarUploadUrl(null)
+                setAvatarError(null)
+              }}
+            />
             <button type="submit" className="btn btn-primary">Kirim Usulan</button>
           </form>
         </section>

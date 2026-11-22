@@ -542,7 +542,7 @@ export default function AdminPage() {
         <dl className="profile-list">
           <div><dt>Pengguna</dt><dd>{counts.users} (Siswa {counts.siswa} · Mentor {counts.mentor})</dd></div>
           <div><dt>Course</dt><dd>{counts.courses}</dd></div>
-          <div><dt>Enrollment</dt><dd>{counts.enrollments}</dd></div>
+          <div><dt>Pendaftaran</dt><dd>{counts.enrollments}</dd></div>
           <div><dt>Lamaran mentor pending</dt><dd>{counts.pendingApps}</dd></div>
           <div><dt>Laporan diskusi terbuka</dt><dd>{counts.openReports}</dd></div>
         </dl>
@@ -550,15 +550,15 @@ export default function AdminPage() {
 
       <section className="section">
         <div className="dash-section-head"><h2>Kelola Academy</h2></div>
-        <p>
-          <Link to="/admin/sections" className="btn btn-secondary">Section &amp; Lesson</Link>{' '}
-          <Link to="/admin/enrollment" className="btn btn-secondary">Enrollment</Link>{' '}
-          <Link to="/admin/tugas" className="btn btn-secondary">Monitoring Tugas</Link>{' '}
-          <Link to="/admin/kuis" className="btn btn-secondary">Kelola Kuis</Link>{' '}
-          <Link to="/admin/sertifikat" className="btn btn-secondary">Sertifikat</Link>{' '}
-          <Link to="/admin/materi" className="btn btn-secondary">Materi</Link>{' '}
-          <Link to="/admin/analitik" className="btn btn-secondary">Analytics</Link>
-        </p>
+        <div className="admin-action-grid">
+          <Link to="/admin/sections" className="btn btn-secondary">Section &amp; Lesson</Link>
+          <Link to="/admin/enrollment" className="btn btn-secondary">Pendaftaran</Link>
+          <Link to="/admin/tugas" className="btn btn-secondary">Monitoring Tugas</Link>
+          <Link to="/admin/kuis" className="btn btn-secondary">Kelola Kuis</Link>
+          <Link to="/admin/sertifikat" className="btn btn-secondary">Sertifikat</Link>
+          <Link to="/admin/materi" className="btn btn-secondary">Materi</Link>
+          <Link to="/admin/analitik" className="btn btn-secondary">Analitik</Link>
+        </div>
       </section>
 
       <section className="section" id="lamaran-mentor">
@@ -690,23 +690,27 @@ export default function AdminPage() {
               const isMentorClaim = mentors.some((m) => m.id === c.mentor_id)
               return (
               <li key={c.id}>
-                {claimedCourse?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
-                {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — persetujuan tidak akan mengubah penetapan)</span>}{' '}
-                {!isMentorClaim && <span className="muted">(pengaju bukan mentor — persetujuan tidak akan menetapkan mentor)</span>}{' '}
-                {c.decision_note && <span className="muted">(sebelumnya ditolak: {c.decision_note})</span>}{' '}
-                <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, true)}>Setujui</button>{' '}
-                {rejectingClaimId === c.id ? (
-                  <>
-                    <label>
-                      Alasan penolakan
-                      <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh mentor." />
-                    </label>{' '}
-                    <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, false, rejectReason)}>Konfirmasi Tolak</button>{' '}
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(null); setRejectReason('') }}>Batal</button>
-                  </>
-                ) : (
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(c.id); setRejectReason('') }}>Tolak</button>
-                )}
+                <p>
+                  {claimedCourse?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
+                  {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — persetujuan tidak akan mengubah penetapan)</span>}{' '}
+                  {!isMentorClaim && <span className="muted">(pengaju bukan mentor — persetujuan tidak akan menetapkan mentor)</span>}{' '}
+                  {c.decision_note && <span className="muted">(sebelumnya ditolak: {c.decision_note})</span>}
+                </p>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, true)}>Setujui</button>
+                  {rejectingClaimId === c.id ? (
+                    <>
+                      <label>
+                        Alasan penolakan
+                        <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh mentor." />
+                      </label>
+                      <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, false, rejectReason)}>Konfirmasi Tolak</button>
+                      <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(null); setRejectReason('') }}>Batal</button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(c.id); setRejectReason('') }}>Tolak</button>
+                  )}
+                </div>
               </li>
               )
             })}
@@ -778,9 +782,11 @@ export default function AdminPage() {
           <ul>
             {proposals.map((p) => (
               <li key={p.id}>
-                <strong>{p.name}</strong> — {p.description ?? ''} (pengusul: {names.get(p.proposer_id) ?? '—'}){' '}
-                <button type="button" className="btn btn-primary btn-small" onClick={() => void decideProposal(p, true)}>Setujui &amp; Buat</button>{' '}
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => void decideProposal(p, false)}>Tolak</button>
+                <strong>{p.name}</strong> — {p.description ?? ''} (pengusul: {names.get(p.proposer_id) ?? '—'})
+                <div className="form-actions">
+                  <button type="button" className="btn btn-primary btn-small" onClick={() => void decideProposal(p, true)}>Setujui &amp; Buat</button>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void decideProposal(p, false)}>Tolak</button>
+                </div>
               </li>
             ))}
           </ul>

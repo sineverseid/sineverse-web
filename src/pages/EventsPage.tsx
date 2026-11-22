@@ -7,12 +7,38 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { supabase } from '../lib/supabase'
+import { dataUrlToBlob, photoToDataUrl } from '../lib/photo'
+import { supabase, uploadToBucket } from '../lib/supabase'
 import type { EventRegistration, EventSession, SineEvent } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import { CompetitionsPage } from './CompetitionsPage'
 import { CertificatesPage } from './CertificatesPage'
+
+/** Perkecil poster di browser lalu unggah ke bucket event-posters.
+ *  Mengembalikan URL publik, atau null bila bucket belum tersedia. */
+async function uploadEventPoster(userId: string, file: File): Promise<string | null> {
+  const dataUrl = await photoToDataUrl(file)
+  const blob = await dataUrlToBlob(dataUrl)
+  const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg'
+  const uploadFile = new File([blob], `poster.${ext}`, { type: blob.type || 'image/jpeg' })
+  return uploadToBucket('event-posters', `${userId}/${Date.now()}.${ext}`, uploadFile)
+}
+
+/** Placeholder netral untuk acara tanpa poster: gradasi navy (class
+ *  .media-placeholder yang sudah ada) + ikon gambar. Tanpa gambar
+ *  karangan dan tanpa teks karangan. */
+function EventPosterPlaceholder() {
+  return (
+    <div className="media-placeholder" aria-hidden="true">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <circle cx="9" cy="9" r="2" />
+        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+      </svg>
+    </div>
+  )
+}
 
 export function EventsPage() {
   const { user, profile } = useAuth()
@@ -27,6 +53,10 @@ export function EventsPage() {
   const [location, setLocation] = useState('')
   const [capacity, setCapacity] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const [posterFile, setPosterFile] = useState<File | null>(null)
+  const [posterPreview, setPosterPreview] = useState<string | null>(null)
+  const [posterError, setPosterError] = useState<string | null>(null)
+  const [brokenPosters, setBrokenPosters] = useState<Set<string>>(new Set())
   const [tab, setTab] = useState<'kalender' | 'kompetisi' | 'sertifikat' | 'analitik'>('kalender')
 
   const canCreate = profile?.role === 'mentor' || profile?.role === 'admin'
@@ -62,6 +92,23 @@ export function EventsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  function handlePosterChange(file: File | null) {
+    if (!file) {
+      setPosterFile(null)
+      if (posterPreview) URL.revokeObjectURL(posterPreview)
+      setPosterPreview(null)
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setPosterError('Poster harus berupa gambar (JPG, PNG, atau WebP).')
+      return
+    }
+    setPosterError(null)
+    setPosterFile(file)
+    if (posterPreview) URL.revokeObjectURL(posterPreview)
+    setPosterPreview(URL.createObjectURL(file))
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim()) return
@@ -75,6 +122,21 @@ export function EventsPage() {
       return
     }
     setFormError(null)
+    // Poster opsional: bila dipilih, unggah dulu; bila unggah gagal,
+    // acara TIDAK dibuat supaya poster pilihan pembuat tidak hilang diam-diam.
+    let posterUrl: string | null = null
+    if (posterFile) {
+      try {
+        posterUrl = await uploadEventPoster(user.id, posterFile)
+      } catch {
+        setFormError('Poster tidak dapat dibaca. Pilih gambar lain.')
+        return
+      }
+      if (!posterUrl) {
+        setFormError('Poster belum terunggah: bucket event-posters belum tersedia. Coba lagi nanti atau hubungi admin.')
+        return
+      }
+    }
     const { error: insErr } = await supabase.from('events').insert({
       title: title.trim(),
       description: description.trim() || null,
@@ -83,6 +145,7 @@ export function EventsPage() {
       ends_at: endsAt ? new Date(endsAt).toISOString() : null,
       location: location.trim() || null,
       capacity: cap,
+      poster_url: posterUrl,
       created_by: user.id,
     })
     if (insErr) {
@@ -96,6 +159,9 @@ export function EventsPage() {
     setEndsAt('')
     setLocation('')
     setCapacity('')
+    setPosterFile(null)
+    if (posterPreview) URL.revokeObjectURL(posterPreview)
+    setPosterPreview(null)
     await load()
   }
 
@@ -155,6 +221,33 @@ export function EventsPage() {
               Kapasitas peserta (kosong = tanpa batas)
               <input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} placeholder="Mis. 50" />
             </label>
+            <label>
+              Poster acara (foto pamflet acara)
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handlePosterChange(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {posterPreview && (
+              <>
+                <img
+                  src={posterPreview}
+                  alt="Pratinjau poster acara"
+                  style={{ width: '100%', maxWidth: 320, borderRadius: 12 }}
+                />
+                <button type="button" className="btn btn-ghost" onClick={() => handlePosterChange(null)}>
+                  Hapus poster
+                </button>
+              </>
+            )}
+            {posterError && <p className="error-box">{posterError}</p>}
+            {!posterFile && !posterError && (
+              <p className="muted">
+                Opsional: unggah foto poster/pamflet acara. Foto besar diperkecil
+                otomatis di browser sebelum diunggah.
+              </p>
+            )}
             <button type="submit" className="btn btn-primary">Buat Acara</button>
           </form>
         </section>
@@ -163,22 +256,35 @@ export function EventsPage() {
         <EmptyState message="Belum ada acara." />
       ) : (
         <ul className="course-list">
-          {events.map((e) => (
-            <li key={e.id} className="course-card">
-              <Link to={`/acara/${e.id}`}>
-                <div className="course-card-body">
-                <h3>{e.title}</h3>
-                <p>{e.description ?? ''}</p>
-                <p className="muted">
-                  {e.kind === 'external' ? 'Eksternal' : 'Internal'}
-                  {e.starts_at ? ` · ${fmtDate(e.starts_at)}` : ''}
-                  {e.location ? ` · ${e.location}` : ''}
-                  {e.capacity !== null ? ` · Kapasitas: ${e.capacity}` : ''}
-                </p>
-                </div>
-              </Link>
-            </li>
-          ))}
+          {events.map((e) => {
+            const showPoster = e.poster_url && !brokenPosters.has(e.id)
+            return (
+              <li key={e.id} className="course-card">
+                <Link to={`/acara/${e.id}`}>
+                  {showPoster ? (
+                    <img
+                      src={e.poster_url ?? ''}
+                      alt={`Poster ${e.title}`}
+                      onError={() => setBrokenPosters((prev) => new Set(prev).add(e.id))}
+                      style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <EventPosterPlaceholder />
+                  )}
+                  <div className="course-card-body">
+                  <h3>{e.title}</h3>
+                  <p>{e.description ?? ''}</p>
+                  <p className="muted">
+                    {e.kind === 'external' ? 'Eksternal' : 'Internal'}
+                    {e.starts_at ? ` · ${fmtDate(e.starts_at)}` : ''}
+                    {e.location ? ` · ${e.location}` : ''}
+                    {e.capacity !== null ? ` · Kapasitas: ${e.capacity}` : ''}
+                  </p>
+                  </div>
+                </Link>
+              </li>
+            )
+          })}
         </ul>
       )}
             </>
@@ -303,6 +409,7 @@ export function EventDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [posterBroken, setPosterBroken] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -320,6 +427,7 @@ export function EventDetailPage() {
         }
         if (cancelled) return
         setEvent(data as SineEvent | null)
+        setPosterBroken(false)
         // Sesi dan pendaftaran hanya butuh id acara: jalankan paralel.
         const [sRes, regRes] = await Promise.all([
           supabase.from('event_sessions').select('*').eq('event_id', eventId).order('order_index'),
@@ -389,6 +497,18 @@ export function EventDetailPage() {
   return (
     <div className="page">
       <Link to="/acara" className="back-link">← Semua Acara</Link>
+      {currentEvent.poster_url && !posterBroken ? (
+        <img
+          src={currentEvent.poster_url}
+          alt={`Poster ${currentEvent.title}`}
+          onError={() => setPosterBroken(true)}
+          style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover', borderRadius: 'var(--radius)' }}
+        />
+      ) : (
+        <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+          <EventPosterPlaceholder />
+        </div>
+      )}
       <h1>{currentEvent.title}</h1>
       <p className="muted">
         {currentEvent.kind === 'external' ? 'Acara eksternal / nasional' : 'Acara internal SINEVERSE'}

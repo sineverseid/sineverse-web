@@ -458,7 +458,7 @@ export default function FinalProjectDetailPage() {
       />
       {notice && <p className="notice-box">{notice}</p>}
 
-      <div className="form-actions" style={{ marginBottom: '1rem' }} role="tablist" aria-label="Bagian workspace">
+      <div className="action-grid" style={{ marginBottom: '1rem' }} role="tablist" aria-label="Bagian workspace">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -858,7 +858,7 @@ export default function FinalProjectDetailPage() {
                 Umpan balik penilaian
                 <textarea value={assessFeedback} onChange={(e) => setAssessFeedback(e.target.value)} rows={3} placeholder="Catatan penilaian…" />
               </label>
-              <div className="form-actions">
+              <div className="action-grid">
                 <button type="button" className="btn btn-primary" onClick={() => void handleAssess('approved')}>Setujui</button>
                 <button type="button" className="btn btn-ghost" onClick={() => void handleAssess('revision')}>Minta revisi</button>
                 <button type="button" className="btn btn-ghost" onClick={() => void handleAssess('rejected')}>Tolak</button>

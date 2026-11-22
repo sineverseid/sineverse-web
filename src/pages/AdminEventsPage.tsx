@@ -7,12 +7,23 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { supabase, uploadToBucket } from '../lib/supabase'
+import { dataUrlToBlob, photoToDataUrl } from '../lib/photo'
 import type { Competition, SineEvent } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { ADMIN_NAV } from '../lib/workspaceNav'
 import EmptyState from '../components/EmptyState'
+
+/** Perkecil poster di browser lalu unggah ke bucket event-posters.
+ *  Mengembalikan URL publik, atau null bila bucket belum tersedia. */
+async function uploadEventPoster(userId: string, file: File): Promise<string | null> {
+  const dataUrl = await photoToDataUrl(file)
+  const blob = await dataUrlToBlob(dataUrl)
+  const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg'
+  const uploadFile = new File([blob], `poster.${ext}`, { type: blob.type || 'image/jpeg' })
+  return uploadToBucket('event-posters', `${userId}/${Date.now()}.${ext}`, uploadFile)
+}
 
 function fmtDate(v: string | null) {
   if (!v) return '—'
@@ -33,6 +44,9 @@ export default function AdminEventsPage() {
   const [extDesc, setExtDesc] = useState('')
   const [extStarts, setExtStarts] = useState('')
   const [extLocation, setExtLocation] = useState('')
+  const [extPosterFile, setExtPosterFile] = useState<File | null>(null)
+  const [extPosterPreview, setExtPosterPreview] = useState<string | null>(null)
+  const [extPosterError, setExtPosterError] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -55,9 +69,41 @@ export default function AdminEventsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
+  function handleExtPosterChange(file: File | null) {
+    if (!file) {
+      setExtPosterFile(null)
+      if (extPosterPreview) URL.revokeObjectURL(extPosterPreview)
+      setExtPosterPreview(null)
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setExtPosterError('Poster harus berupa gambar (JPG, PNG, atau WebP).')
+      return
+    }
+    setExtPosterError(null)
+    setExtPosterFile(file)
+    if (extPosterPreview) URL.revokeObjectURL(extPosterPreview)
+    setExtPosterPreview(URL.createObjectURL(file))
+  }
+
   async function handleCreateExternal(e: FormEvent) {
     e.preventDefault()
     if (!user || !extTitle.trim()) return
+    // Poster opsional: bila dipilih, unggah dulu; bila unggah gagal,
+    // acara TIDAK dibuat supaya poster pilihan admin tidak hilang diam-diam.
+    let posterUrl: string | null = null
+    if (extPosterFile) {
+      try {
+        posterUrl = await uploadEventPoster(user.id, extPosterFile)
+      } catch {
+        setNotice('Poster tidak dapat dibaca. Pilih gambar lain.')
+        return
+      }
+      if (!posterUrl) {
+        setNotice('Poster belum terunggah: bucket event-posters belum tersedia. Coba lagi nanti atau hubungi admin.')
+        return
+      }
+    }
     const { error: insErr } = await supabase.from('events').insert({
       title: extTitle.trim(),
       description: extDesc.trim() || null,
@@ -66,6 +112,7 @@ export default function AdminEventsPage() {
       official_link: extLink.trim() || null,
       starts_at: extStarts ? new Date(extStarts).toISOString() : null,
       location: extLocation.trim() || null,
+      poster_url: posterUrl,
       created_by: user.id,
     })
     if (insErr) {
@@ -79,6 +126,9 @@ export default function AdminEventsPage() {
     setExtDesc('')
     setExtStarts('')
     setExtLocation('')
+    setExtPosterFile(null)
+    if (extPosterPreview) URL.revokeObjectURL(extPosterPreview)
+    setExtPosterPreview(null)
     await load()
   }
 
@@ -127,6 +177,33 @@ export default function AdminEventsPage() {
                 Deskripsi
                 <textarea value={extDesc} onChange={(e) => setExtDesc(e.target.value)} rows={3} />
               </label>
+              <label>
+                Poster acara (foto pamflet dari penyelenggara)
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleExtPosterChange(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {extPosterPreview && (
+                <>
+                  <img
+                    src={extPosterPreview}
+                    alt="Pratinjau poster acara"
+                    style={{ width: '100%', maxWidth: 320, borderRadius: 12 }}
+                  />
+                  <button type="button" className="btn btn-ghost" onClick={() => handleExtPosterChange(null)}>
+                    Hapus poster
+                  </button>
+                </>
+              )}
+              {extPosterError && <p className="error-box">{extPosterError}</p>}
+              {!extPosterFile && !extPosterError && (
+                <p className="muted">
+                  Opsional: unggah foto poster/pamflet acara dari penyelenggara. Foto besar
+                  diperkecil otomatis di browser sebelum diunggah.
+                </p>
+              )}
               <button type="submit" className="btn btn-primary">Tambah Acara Eksternal</button>
             </form>
             <p className="muted">
