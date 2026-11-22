@@ -1888,7 +1888,9 @@ p {
   }
 
   /* Layar lebar: nav atas tampil penuh dengan ikon; tidak membungkus —
-     bila sempit, nav bergeser horizontal tanpa scrollbar terlihat. */
+     bila sempit, nav bergeser horizontal tanpa scrollbar terlihat, dengan
+     fade mask di tepi kanan (sama seperti .workspace-nav) sebagai
+     petunjuk scroll. */
   .topnav {
     display: flex;
     flex-direction: row;
@@ -1903,6 +1905,8 @@ p {
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 92%, transparent 100%);
+    mask-image: linear-gradient(to right, #000 92%, transparent 100%);
   }
 
   .topnav::-webkit-scrollbar {
