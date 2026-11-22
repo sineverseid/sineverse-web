@@ -449,6 +449,8 @@ export interface School {
   npsn?: string | null
   province?: string | null
   regency?: string | null
+  /** Migrasi 032: alamat jalan dari sumber referensi (alamat_jalan). */
+  address?: string | null
 }
 
 /** Migrasi 027: pengajuan sekolah manual (nama tidak ada di referensi). */

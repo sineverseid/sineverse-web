@@ -1010,18 +1010,20 @@ export async function fetchRefNameMap(
   return map
 }
 
-/** Cari sekolah terverifikasi berdasarkan nama atau NPSN (untuk daftar). */
-export async function searchSchools(query: string): Promise<School[]> {
+/** Cari sekolah terverifikasi berdasarkan nama atau NPSN (untuk daftar).
+ * Bila regencyName diisi, pencarian dibatasi ke kabupaten/kota itu
+ * (schools.regency menyimpan nama referensi, bukan kode). Dengan wilayah
+ * dan query kosong, mengembalikan 20 sekolah pertama di wilayah itu —
+ * daftar "sekolah di daerahmu" di formulir pendaftaran. Tanpa wilayah,
+ * perilaku lama: butuh minimal 2 huruf. */
+export async function searchSchools(query: string, regencyName?: string): Promise<School[]> {
   const q = query.trim()
-  if (q.length < 2) return []
+  if (q.length < 2 && !regencyName) return []
   const like = `%${q.replace(/[%_]/g, '')}%`
-  const { data, error } = await supabase
-    .from('schools')
-    .select('*')
-    .eq('is_verified', true)
-    .or(`name.ilike.${like},npsn.ilike.${like}`)
-    .order('name')
-    .limit(20)
+  let qb = supabase.from('schools').select('*').eq('is_verified', true)
+  if (regencyName) qb = qb.eq('regency', regencyName)
+  if (q.length >= 2) qb = qb.or(`name.ilike.${like},npsn.ilike.${like}`)
+  const { data, error } = await qb.order('name').limit(20)
   if (error) {
     if (isMissingTableError(error)) return []
     throw error
