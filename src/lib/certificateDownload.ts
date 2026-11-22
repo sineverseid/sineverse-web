@@ -710,6 +710,30 @@ function drawBarcode(
   return barTop + barHeight + 28
 }
 
+/**
+ * Baris petunjuk verifikasi di bawah blok barcode/QR — tanpa URL apa pun
+ * (tautan GitHub Pages tidak pernah dicetak di sertifikat). Barcode hanya
+ * menampilkan nomor serial, jadi pemeriksa perlu tahu kode itu untuk apa.
+ * Completion: maks. lebar 800px supaya tidak menyentuh barcode kiri
+ * maupun keterangan QR kanan; baris terakhir di `lastBaseline`, baris
+ * sebelumnya naik 28px. Mentor: satu baris di bawah barcode tengah.
+ */
+function drawVerifyInstruction(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  lastBaseline: number,
+): void {
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.fillStyle = NAVY
+  ctx.font = `400 19px ${FONT}`
+  const lines = wrapText(ctx, text, maxWidth)
+  const startY = lastBaseline - (lines.length - 1) * 28
+  lines.forEach((line, i) => ctx.fillText(line, CERT_WIDTH / 2, startY + i * 28))
+  ctx.restore()
+}
+
 // ---------------------------------------------------------------------------
 // Ikon kotak syarat (completion)
 // ---------------------------------------------------------------------------
@@ -978,6 +1002,7 @@ async function ensureFonts(): Promise<void> {
         '400 28px "Plus Jakarta Sans"',
         '400 22px "Plus Jakarta Sans"',
         '400 20px "Plus Jakarta Sans"',
+        '400 19px "Plus Jakarta Sans"',
         '400 18px "Plus Jakarta Sans"',
         '400 16px "Plus Jakarta Sans"',
         '400 14px "Plus Jakarta Sans"',
@@ -1037,12 +1062,52 @@ export async function renderCertificate(
   ctx.fillStyle = NAVY
 
   if (!isMentor) {
-    // ---- CERTIFICATE OF COMPLETION ----
+    // ---- CERTIFICATE (course / academy / exam / event / work) ----
+    // B5: tiap jenis punya isi yang jujur — hanya course yang mengklaim
+    // kelulusan course (4 kotak syarat). Jenis lain memakai bingkai dan
+    // bahasa yang sama, tapi tanpa klaim course: academy = kelulusan
+    // Academy, exam = lulus ujian kompetensi, event = partisipasi,
+    // work = prestasi produksi film di kompetisi.
+    const program = cert.program_name ?? courseTitle ?? 'SINEVERSE'
+    const isCourse = cert.type === 'course'
+    const isAcademy = cert.type === 'academy'
+    const isEvent = cert.type === 'event'
+    const isWork = cert.type === 'work'
+    const title2 = isEvent ? 'OF PARTICIPATION' : isWork ? 'OF ACHIEVEMENT' : 'OF COMPLETION'
+    const titleTracking = title2 === 'OF COMPLETION' ? 16 : 14
+    const showBoxes = isCourse
+    const pillText = isCourse ? (courseTitle ?? 'SINEVERSE') : isAcademy ? 'SINEVERSE Academy' : program
+    const bodySegments: { text: string; bold: boolean }[] = isCourse
+      ? [
+          { text: 'for successfully completing the ', bold: false },
+          { text: 'SINEVERSE', bold: true },
+          { text: ' program as a member, by fulfilling all requirements:', bold: false },
+        ]
+      : isAcademy
+        ? [
+            { text: 'for successfully completing the ', bold: false },
+            { text: 'SINEVERSE Academy', bold: true },
+            { text: ' program', bold: false },
+          ]
+        : isEvent
+          ? [
+              { text: 'for participating in ', bold: false },
+              { text: program, bold: true },
+            ]
+          : isWork
+            ? [
+                { text: 'for outstanding film production in the competition ', bold: false },
+                { text: program, bold: true },
+              ]
+            : [
+                { text: 'for successfully completing the competency exam in ', bold: false },
+                { text: program, bold: true },
+              ]
     ctx.font = `700 108px ${FONT}`
     ctx.fillText('CERTIFICATE', cx, 230)
     ctx.font = `700 38px ${FONT}`
-    drawTracked(ctx, 'OF COMPLETION', cx, 292, 16, 'center')
-    const subW = trackedWidth(ctx, 'OF COMPLETION', 16)
+    drawTracked(ctx, title2, cx, 292, titleTracking, 'center')
+    const subW = trackedWidth(ctx, title2, titleTracking)
     ctx.strokeStyle = TEAL
     ctx.lineWidth = 2.5
     ctx.beginPath()
@@ -1062,11 +1127,12 @@ export async function renderCertificate(
     // semua ke bawah); bila barcode akan keluar bingkai, rapatkan.
     // Proporsi mengikuti referensi: garis teal ~52px di bawah baseline
     // nama, baris syarat ~60px di bawah garis, kotak ~54px di bawahnya.
+    // B5: tanpa kotak syarat (bukan course), pill naik mengisi ruangnya.
     let boxH = 165
     let ruleY = nameBase + 52
     let reqY = ruleY + 60
     let boxesY = reqY + 54
-    let pillY = boxesY + boxH + 28
+    let pillY = showBoxes ? boxesY + boxH + 28 : reqY + 54
     let givenY = pillY + 72 + 42
     let barcodeTop = givenY + 10
     let barH = 64
@@ -1076,7 +1142,7 @@ export async function renderCertificate(
       ruleY = nameBase + 48
       reqY = ruleY + 56
       boxesY = reqY + 48
-      pillY = boxesY + boxH + 22
+      pillY = showBoxes ? boxesY + boxH + 22 : reqY + 48
       givenY = pillY + 72 + 34
       barcodeTop = givenY + 8
       barH = 56
@@ -1091,22 +1157,12 @@ export async function renderCertificate(
     ctx.stroke()
 
     ctx.fillStyle = NAVY
-    drawRichLine(
-      ctx,
-      [
-        { text: 'for successfully completing the ', bold: false },
-        { text: 'SINEVERSE', bold: true },
-        { text: ' program as a member, by fulfilling all requirements:', bold: false },
-      ],
-      cx,
-      reqY,
-      28,
-    )
+    drawRichLine(ctx, bodySegments, cx, reqY, 28)
 
-    drawRequirementBoxes(ctx, boxesY, boxH)
+    if (showBoxes) drawRequirementBoxes(ctx, boxesY, boxH)
 
-    // Pill course.
-    const pillText = courseTitle ?? 'SINEVERSE'
+    // Pill: nama course (course), "SINEVERSE Academy" (academy), atau
+    // nama program/event/kompetisi (exam/event/work).
     ctx.font = `700 38px ${FONT}`
     const pillW = ctx.measureText(pillText).width + 100
     ctx.fillStyle = MINT_PILL
@@ -1143,6 +1199,17 @@ export async function renderCertificate(
     ctx.fillText('Verify Certificate', 1470, 1100)
     ctx.font = `700 18px ${FONT}`
     ctx.fillText(cert.serial, 1470, 1126)
+
+    // Petunjuk verifikasi (tanpa URL): barcode hanya menampilkan nomor,
+    // jadi pemeriksa perlu tahu kode itu untuk apa. Dua baris di bawah
+    // blok barcode/QR; lebar maks. 800px supaya tidak menyentuh barcode
+    // kiri maupun keterangan QR kanan.
+    drawVerifyInstruction(
+      ctx,
+      'To verify this certificate is genuine, scan the QR code or enter the Verification Code on the SINEVERSE Certificate Verification page.',
+      800,
+      1168,
+    )
   } else {
     // ---- CERTIFICATE OF APPRECIATION (mentor) ----
     drawTitleLaurel(ctx, false)
@@ -1213,11 +1280,14 @@ export async function renderCertificate(
       ctx.fillText(line, cx, y)
       y += 46
     }
-    if (cert.note) {
+    // B10: alasan apresiasi dipotong di 140 karakter (sama seperti
+    // batas textarea di AdminCertificatesPage) supaya tidak meluber.
+    const noteText = cert.note ? cert.note.slice(0, 140) : null
+    if (noteText) {
       y += 6
       ctx.fillStyle = MUTED
       ctx.font = `italic 400 26px ${FONT}`
-      const noteLines = wrapText(ctx, cert.note, 1000)
+      const noteLines = wrapText(ctx, noteText, 1000)
       for (const line of noteLines) {
         ctx.fillText(line, cx, y)
         y += 36
@@ -1243,6 +1313,32 @@ export async function renderCertificate(
     ctx.fillStyle = NAVY
     ctx.font = `700 22px ${FONT}`
     drawTracked(ctx, 'INSPIRE • MENTOR • EMPOWER', 1550, 1059, 4, 'right')
+
+    // Petunjuk verifikasi (tanpa URL; sertifikat mentor tidak punya QR,
+    // jadi klausul QR dihilangkan). Satu baris di bawah barcode tengah.
+    drawVerifyInstruction(
+      ctx,
+      'To verify this certificate is genuine, enter the Verification Code on the SINEVERSE Certificate Verification page.',
+      1240,
+      1178,
+    )
+  }
+
+  // B6: sertifikat yang dicabut/tidak aktif ditandai jelas di dalam
+  // dokumen — pita diagonal merah melintang, supaya pratinjau maupun PNG
+  // yang sudah terlanjur diunduh pun terlihat tidak berlaku.
+  if (cert.status === 'revoked' || cert.status === 'inactive') {
+    const label = cert.status === 'revoked' ? 'DICABUT  •  REVOKED' : 'TIDAK AKTIF  •  INACTIVE'
+    ctx.save()
+    ctx.translate(cx, CERT_HEIGHT / 2)
+    ctx.rotate(-0.32)
+    ctx.fillStyle = 'rgba(192, 57, 43, 0.88)'
+    ctx.fillRect(-1100, -52, 2200, 104)
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = `700 64px ${FONT}`
+    ctx.textAlign = 'center'
+    ctx.fillText(label, 0, 22)
+    ctx.restore()
   }
 
   ctx.restore()

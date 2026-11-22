@@ -14,7 +14,7 @@ import {
   buildGradeComponents,
   discussionParticipationScore,
 } from './grading'
-import { supabase, appBaseUrl } from './supabase'
+import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, appBaseUrl } from './supabase'
 import type {
   Assignment,
   Certificate,
@@ -277,23 +277,71 @@ export function verificationLinkForCert(cert: Certificate): string {
   return `${appBaseUrl()}#/sertifikat/verifikasi?serial=${cert.serial}`
 }
 
-/** Verifikasi publik via RPC (migrasi 024): cocokkan hash token dengan
- *  database. Mengembalikan null bila tidak ditemukan (NOT FOUND). */
-export async function verifyByToken(token: string): Promise<VerificationResult | null> {
-  const { data, error } = await supabase.rpc('verify_certificate_by_token', {
-    p_token: token.trim(),
+/** Terbitkan sertifikat karya pemenang kompetisi via RPC (migrasi 025).
+ *  Hanya admin; RPC menolak bila pemenang belum mengambil course apa pun.
+ *  Bila sertifikat karya sudah ada untuk (kompetisi, pemenang), RPC
+ *  mengembalikan serial yang sudah ada (alreadyIssued). */
+export async function issueWorkCertificate(
+  competitionId: string,
+  winnerId: string,
+  projectId: string | null,
+): Promise<{ serial: string; alreadyIssued: boolean }> {
+  const { data, error } = await supabase.rpc('issue_work_certificate', {
+    p_competition_id: competitionId,
+    p_winner_id: winnerId,
+    p_project_id: projectId,
   })
   if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    serial: string
+    already_issued: boolean
+  } | null
+  if (!row) throw new Error('RPC issue_work_certificate tidak mengembalikan data.')
+  return { serial: row.serial, alreadyIssued: row.already_issued }
+}
+
+/** Verifikasi publik via Edge Function verify-certificate (bukan RPC
+ *  langsung): fungsi ini memanggil RPC verify_certificate_by_token di
+ *  server dan menerapkan rate limiting — HTTP 429 berarti terlalu banyak
+ *  percobaan. Mengembalikan null bila tidak ditemukan (NOT FOUND).
+ *  URL fungsi diturunkan dari SUPABASE_URL yang sudah ada (tidak ada
+ *  project ref kedua yang di-hardcode). */
+export async function verifyByToken(token: string): Promise<VerificationResult | null> {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-certificate`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ mode: 'token', value: token.trim() }),
+  })
+  if (res.status === 429) {
+    throw new Error('Terlalu banyak percobaan verifikasi, coba lagi sebentar lagi.')
+  }
+  if (!res.ok) throw new Error(`Verifikasi gagal (${res.status}).`)
+  const data = await res.json()
   const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
   return row ?? null
 }
 
-/** Verifikasi publik via RPC berdasarkan nomor serial (pencarian manual). */
+/** Verifikasi publik via Edge Function berdasarkan nomor serial
+ *  (pencarian manual). Sama seperti verifyByToken: 429 = rate limit. */
 export async function verifyBySerial(serial: string): Promise<VerificationResult | null> {
-  const { data, error } = await supabase.rpc('verify_certificate_by_serial', {
-    p_serial: serial.trim().toUpperCase(),
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/verify-certificate`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ mode: 'serial', value: serial.trim().toUpperCase() }),
   })
-  if (error) throw error
+  if (res.status === 429) {
+    throw new Error('Terlalu banyak percobaan verifikasi, coba lagi sebentar lagi.')
+  }
+  if (!res.ok) throw new Error(`Verifikasi gagal (${res.status}).`)
+  const data = await res.json()
   const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
   return row ?? null
 }
