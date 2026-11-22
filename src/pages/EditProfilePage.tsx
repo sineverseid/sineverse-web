@@ -27,6 +27,10 @@ export default function EditProfilePage() {
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null)
   const [manualSchool, setManualSchool] = useState(false)
   const [manualSchoolName, setManualSchoolName] = useState('')
+  // K10: apakah bagian sekolah disentuh pengguna di sesi edit ini — bila
+  // tidak disentuh sama sekali, simpan mempertahankan school + school_id
+  // lama (jangan menghapus sekolah hanya karena pengguna mengedit nama).
+  const [schoolTouched, setSchoolTouched] = useState(false)
   const [kelas, setKelas] = useState('')
   const [interestsText, setInterestsText] = useState('')
   const [birthDate, setBirthDate] = useState('')
@@ -43,8 +47,9 @@ export default function EditProfilePage() {
     if (profile) {
       setName(profile.name ?? '')
       // Sekolah lama: bila school_id ada, sekolah itu terpilih dari daftar;
-      // bila hanya ada teks bebas (tanpa school_id), tampil sebagai
-      // isian manual supaya tidak hilang.
+      // bila hanya ada teks bebas (tanpa school_id), picker TETAP tampilan
+      // utama (K10) — nama lama disimpan sebagai fallback manual dan
+      // ditampilkan sebagai "Sekolah saat ini" supaya tidak hilang.
       if (profile.school_id && profile.school) {
         setSelectedSchool({ id: profile.school_id, name: profile.school } as School)
         setSchoolQuery(profile.school)
@@ -53,7 +58,7 @@ export default function EditProfilePage() {
       } else if (profile.school) {
         setSelectedSchool(null)
         setSchoolQuery('')
-        setManualSchool(true)
+        setManualSchool(false)
         setManualSchoolName(profile.school)
       } else {
         setSelectedSchool(null)
@@ -61,6 +66,7 @@ export default function EditProfilePage() {
         setManualSchool(false)
         setManualSchoolName('')
       }
+      setSchoolTouched(false)
       setProvince(profile.province ?? '')
       setRegency(profile.regency ?? '')
       setKelas(profile.kelas ?? '')
@@ -164,6 +170,7 @@ export default function EditProfilePage() {
 
   function handleSchoolQueryChange(value: string) {
     setSchoolQuery(value)
+    setSchoolTouched(true)
     if (selectedSchool) setSelectedSchool(null)
   }
 
@@ -171,6 +178,7 @@ export default function EditProfilePage() {
     setSelectedSchool(school)
     setSchoolQuery(school.name)
     setSchoolResults([])
+    setSchoolTouched(true)
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -187,16 +195,24 @@ export default function EditProfilePage() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
-      // K10: school_id + school ditulis BERSAMAAN. Sekolah dari daftar →
-      // keduanya terisi; sekolah manual → school_id null + teks bebas;
-      // dikosongkan → keduanya null (sekolah lama tidak lagi nyangkut).
-      const schoolName = manualSchool
-        ? manualSchoolName.trim()
-        : (selectedSchool?.name ?? '')
+      // K10: bila bagian sekolah tidak disentuh sama sekali, pertahankan
+      // school + school_id lama. Bila disentuh: dari daftar → keduanya
+      // terisi; manual → school_id null + teks bebas; dikosongkan →
+      // keduanya null (sekolah lama tidak lagi nyangkut).
+      const schoolName = !schoolTouched
+        ? (profile?.school ?? null)
+        : manualSchool
+          ? manualSchoolName.trim()
+          : (selectedSchool?.name ?? '')
+      const schoolId = !schoolTouched
+        ? (profile?.school_id ?? null)
+        : manualSchool
+          ? null
+          : (selectedSchool?.id ?? null)
       await updateProfile(user.id, {
         name: name.trim(),
         school: schoolName || null,
-        school_id: manualSchool ? null : (selectedSchool?.id ?? null),
+        school_id: schoolId,
         province: province || null,
         regency: regency || null,
         kelas: kelas.trim() || null,
@@ -263,6 +279,7 @@ export default function EditProfilePage() {
               setSelectedSchool(null)
               setSchoolQuery('')
               setSchoolResults([])
+              setSchoolTouched(true)
             }}
           >
             <option value="">—</option>
@@ -282,6 +299,7 @@ export default function EditProfilePage() {
               setSelectedSchool(null)
               setSchoolQuery('')
               setSchoolResults([])
+              setSchoolTouched(true)
             }}
             disabled={!province}
           >
@@ -317,6 +335,7 @@ export default function EditProfilePage() {
               onClick={() => {
                 setManualSchool(false)
                 setManualSchoolName('')
+                setSchoolTouched(true)
               }}
             >
               Pilih dari daftar sekolah
@@ -345,6 +364,14 @@ export default function EditProfilePage() {
                       ? `Sekolah di ${regencyName} — ketik untuk mencari.`
                       : 'Pilih provinsi dan kabupaten/kota dulu — sekolah di daerahmu akan muncul di sini.'}
               </span>
+              {!selectedSchool && profile?.school && (
+                <span className="muted" style={{ fontWeight: 400, display: 'block', marginTop: '0.25rem' }}>
+                  Sekolah saat ini: {profile.school}
+                  {profile.school_id
+                    ? ''
+                    : ' (belum terdaftar di data resmi — pilih dari daftar bila sudah terdaftar)'}
+                </span>
+              )}
             </label>
             {schoolResults.length > 0 && (
               <ul className="school-results">
@@ -366,8 +393,10 @@ export default function EditProfilePage() {
               className="btn btn-ghost btn-small"
               onClick={() => {
                 setManualSchool(true)
+                setManualSchoolName((v) => v || profile?.school || '')
                 setSelectedSchool(null)
                 setSchoolResults([])
+                setSchoolTouched(true)
               }}
             >
               Sekolah saya belum terdaftar

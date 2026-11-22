@@ -30,7 +30,7 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
 import { courseIllustration, rpsWeekLabel } from '../lib/brand'
-import { countEnrollments, countUsersByRole } from '../lib/counts'
+import { countEnrollments, countUsersByRole, formatCountId } from '../lib/counts'
 import {
   decideMentorApplication,
   decideSchoolSubmission,
@@ -2354,8 +2354,10 @@ function AdminHome(props: {
           </p>
           <h1>Ringkasan SINEVERSE</h1>
           <p>
-            Halo, {firstName}! {counts.users} pengguna · {counts.schools} sekolah ·{' '}
-            {courses.length} kursus · {counts.films} film · {counts.enrollments} pendaftaran kursus
+            Halo, {firstName}! {formatCountId(counts.users)} pengguna ·{' '}
+            {formatCountId(counts.schools)} sekolah · {formatCountId(courses.length)} kursus ·{' '}
+            {formatCountId(counts.films)} film · {formatCountId(counts.enrollments)} pendaftaran
+            kursus
           </p>
           <div className="dash-hero-actions">
             <Link to="/admin" className="btn-mint">

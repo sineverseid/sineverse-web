@@ -10,7 +10,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { fetchCompetencyExams, fetchEnrollment, fetchExamAttempts, supabase } from '../lib/supabase'
+import { fetchCompetencyExams, fetchCourses, fetchEnrollment, fetchEnrollments, fetchExamAttempts, supabase } from '../lib/supabase'
 import type { CompetencyExam, ExamAttempt } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -27,9 +27,15 @@ interface ExamQuestion {
 }
 
 export function ExamsPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  const isAdmin = profile?.role === 'admin'
   const [exams, setExams] = useState<CompetencyExam[] | null>(null)
   const [attempts, setAttempts] = useState<ExamAttempt[]>([])
+  // K5: ketersediaan per ujian — course tempat saya terdaftar dan course
+  // yang saya ampu. null = gagal dimuat (ketersediaan tidak diketahui,
+  // daftar tetap tampil tanpa catatan).
+  const [myEnrolledCourseIds, setMyEnrolledCourseIds] = useState<Set<string> | null>(null)
+  const [mentorCourseIds, setMentorCourseIds] = useState<Set<string> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,6 +52,20 @@ export function ExamsPage() {
         setExams(list)
         if (user) {
           setAttempts(atts)
+          // Ketersediaan per ujian: gagal dimuat tidak boleh merusak daftar.
+          try {
+            const [enrs, courses] = await Promise.all([
+              fetchEnrollments(user.id),
+              fetchCourses(),
+            ])
+            if (cancelled) return
+            setMyEnrolledCourseIds(new Set(enrs.map((e) => e.course_id)))
+            setMentorCourseIds(
+              new Set(courses.filter((c) => c.mentor_id === user.id).map((c) => c.id)),
+            )
+          } catch {
+            // Ketersediaan tidak diketahui — daftar tetap tampil.
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat ujian.')
@@ -58,6 +78,27 @@ export function ExamsPage() {
       cancelled = true
     }
   }, [user])
+
+  // K5: ketersediaan satu ujian untuk peran saya.
+  // 'admin' = mode pantau (tidak mengikuti ujian); 'preview' = pratinjau
+  // mentor course; 'open' = siswa terdaftar di course ujian; 'unlinked' =
+  // ujian belum terhubung ke course (siswa boleh mengerjakan, sertifikat
+  // baru terbit setelah dihubungkan); 'locked' = siswa belum terdaftar di
+  // course ujian; 'unknown' = ketersediaan gagal ditentukan.
+  function examAccess(ex: CompetencyExam): 'admin' | 'preview' | 'open' | 'unlinked' | 'locked' | 'unknown' {
+    if (isAdmin) return 'admin'
+    if (ex.course_id === null) return 'unlinked'
+    if (mentorCourseIds?.has(ex.course_id)) return 'preview'
+    if (myEnrolledCourseIds === null) return 'unknown'
+    return myEnrolledCourseIds.has(ex.course_id) ? 'open' : 'locked'
+  }
+
+  const anyAvailable =
+    exams !== null &&
+    exams.some((ex) => {
+      const a = examAccess(ex)
+      return a === 'open' || a === 'preview' || a === 'unlinked'
+    })
 
   if (loading) return <div className="page"><p className="muted">Memuat ujian…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -73,25 +114,57 @@ export function ExamsPage() {
       {exams.length === 0 ? (
         <EmptyState message="Belum ada ujian kompetensi." />
       ) : (
-        <ul className="course-list">
-          {exams.map((ex) => {
-            const mine = attempts.filter((a) => a.exam_id === ex.id)
-            const passed = mine.some((a) => a.passed)
-            return (
-              <li key={ex.id} className="course-card">
-                <Link to={`/ujian/${ex.id}`}>
-                  <h3>{ex.title}</h3>
-                  <p>{ex.description ?? 'Ujian kompetensi.'}</p>
-                  <p className="muted">
-                    Nilai lulus: {ex.passing_score}
-                    {ex.max_attempts !== null ? ` · Maks. percobaan: ${ex.max_attempts}` : ''}
-                    {passed ? ' · Lulus' : mine.length > 0 ? ` · ${mine.length} percobaan` : ''}
-                  </p>
-                </Link>
-              </li>
+        <>
+          {/* K5: empty-state sadar-peran — ujian ADA tapi tidak tersedia
+              untuk peran ini mendapat pesan yang tepat, bukan "Belum ada". */}
+          {isAdmin ? (
+            <p className="notice-box">
+              Kamu masuk sebagai admin (mode pantau). Admin tidak mengikuti ujian kompetensi —
+              soal hanya bisa dibaca.
+            </p>
+          ) : (
+            user &&
+            !anyAvailable && (
+              <p className="notice-box">
+                Belum ada ujian yang bisa kamu ikuti — semua ujian di bawah membutuhkan
+                pendaftaran di course terkait. Daftar dulu ke course-nya, lalu kembali ke sini.
+              </p>
             )
-          })}
-        </ul>
+          )}
+          <ul className="course-list">
+            {exams.map((ex) => {
+              const mine = attempts.filter((a) => a.exam_id === ex.id)
+              const passed = mine.some((a) => a.passed)
+              const access = examAccess(ex)
+              const accessNote =
+                access === 'admin'
+                  ? 'Mode pantau admin — soal hanya bisa dibaca.'
+                  : access === 'preview'
+                    ? 'Pratinjau mentor — soal hanya bisa dibaca.'
+                    : access === 'open'
+                      ? 'Kamu terdaftar di course ini — ujian bisa diikuti.'
+                      : access === 'unlinked'
+                        ? 'Belum terhubung ke course — sertifikat diterbitkan setelah dihubungkan.'
+                        : access === 'locked'
+                          ? 'Perlu terdaftar di course terkait untuk mengikuti ujian ini.'
+                          : ''
+              return (
+                <li key={ex.id} className="course-card">
+                  <Link to={`/ujian/${ex.id}`}>
+                    <h3>{ex.title}</h3>
+                    <p>{ex.description ?? 'Ujian kompetensi.'}</p>
+                    <p className="muted">
+                      Nilai lulus: {ex.passing_score}
+                      {ex.max_attempts !== null ? ` · Maks. percobaan: ${ex.max_attempts}` : ''}
+                      {passed ? ' · Lulus' : mine.length > 0 ? ` · ${mine.length} percobaan` : ''}
+                    </p>
+                    {accessNote && <p className="muted">{accessNote}</p>}
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       )}
     </div>
   )
@@ -266,9 +339,13 @@ export function ExamPage() {
         </p>
       )}
       {blocked && <p className="error-box">Batas percobaan ujian ini sudah tercapai ({exam.max_attempts} kali).</p>}
+      {/* K5/K3: "Belum ada soal" hanya untuk yang boleh melihat soal
+          (admin / mentor course / siswa terdaftar — atau ujian tanpa
+          course, yang tidak punya enrollment untuk dicek). Siswa belum
+          terdaftar di course ujian harus melihat pesan enrollment. */}
       {missingQuestions ? (
         <MigrationNotice migration="009" />
-      ) : (questions ?? []).length === 0 ? (
+      ) : (questions ?? []).length === 0 && (isAdmin || isCourseMentor || enrolled !== false) ? (
         <p className="empty">Belum ada soal untuk ujian ini. Mentor menambahkan soal lewat Course Builder.</p>
       ) : isAdmin || isCourseMentor ? (
         <>

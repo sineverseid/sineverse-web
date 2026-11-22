@@ -45,6 +45,7 @@ import {
   fetchLiveClasses,
   fetchMentorName,
   fetchModules,
+  fetchPublicCourse,
   fetchQuizAttempts,
   fetchQuizzesForLessons,
   fetchSubmissions,
@@ -199,6 +200,24 @@ export default function CourseDetailPage() {
     let cancelled = false
     async function load() {
       try {
+        // K6: tamu (logout) memuat ringkasan publik lewat RPC — fetchCourse
+        // mengembalikan null untuk tamu karena RLS courses hanya untuk
+        // authenticated. RPC hanya memberi kolom publik (tanpa
+        // enrollment_key) + modul/lesson (judul saja) + nama mentor.
+        // Tab Tugas/Diskusi dan tautan Meet tetap tersembunyi untuk tamu
+        // lewat canSeeCourseContent di bawah.
+        if (!user) {
+          const pub = await fetchPublicCourse(id as string)
+          if (cancelled) return
+          if (!pub) {
+            setError('Course tidak ditemukan.')
+            return
+          }
+          setCourse(pub.course)
+          setMentorName(pub.mentor_name)
+          setModules(pub.modules)
+          return
+        }
         const c = await fetchCourse(id as string)
         if (cancelled) return
         if (!c) {

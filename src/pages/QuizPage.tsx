@@ -190,7 +190,11 @@ export default function QuizPage() {
       {result && <p className={result.score !== null && result.score >= quiz.passing_score ? 'notice-box' : 'notice-box'}>{result.note}</p>}
       {blocked && <p className="error-box">Batas percobaan kuis ini sudah tercapai ({maxAttempts} kali).</p>}
 
-      {(questions ?? []).length === 0 ? (
+      {/* K3: "Belum ada soal" hanya tampil untuk yang memang boleh melihat
+          soal (admin / mentor course / siswa terdaftar). Siswa belum
+          terdaftar harus melihat pesan enrollment di bawah, bukan status
+          kosong soal — walau soalnya ada. */}
+      {(questions ?? []).length === 0 && (isAdmin || isCourseMentor || enrolled !== false) ? (
         <p className="empty">Belum ada soal untuk kuis ini. Mentor menambahkan soal lewat Course Builder.</p>
       ) : isAdmin || isCourseMentor ? (
         <>
