@@ -324,9 +324,11 @@ export interface Certificate {
   id: string
   user_id: string
   course_id: string
-  type: 'course' | 'exam' | 'work'
+  type: 'course' | 'exam' | 'work' | 'mentor'
   serial: string
   score: number | null
+  // 023: alasan apresiasi pada sertifikat mentor (null untuk jenis lain).
+  note: string | null
   issued_at: string
 }
 

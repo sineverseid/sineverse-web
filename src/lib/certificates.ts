@@ -221,6 +221,29 @@ export async function issueCourseCertificate(
   return { serial: row.serial, score: row.score, alreadyIssued: row.already_issued }
 }
 
+/** Terbitkan sertifikat apresiasi mentor via RPC (migrasi 023). Hanya admin;
+ *  RPC menolak bila penerima bukan mentor atau bukan pengampu course itu.
+ *  Bila sertifikat mentor sudah ada untuk (mentor, course), RPC
+ *  mengembalikan serial yang sudah ada (alreadyIssued). */
+export async function issueMentorCertificate(
+  mentorId: string,
+  courseId: string,
+  note: string | null,
+): Promise<{ serial: string; alreadyIssued: boolean }> {
+  const { data, error } = await supabase.rpc('issue_mentor_certificate', {
+    p_mentor_id: mentorId,
+    p_course_id: courseId,
+    p_note: note,
+  })
+  if (error) throw error
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    serial: string
+    already_issued: boolean
+  } | null
+  if (!row) throw new Error('RPC issue_mentor_certificate tidak mengembalikan data.')
+  return { serial: row.serial, alreadyIssued: row.already_issued }
+}
+
 /** Sertifikat course yang sudah terbit untuk satu course (terbaru dulu). */
 export async function fetchIssuedCourseCertificates(courseId: string): Promise<Certificate[]> {
   const { data, error } = await supabase
