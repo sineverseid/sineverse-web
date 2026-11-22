@@ -19,6 +19,12 @@
   --danger-bg: #fdecea;
   --notice-bg: #e6f4ec;
   --radius: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --shadow-card: 0 1px 3px rgba(23, 36, 56, 0.06), 0 10px 28px rgba(23, 36, 56, 0.08);
+  --shadow-lift: 0 6px 20px rgba(23, 36, 56, 0.14);
+  --mint-soft: #d9f5e6;
+  --mint-grad: linear-gradient(135deg, #c9f2db, #a3e6c4);
   --font: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -2180,5 +2186,1087 @@ p {
 
   .landing-cta h2 {
     font-size: 2rem;
+  }
+}
+
+/* ================================================================
+   REDESAIN DASHBOARD — acuan Arif 22 Nov 2026 (2 gambar referensi).
+   Bahasa visual bersama SEMUA menu (siswa, mentor, admin, course):
+   kartu putih radius 20 + bayangan lembut, tombol pil mint, hero navy
+   dengan aksen diagonal mint, kepala seksi bergaris hijau + tautan
+   "Lihat Semua", kartu kursus horizontal + tombol putar navy.
+   Landing logout TIDAK disentuh (acuan final 21 Nov tetap berlaku).
+   Aturan data asli tetap berlaku: komponen ini hanya menata tampilan;
+   angka/teks yang ditampilkan harus berasal dari data nyata.
+   ================================================================ */
+
+/* --- Tombol pil mint (CTA "Lanjut Belajar", "Lihat Detail") --- */
+.btn-mint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--mint);
+  color: var(--navy);
+  border: none;
+  border-radius: 999px;
+  padding: 0.7rem 1.25rem;
+  font-family: var(--font);
+  font-weight: 800;
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn-mint:hover {
+  background: #8fddb4;
+  text-decoration: none;
+}
+
+/* --- Hero dashboard (sapaan): navy + foto kanan + aksen diagonal mint --- */
+.dash-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--navy);
+  color: #fff;
+  margin-bottom: 1.25rem;
+  isolation: isolate;
+}
+
+.dash-hero-photo {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.dash-hero-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    100deg,
+    rgba(23, 36, 56, 0.97) 0%,
+    rgba(23, 36, 56, 0.88) 45%,
+    rgba(23, 36, 56, 0.35) 75%,
+    rgba(23, 36, 56, 0.15) 100%
+  );
+}
+
+.dash-hero-accent {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 62%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    150deg,
+    rgba(163, 230, 196, 0.95) 0%,
+    rgba(94, 184, 160, 0.55) 34%,
+    rgba(163, 230, 196, 0.12) 62%,
+    rgba(163, 230, 196, 0) 78%
+  );
+  clip-path: polygon(18% 0, 100% 0, 100% 52%);
+}
+
+.dash-hero-content {
+  position: relative;
+  z-index: 2;
+  padding: 1.5rem 1.25rem 1.75rem;
+  max-width: 26rem;
+}
+
+.dash-hero-content h1 {
+  color: #fff;
+  font-size: 1.6rem;
+  margin: 0 0 0.4rem;
+}
+
+.dash-hero-content p {
+  color: #d7e0ea;
+  margin: 0 0 1rem;
+}
+
+.dash-hero-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.dash-hero-dots {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 1.1rem;
+}
+
+.dash-hero-dots .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.dash-hero-dots .dot.active {
+  width: 22px;
+  background: var(--mint);
+}
+
+/* --- Kartu Progress Belajar (cincin + bilah + pil Lihat Detail) --- */
+.ring-card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.ring-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 96px;
+  height: 96px;
+}
+
+.ring-svg {
+  display: block;
+  width: 96px;
+  height: 96px;
+  transform: rotate(-90deg);
+}
+
+.ring-bg {
+  fill: none;
+  stroke: var(--light-grey);
+  stroke-width: 9;
+}
+
+.ring-fg {
+  fill: none;
+  stroke: var(--film-green);
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.ring-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.ring-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ring-body h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1.05rem;
+}
+
+.ring-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ring-body .progress-track {
+  margin-top: 0.55rem;
+}
+
+.ring-action {
+  flex-shrink: 0;
+}
+
+/* --- Grid jalan pintas (4 kolom, ubin ikon) --- */
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.quick-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 0.25rem 0.75rem;
+  color: var(--navy);
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.quick-tile:hover {
+  text-decoration: none;
+  border-color: var(--mint);
+  box-shadow: var(--shadow-card);
+}
+
+.quick-tile svg {
+  color: var(--navy);
+}
+
+.quick-badge {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  background: #e5484d;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  min-width: 1.15rem;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.3rem;
+}
+
+@media (max-width: 359px) {
+  .quick-tile {
+    font-size: 0.72rem;
+  }
+}
+
+/* --- Kepala seksi dashboard: bilah hijau + judul + "Lihat Semua" --- */
+.dash-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.dash-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.dash-section-head h2::before {
+  content: '';
+  flex-shrink: 0;
+  width: 4px;
+  height: 1.35rem;
+  background: var(--film-green);
+  border-radius: 2px;
+}
+
+.dash-more {
+  color: var(--film-green);
+  font-weight: 700;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.dash-more:hover {
+  text-decoration: none;
+  color: #11714f;
+}
+
+/* --- Kartu kursus horizontal (sampul kiri + isi + tombol putar) --- */
+.dash-course {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 0.8rem;
+  color: var(--text);
+}
+
+a.dash-course:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow-lift);
+}
+
+.dash-course-cover {
+  position: relative;
+  flex-shrink: 0;
+  width: 104px;
+  height: 104px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--navy), #22354f);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mint);
+}
+
+.dash-course-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.dash-course-status {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.45rem;
+  z-index: 1;
+  background: var(--mint);
+  color: var(--navy);
+  font-size: 0.72rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+}
+
+.dash-course-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-course-body h3 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+}
+
+.dash-course-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.dash-course-body .progress-track {
+  margin-top: 0.55rem;
+}
+
+.dash-course-play {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dash-course-play svg {
+  margin-left: 2px;
+}
+
+/* --- Banner pengumuman (gradasi mint + megafon + panah) --- */
+.announce-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  background: var(--mint-grad);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.1rem;
+  color: var(--navy);
+  margin-bottom: 1.25rem;
+}
+
+a.announce-banner:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+}
+
+.announce-icon {
+  flex-shrink: 0;
+  color: #0c5c40;
+  display: flex;
+}
+
+.announce-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.announce-body strong {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.announce-body span {
+  font-size: 0.88rem;
+  color: #23402f;
+}
+
+.announce-chevron {
+  flex-shrink: 0;
+  color: var(--navy);
+  display: flex;
+}
+
+/* --- Rekomendasi: deret kartu geser horizontal --- */
+.reco-scroll {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+  scroll-snap-type: x mandatory;
+  list-style: none;
+  margin: 0;
+}
+
+.reco-card {
+  flex: none;
+  width: 200px;
+  scroll-snap-align: start;
+  background: #fff;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  color: var(--text);
+}
+
+a.reco-card:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow-lift);
+}
+
+.reco-cover {
+  position: relative;
+  height: 108px;
+  background: linear-gradient(135deg, var(--navy), #22354f);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mint);
+}
+
+.reco-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reco-body {
+  padding: 0.7rem 0.85rem 0.85rem;
+}
+
+.reco-body h3 {
+  margin: 0 0 0.2rem;
+  font-size: 0.92rem;
+}
+
+.reco-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* --- Tab pil (Aktif / Selesai, Aktif / Riwayat, Diskusi / Pengumuman) --- */
+.pill-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.pill-tab {
+  border: 1px solid var(--light-grey);
+  background: #fff;
+  color: var(--navy);
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.pill-tab.active {
+  background: var(--mint-soft);
+  border-color: transparent;
+  color: #0c5c40;
+}
+
+/* --- Tab garis bawah (Detail Kursus: Deskripsi / Materi / Tugas / Diskusi) --- */
+.detail-tabs {
+  display: flex;
+  gap: 1.25rem;
+  border-bottom: 1px solid var(--light-grey);
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+.detail-tab {
+  padding: 0.6rem 0.1rem;
+  margin-bottom: -1px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.detail-tab.active {
+  color: var(--film-green);
+  border-bottom-color: var(--film-green);
+}
+
+/* --- Lencana pil status (Aktif) --- */
+.pill-active {
+  display: inline-block;
+  background: var(--mint-soft);
+  color: #0c5c40;
+  font-size: 0.78rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  vertical-align: middle;
+}
+
+/* --- Kartu tugas (ikon + isi + lencana tenggat) --- */
+.task-card {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1rem 1.1rem;
+  color: var(--text);
+}
+
+a.task-card:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow-lift);
+}
+
+.task-icon {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--mint-soft);
+  color: var(--film-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-body h3 {
+  margin: 0.2rem 0 0.15rem;
+}
+
+.task-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.task-deadline {
+  display: inline-block;
+  background: #fdecea;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+}
+
+.task-deadline.soon {
+  background: #fff4e0;
+  color: #8a5a00;
+}
+
+.task-deadline.normal {
+  background: var(--mint-soft);
+  color: #0c5c40;
+}
+
+.task-deadline.none {
+  background: var(--soft-white);
+  color: var(--muted);
+}
+
+/* --- Hero nilai (trofi + rata-rata + predikat) --- */
+.grade-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.grade-trophy {
+  flex-shrink: 0;
+  color: #e9a13b;
+  display: flex;
+}
+
+.grade-hero-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.grade-hero-body p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.grade-avg {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--navy);
+  line-height: 1.15;
+}
+
+.grade-predikat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--mint-soft);
+  color: #0c5c40;
+  font-size: 0.82rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  margin-top: 0.35rem;
+}
+
+.grade-motivation {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  background: var(--mint-grad);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.1rem;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.grade-motivation .announce-icon {
+  color: #b97f10;
+}
+
+/* --- Kartu postingan komunitas --- */
+.post-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.post-card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1rem 1.1rem;
+}
+
+.post-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.post-avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--mint-soft);
+  color: #0c5c40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.post-name {
+  margin: 0;
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.post-time {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.post-body {
+  margin: 0.65rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.post-actions {
+  display: flex;
+  gap: 1.1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.post-actions span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* --- Profil: hero avatar besar + daftar menu --- */
+.profile-hero {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.5rem 1rem 1.25rem;
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
+
+.profile-avatar-lg {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--mint);
+  margin: 0 auto 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mint-soft);
+  color: #0c5c40;
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+img.profile-avatar-lg {
+  display: block;
+}
+
+.profile-name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.profile-sub {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.profile-menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: var(--radius-md);
+  padding: 0.9rem 1rem;
+  color: var(--navy);
+  font-weight: 700;
+  width: 100%;
+  font-family: var(--font);
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+a.profile-menu-item:hover,
+button.profile-menu-item:hover {
+  text-decoration: none;
+  border-color: var(--mint);
+  box-shadow: var(--shadow-card);
+}
+
+.profile-menu-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--mint-soft);
+  color: var(--film-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.profile-menu-item .chev {
+  margin-left: auto;
+  color: var(--muted);
+  display: flex;
+}
+
+.profile-menu-item.danger {
+  background: #fdecea;
+  border-color: transparent;
+  color: var(--danger);
+  justify-content: center;
+}
+
+.profile-menu-item.danger .profile-menu-icon {
+  background: transparent;
+  color: var(--danger);
+}
+
+/* --- Detail Kursus: hero foto + daftar "Yang akan kamu pelajari" --- */
+.detail-hero-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
+}
+
+.detail-hero-fallback {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, var(--navy), #22354f);
+  color: var(--mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.detail-title-row h1 {
+  margin: 0;
+}
+
+.learn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.learn-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.learn-check {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--film-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.1rem;
+}
+
+/* --- Materi: area video + baris file pendukung --- */
+.lesson-video {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 1rem;
+}
+
+.lesson-video iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.lesson-video-empty {
+  background: #fff;
+  border: 1px dashed var(--light-grey);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: var(--radius-md);
+  padding: 0.8rem 1rem;
+  color: var(--text);
+}
+
+a.file-row:hover {
+  text-decoration: none;
+  border-color: var(--mint);
+  box-shadow: var(--shadow-card);
+}
+
+.file-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--mint-soft);
+  color: var(--film-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-body strong {
+  display: block;
+  color: var(--navy);
+}
+
+.file-body span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* --- Peningkatan bersama: radius + bayangan di seluruh menu --- */
+.course-card {
+  border-radius: var(--radius-lg);
+  border-color: transparent;
+  box-shadow: var(--shadow-card);
+}
+
+.course-card:hover {
+  box-shadow: var(--shadow-lift);
+}
+
+.list-row,
+.rec-row,
+.discussion-item {
+  border-radius: var(--radius-md);
+  border-color: transparent;
+  box-shadow: var(--shadow-card);
+}
+
+.stat-card {
+  border-radius: var(--radius-lg);
+  border-color: transparent;
+  box-shadow: var(--shadow-card);
+}
+
+.form {
+  border-radius: var(--radius-lg);
+  border-color: transparent;
+  box-shadow: var(--shadow-card);
+}
+
+.page-header-icon {
+  border-radius: var(--radius-md);
+}
+
+.chip {
+  border-radius: 999px;
+}
+
+/* Garis bawah hijau di item bottom-nav yang aktif (seperti referensi). */
+.bottomnav-item.active {
+  position: relative;
+}
+
+.bottomnav-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--film-green);
+}
+
+/* Tagline brand di header (tampil ≥640px). */
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.brand-tagline {
+  display: none;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--mint);
+}
+
+@media (min-width: 640px) {
+  .brand-tagline {
+    display: block;
+  }
+
+  .dash-hero-content {
+    padding: 2rem 1.75rem 2.25rem;
+  }
+
+  .dash-hero-content h1 {
+    font-size: 1.9rem;
+  }
+
+  .dash-course-cover {
+    width: 120px;
+    height: 120px;
   }
 }
