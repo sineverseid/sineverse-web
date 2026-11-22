@@ -808,6 +808,8 @@ export interface MentorApplication {
   profession?: string | null
   reason?: string | null
   volunteer_agreed?: boolean | null
+  /** Migrasi 033: sekolah/institusi afiliasi mentor (opsional, teks bebas). */
+  affiliation?: string | null
   decision_note?: string | null
   decided_at?: string | null
 }
@@ -820,6 +822,8 @@ export interface MentorApplicationInput {
   portfolio_link: string | null
   reason: string
   volunteer_agreed: boolean
+  /** Migrasi 033: sekolah/institusi afiliasi (opsional, teks bebas). */
+  affiliation: string | null
 }
 
 export interface AdminDiscussion {

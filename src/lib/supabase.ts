@@ -1183,7 +1183,11 @@ export async function fetchMentorApplications(): Promise<MentorApplication[]> {
  * Putuskan lamaran mentor (admin): Setujui / Tolak / Minta Revisi.
  * Alasan/catatan wajib diisi pemanggil untuk tolak/revisi. Persetujuan
  * mengaktifkan peran mentor lewat trigger database (008) — client tidak
- * pernah mengubah profiles.role sendiri.
+ * pernah mengubah profiles.role sendiri. Persetujuan juga menyalin
+ * afiliasi lamaran (migrasi 033) ke profiles.school pelamar bila terisi,
+ * supaya tampil di direktori mentor dan profilnya; penyalinan ini
+ * best-effort (status lamaran sudah tersimpan — kegagalannya tidak
+ * membatalkan persetujuan).
  */
 export async function decideMentorApplication(
   app: MentorApplication,
@@ -1201,6 +1205,16 @@ export async function decideMentorApplication(
     })
     .eq('id', app.id)
   if (error) throw error
+  if (decision === 'approved' && app.affiliation?.trim()) {
+    // profiles_admin_all mengizinkan admin mengubah profil pelamar;
+    // ini hanya menyentuh kolom school (bukan role — guard 008 tidak
+    // terpicu karena role tidak berubah).
+    const { error: profErr } = await supabase
+      .from('profiles')
+      .update({ school: app.affiliation.trim() })
+      .eq('id', app.user_id)
+    if (profErr) console.warn('Gagal menyalin afiliasi mentor ke profil:', profErr.message)
+  }
 }
 
 /** Lamaran mentor terbaru milik pengguna (untuk status + ajukan ulang). */
@@ -1222,9 +1236,10 @@ export async function fetchMyMentorApplication(
 }
 
 /**
- * Kirim lamaran mentor (6 info). Bila ada lamaran 'revision_required',
- * perbarui lamaran itu dan kembalikan ke 'pending' (ajukan ulang);
- * bila ada lamaran 'pending', kembalikan lamaran itu tanpa duplikat.
+ * Kirim lamaran mentor (6 info + afiliasi opsional, migrasi 033). Bila ada
+ * lamaran 'revision_required', perbarui lamaran itu dan kembalikan ke
+ * 'pending' (ajukan ulang); bila ada lamaran 'pending', kembalikan
+ * lamaran itu tanpa duplikat.
  */
 export async function submitMentorApplication(
   userId: string,
@@ -1236,6 +1251,7 @@ export async function submitMentorApplication(
     expertise: input.expertise,
     experience: input.experience.trim(),
     portfolio_link: input.portfolio_link?.trim() || null,
+    affiliation: input.affiliation?.trim() || null,
     reason: input.reason.trim(),
     volunteer_agreed: input.volunteer_agreed,
   }
