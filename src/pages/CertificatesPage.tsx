@@ -1,12 +1,13 @@
 // SINEVERSE — Sertifikat: "Sertifikat Saya" (3 jenis dengan tampilan
 // berbeda: course SVS-CRS, ujian SVS-EXM, karya SVS-KRY) + verifikasi
-// sertifikat berdasarkan nomor serial. Tautan verifikasi adalah metode
-// verifikasi sertifikat (tidak ada QR code — tidak ada pustaka QR di
-// package.json): /sertifikat/verifikasi?serial=SVS-___-____-____
+// sertifikat berdasarkan nomor serial. Verifikasi memakai tautan + nomor
+// serial, dan sejak 22 Nov 2026 juga kode QR (pustaka `qrcode`):
+// /sertifikat/verifikasi?serial=SVS-___-____-____
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import QrCode from '../components/QrCode'
 import { fmtDate } from '../lib/guarded'
 import {
   appBaseUrl,
@@ -149,6 +150,8 @@ export function CertificatesPage() {
                 <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleCopy(c.serial)}>
                   {copiedSerial === c.serial ? 'Disalin' : 'Salin tautan verifikasi'}
                 </button>
+                <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
+                <QrCode value={verificationLink(c.serial)} />
               </li>
             )
           })}
@@ -269,6 +272,8 @@ export function VerifyCertificatePage() {
           <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleCopyLink()}>
             {copiedLink ? 'Disalin' : 'Salin tautan verifikasi'}
           </button>
+          <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
+          <QrCode value={verificationLink(result.cert.serial)} />
           {copyError && <p className="error-box">{copyError}</p>}
         </div>
       )}

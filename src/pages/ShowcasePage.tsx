@@ -15,8 +15,9 @@
 // tidak pernah tampil di galeri publik. Pemilik film yang ditolak bisa
 // mengirim ulang untuk dinilai ("Kirim ulang untuk dinilai"): status
 // kembali 'draft', penilaian lama dihapus, dan film masuk lagi ke antrean
-// admin (film privat ikut dijadikan publik saat dikirim, supaya benar-benar
-// masuk antrean).
+// admin. Sejak 22 Nov 2026 film privat yang dikirim ulang TETAP privat —
+// antrean admin menampilkan semua draft (publik maupun privat), jadi film
+// privat tetap sampai ke penilai tanpa harus dijadikan publik.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -107,7 +108,6 @@ export default function ShowcasePage() {
               .from('films')
               .select('*')
               .eq('status', 'draft')
-              .eq('visibility', 'public')
               .order('created_at', { ascending: true })
           : Promise.resolve({ data: null as Film[] | null }),
       ])
@@ -210,16 +210,14 @@ export default function ShowcasePage() {
 
   // Kirim ulang film yang ditolak: status kembali 'draft', penilaian lama
   // (penilai, alasan, tanggal) dihapus, dan film masuk lagi ke antrean
-  // "Perlu Dinilai" admin. Film privat ikut dijadikan publik supaya
-  // benar-benar masuk antrean.
+  // "Perlu Dinilai" admin. Visibilitas TIDAK diubah: film privat tetap
+  // privat (antren admin menampilkan semua draft, publik maupun privat).
   async function handleResubmit(film: Film) {
     if (!user) return
-    const makePublic = film.visibility === 'private'
     const { error: updErr } = await supabase
       .from('films')
       .update({
         status: 'draft',
-        visibility: makePublic ? 'public' : film.visibility,
         reviewed_by: null,
         review_note: null,
         reviewed_at: null,
@@ -231,9 +229,7 @@ export default function ShowcasePage() {
     }
     await logAudit('film.resubmitted', 'films', film.id, { title: film.title })
     setNotice(
-      makePublic
-        ? 'Film dijadikan publik dan dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.'
-        : 'Film dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.',
+      'Film dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.',
     )
     await load()
   }
