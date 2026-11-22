@@ -6,8 +6,8 @@
 // Bell menampilkan jumlah belum dibaca (tabel notifications, migrasi 008);
 // bila tabel belum ada, lonceng tampil tanpa angka.
 // Saat belum login: header hanya logo + tombol Masuk (tanpa nav).
-import { useEffect, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } from '../lib/supabase'
 import { checkDueReminders } from '../lib/reminders'
@@ -60,8 +60,43 @@ const remindersCheckedFor = new Set<string>()
 export default function Layout() {
   const { user, profile, signOut, registrationNotice, dismissRegistrationNotice } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [unread, setUnread] = useState<number | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // K1 tepi kiri: .topnav meluber di desktop — fade kiri hanya muncul
+  // saat nav sudah digeser (scrollLeft > 0), fade kanan hilang saat
+  // sudah mentok kanan; bila isi muat, tidak ada fade sama sekali.
+  const navRef = useRef<HTMLElement | null>(null)
+  const [navScrolled, setNavScrolled] = useState(false)
+  const [navAtEnd, setNavAtEnd] = useState(false)
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const update = () => {
+      setNavScrolled(nav.scrollLeft > 0)
+      setNavAtEnd(nav.scrollWidth - nav.clientWidth - nav.scrollLeft <= 1)
+    }
+    update()
+    nav.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(nav)
+    window.addEventListener('resize', update)
+    return () => {
+      nav.removeEventListener('scroll', update)
+      ro.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }, [user, profile?.role])
+
+  // K1: gulir item aktif ke tampilan seminimal mungkin (inline 'nearest')
+  // — tidak mendorong Beranda keluar layar bila item sudah terlihat.
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const active = nav.querySelector('a.active') as HTMLElement | null
+    if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [location.pathname])
 
   // (Lembar "Lainnya" ditutup lewat onClick di tiap tautan, tanpa effect.)
 
@@ -135,7 +170,11 @@ export default function Layout() {
         </Link>
         {user ? (
           <>
-            <nav className="topnav" aria-label="Navigasi utama">
+            <nav
+              ref={navRef}
+              className={`topnav${navScrolled ? ' is-scrolled' : ''}${navAtEnd ? ' is-end' : ''}`}
+              aria-label="Navigasi utama"
+            >
               {allEntries.map((e) => (
                 <NavLink key={e.to} to={e.to} end={e.end}>
                   <Icon name={e.icon} size={17} />
