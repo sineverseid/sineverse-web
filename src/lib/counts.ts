@@ -21,6 +21,13 @@ export interface RoleCounts {
   lain: number
 }
 
+/** Format angka dengan pemisah ribuan Indonesia ("26.662"). Dipakai untuk
+ *  angka yang tampil ke pengguna (hero admin, statistik) — angka mentah
+ *  seperti 26662 tidak pernah ditampilkan. */
+export function formatCountId(n: number): string {
+  return n.toLocaleString('id-ID')
+}
+
 /** Hitung pengguna per peran dari baris profiles yang sudah dimuat. */
 export function countUsersByRole(profiles: readonly { role: string }[]): RoleCounts {
   const out: RoleCounts = { total: profiles.length, siswa: 0, mentor: 0, admin: 0, lain: 0 }

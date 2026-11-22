@@ -174,6 +174,49 @@ export async function fetchCourse(id: string): Promise<Course | null> {
   return data as Course | null
 }
 
+/** Ringkasan publik sebuah course untuk TAMU (logout) — K6. RLS courses
+ *  hanya mengizinkan SELECT untuk authenticated
+ *  (courses_select_authenticated, migrasi 001), begitu pula modules dan
+ *  lessons — jadi fetchCourse untuk tamu selalu null dan halaman course
+ *  menampilkan "Course tidak ditemukan." RPC get_public_course (migrasi
+ *  037, SECURITY DEFINER) hanya mengembalikan kolom publik: tanpa
+ *  enrollment_key (kode akses course) dan tanpa video_url / isi lesson.
+ *  Mengembalikan null bila course tidak ada. */
+export interface PublicCourseData {
+  course: Course
+  mentor_name: string | null
+  modules: (Module & { lessons: Lesson[] })[]
+}
+
+export async function fetchPublicCourse(id: string): Promise<PublicCourseData | null> {
+  const { data, error } = await supabase.rpc('get_public_course', { p_course_id: id })
+  if (error) throw error
+  const row = data as {
+    course: Record<string, unknown> | null
+    mentor_name: string | null
+    modules: Record<string, unknown>[]
+    lessons: Record<string, unknown>[]
+  } | null
+  if (!row || !row.course) return null
+  const modules = (row.modules ?? []) as unknown as Module[]
+  const lessons = (row.lessons ?? []) as unknown as Lesson[]
+  const orderByModule = new Map(modules.map((m) => [m.id, m.order_index]))
+  const sortedLessons = [...lessons].sort((a, b) => {
+    const ma = orderByModule.get(a.module_id) ?? 0
+    const mb = orderByModule.get(b.module_id) ?? 0
+    if (ma !== mb) return ma - mb
+    return (a.order_index ?? 0) - (b.order_index ?? 0)
+  })
+  return {
+    course: row.course as unknown as Course,
+    mentor_name: row.mentor_name,
+    modules: modules.map((m) => ({
+      ...m,
+      lessons: sortedLessons.filter((l) => l.module_id === m.id),
+    })),
+  }
+}
+
 export async function fetchMentorName(mentorId: string | null): Promise<string | null> {
   if (!mentorId) return null
   const { data, error } = await supabase
