@@ -4,6 +4,7 @@ import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
+import AdminAcademyAnalyticsPage from './pages/AdminAcademyAnalyticsPage'
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage'
 import AdminAssignmentsPage from './pages/AdminAssignmentsPage'
 import AdminCertificatesPage from './pages/AdminCertificatesPage'
@@ -376,6 +377,14 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin']}>
                   <AdminAnalyticsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/analitik-akademi"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminAcademyAnalyticsPage />
                 </RoleRoute>
               }
             />
