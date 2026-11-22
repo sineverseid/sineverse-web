@@ -41,7 +41,17 @@ export default function GrowthPage() {
   const [enrolledIds, setEnrolledIds] = useState<Set<string>>(new Set())
   const [projects, setProjects] = useState<Project[]>([])
   const [myProjectIds, setMyProjectIds] = useState<Set<string>>(new Set())
-  const [schools, setSchools] = useState<School[]>([])
+  // Sekolah: TIDAK lagi memuat seluruh 26 ribu sekolah — daftar panjang
+  // itu tidak relevan bagi siswa. Yang dimuat: jumlah total +
+  // terverifikasi, sekolah siswa sendiri, nama sekolah untuk proyek
+  // lintas sekolah, dan hasil pencarian (maks 20) saat siswa mengetik.
+  const [schoolCounts, setSchoolCounts] = useState<{ total: number; verified: number } | null>(null)
+  const [schoolError, setSchoolError] = useState(false)
+  const [mySchool, setMySchool] = useState<School | null>(null)
+  const [projectSchoolNames, setProjectSchoolNames] = useState<Map<string, string>>(new Map())
+  const [schoolQuery, setSchoolQuery] = useState('')
+  const [schoolResults, setSchoolResults] = useState<School[] | null>(null)
+  const [schoolSearching, setSchoolSearching] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [coursesError, setCoursesError] = useState(false)
@@ -61,26 +71,54 @@ export default function GrowthPage() {
     let cancelled = false
     async function load() {
       try {
-        // Semua sumber independen (course, proyek, sekolah, enrollment
-        // saya, keanggotaan proyek saya) — satu Promise.all, bukan dua
-        // tahap berurutan.
-        const [courseList, projectRes, schoolRes, enr, mem] = await Promise.all([
+        // Semua sumber independen (course, proyek, hitungan sekolah,
+        // sekolah saya, enrollment saya, keanggotaan proyek saya) — satu
+        // Promise.all, bukan dua tahap berurutan.
+        const [courseList, projectRes, schoolTotalRes, schoolVerifiedRes, mySchoolRes, enr, mem] = await Promise.all([
           fetchCourses().catch(() => {
             setCoursesError(true)
             return [] as Course[]
           }),
           supabase.from('projects').select('*').order('created_at', { ascending: false }),
-          supabase.from('schools').select('*').order('name'),
+          supabase.from('schools').select('id', { count: 'exact', head: true }),
+          supabase.from('schools').select('id', { count: 'exact', head: true }).eq('is_verified', true),
+          profile?.school_id
+            ? supabase.from('schools').select('*').eq('id', profile.school_id).maybeSingle()
+            : Promise.resolve({ data: null as School | null }),
           user ? fetchEnrollments(user.id) : Promise.resolve([]),
           user
             ? supabase.from('project_members').select('project_id').eq('user_id', user.id)
             : Promise.resolve({ data: [] } as { data: [] }),
         ])
         if (cancelled) return
-        if (projectRes.error || schoolRes.error) setCollabError(true)
+        if (projectRes.error) setCollabError(true)
+        if (schoolTotalRes.error || schoolVerifiedRes.error) setSchoolError(true)
         setCourses(courseList)
         setProjects(((projectRes.data ?? []) as Project[]))
-        setSchools(((schoolRes.data ?? []) as School[]))
+        setSchoolCounts({
+          total: schoolTotalRes.count ?? 0,
+          verified: schoolVerifiedRes.count ?? 0,
+        })
+        if (mySchoolRes.data) setMySchool(mySchoolRes.data as School)
+        // Nama sekolah hanya untuk proyek lintas sekolah (bukan seluruh daftar).
+        const projSchoolIds = [
+          ...new Set(
+            ((projectRes.data ?? []) as Project[])
+              .map((p) => p.school_id)
+              .filter((id): id is string => !!id),
+          ),
+        ]
+        if (projSchoolIds.length > 0) {
+          const { data: psNames } = await supabase
+            .from('schools')
+            .select('id,name')
+            .in('id', projSchoolIds)
+          if (!cancelled && psNames) {
+            setProjectSchoolNames(
+              new Map((psNames as { id: string; name: string }[]).map((s) => [s.id, s.name])),
+            )
+          }
+        }
         if (user) {
           setEnrolledIds(new Set(enr.map((e) => e.course_id)))
           setMyProjectIds(new Set(((mem.data ?? []) as { project_id: string }[]).map((m) => m.project_id)))
@@ -95,7 +133,34 @@ export default function GrowthPage() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, profile?.school_id])
+
+  // Pencarian sekolah (nama atau NPSN), maks 20 hasil — jalan saat siswa
+  // mengetik (debounce 300 ms). Tanpa pencarian, tidak ada daftar yang
+  // dimuat sama sekali.
+  useEffect(() => {
+    const q = schoolQuery.trim()
+    if (q.length < 2) {
+      setSchoolResults(null)
+      setSchoolSearching(false)
+      return
+    }
+    setSchoolSearching(true)
+    const safe = q.replace(/[%(),]/g, '')
+    const t = setTimeout(() => {
+      void supabase
+        .from('schools')
+        .select('id,name,city,is_verified,npsn')
+        .or(`name.ilike.%${safe}%,npsn.eq.${q}`)
+        .order('name')
+        .limit(20)
+        .then(({ data }) => {
+          setSchoolResults((data ?? []) as School[])
+          setSchoolSearching(false)
+        })
+    }, 300)
+    return () => clearTimeout(t)
+  }, [schoolQuery])
 
   // Cek kesiapan PWA (hanya di browser).
   useEffect(() => {
@@ -143,7 +208,7 @@ export default function GrowthPage() {
     [projects],
   )
 
-  const schoolName = (id: string | null) => schools.find((s) => s.id === id)?.name ?? '—'
+  const schoolName = (id: string | null) => (id ? projectSchoolNames.get(id) ?? '—' : '—')
 
   const recommendationEmptyMessage = coursesError
     ? 'Rekomendasi gagal dimuat.'
@@ -265,22 +330,71 @@ export default function GrowthPage() {
           </section>
           <section className="section">
             <h2>Sekolah &amp; Klub Terdaftar</h2>
-            {collabError ? (
-              <p className="error-box">Daftar sekolah gagal dimuat. Coba muat ulang halaman ini.</p>
-            ) : schools.length === 0 ? (
-              <p className="empty">Belum ada sekolah yang terdaftar.</p>
+            {schoolError ? (
+              <p className="error-box">Data sekolah gagal dimuat. Coba muat ulang halaman ini.</p>
             ) : (
-              <ul>
-                {schools.map((s) => (
-                  <li key={s.id}>
-                    <Link to="/sekolah">{s.name}</Link>
-                    {s.city ? `, ${s.city}` : ''}
-                    {s.is_verified ? ' · Terverifikasi' : ''}
-                  </li>
-                ))}
-              </ul>
+              <p className="muted">
+                {schoolCounts
+                  ? `${schoolCounts.total.toLocaleString('id-ID')} sekolah terdaftar di SINEVERSE, ${schoolCounts.verified.toLocaleString('id-ID')} di antaranya terverifikasi.`
+                  : 'Memuat data sekolah…'}
+              </p>
+            )}
+            {mySchool && (
+              <div className="list-row" style={{ marginBottom: '0.75rem' }}>
+                <div className="list-row-main">
+                  <p className="list-row-title">{mySchool.name}</p>
+                  <span className={mySchool.is_verified ? 'pill-active' : 'pill-waiting'}>
+                    Sekolahmu{mySchool.is_verified ? ' · Terverifikasi' : ' · Belum terverifikasi'}
+                    {mySchool.city ? ` · ${mySchool.city}` : ''}
+                  </span>
+                </div>
+                <Link to="/sekolah" className="btn btn-ghost btn-small list-row-action">
+                  Lihat Sekolah
+                </Link>
+              </div>
+            )}
+            <label style={{ display: 'block', fontWeight: 700, marginBottom: '0.5rem' }}>
+              Cari sekolah
+              <input
+                className="search-input"
+                style={{ marginTop: '0.35rem' }}
+                value={schoolQuery}
+                onChange={(e) => setSchoolQuery(e.target.value)}
+                placeholder="Ketik nama sekolah atau NPSN…"
+                aria-label="Cari sekolah berdasarkan nama atau NPSN"
+              />
+            </label>
+            {schoolQuery.trim().length >= 2 ? (
+              schoolSearching ? (
+                <p className="muted">Mencari…</p>
+              ) : schoolResults && schoolResults.length === 0 ? (
+                <p className="empty">Tidak ada sekolah yang cocok dengan pencarianmu.</p>
+              ) : (
+                <ul className="list">
+                  {schoolResults?.map((s) => (
+                    <li key={s.id} className="list-row">
+                      <div className="list-row-main">
+                        <p className="list-row-title">{s.name}</p>
+                        <span className={s.is_verified ? 'pill-active' : 'pill-waiting'}>
+                          {s.is_verified ? 'Terverifikasi' : 'Belum terverifikasi'}
+                          {s.city ? ` · ${s.city}` : ''}
+                        </span>
+                      </div>
+                      <Link to="/sekolah" className="btn btn-ghost btn-small list-row-action">
+                        Lihat
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : (
+              <p className="muted">
+                Ketik minimal 2 huruf untuk mencari sekolah — daftar lengkapnya ada di halaman
+                Sekolah.
+              </p>
             )}
             <p>
+              <Link to="/sekolah" className="btn btn-secondary">Lihat Daftar Sekolah →</Link>{' '}
               <Link to="/kru" className="btn btn-primary">Cari Kru untuk Kolaborasi →</Link>{' '}
               <Link to="/proyek" className="btn btn-secondary">Lihat Semua Proyek</Link>
             </p>

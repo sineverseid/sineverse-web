@@ -258,6 +258,13 @@ export default function CommunitiesPage() {
   const [avatarError, setAvatarError] = useState<string | null>(null)
   // Pilihan avatar pengusul yang tersimpan lokal per id usulan (pra-031).
   const [proposalAvatars, setProposalAvatars] = useState<Map<string, string>>(new Map())
+  // Usulan yang sedang diputuskan (Setujui/Tolak) — tombolnya dikunci
+  // selama proses berjalan supaya satu klik tidak membuat dua komunitas.
+  const [decidingId, setDecidingId] = useState<string | null>(null)
+  // Hapus komunitas memakai konfirmasi dua langkah di dalam halaman
+  // (bukan window.confirm — dialog bawaan browser tidak muncul di
+  // semua lingkungan dan tidak enak di HP).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   // Nilai cover_url efektif dari picker form usulan.
   const proposeCoverUrl = coverValueFromChoice(avatarUploadUrl, avatarPreset)
@@ -586,55 +593,75 @@ export default function CommunitiesPage() {
   // --- Aksi admin (alur yang sama dengan Admin Panel / Moderasi) --------
 
   async function decideProposal(p: CommunityProposal, approve: boolean) {
-    const { error: updErr } = await supabase
-      .from('community_proposals')
-      .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
-      .eq('id', p.id)
-    if (updErr) {
-      setNotice(friendlyDbError())
-      return
-    }
-    if (approve) {
-      // Avatar usulan ikut ke komunitas yang dibuat. Pra-031
-      // proposalCoverOf mengembalikan null (kolom belum ada) sehingga
-      // komunitas dibuat dengan ubin inisial baku; pasca-031 nilai
-      // "preset:..." / URL foto pengusul tersimpan di cover_url.
-      const { data: comm, error: cErr } = await supabase
-        .from('communities')
-        .insert({
-          name: p.name,
-          description: p.description,
-          created_by: p.proposer_id,
-          is_approved: true,
-          cover_url: proposalCoverOf(p),
-        })
-        .select()
-        .single()
-      if (cErr) {
+    // Kunci ganda: tombol dikunci selama proses (di bawah), dan status
+    // usulan dibaca ulang dari database — hanya status 'pending' yang
+    // boleh diputuskan, supaya klik ganda tidak membuat dua komunitas.
+    if (decidingId === p.id) return
+    setDecidingId(p.id)
+    try {
+      const { data: fresh } = await supabase
+        .from('community_proposals')
+        .select('status')
+        .eq('id', p.id)
+        .maybeSingle()
+      if ((fresh as { status?: string } | null)?.status !== 'pending') {
+        setNotice('Usulan ini sudah diputuskan sebelumnya.')
+        await load()
+        return
+      }
+      const { error: updErr } = await supabase
+        .from('community_proposals')
+        .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
+        .eq('id', p.id)
+        .eq('status', 'pending')
+      if (updErr) {
         setNotice(friendlyDbError())
         return
       }
-      const { error: memErr } = await supabase.from('community_members').insert({
-        community_id: (comm as { id: string }).id,
-        user_id: p.proposer_id,
-        role: 'member',
-      })
-      await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
-      invalidateCatalogCache()
-      setNotice(
-        memErr
-          ? `Komunitas "${p.name}" dibuat, tetapi pengusul gagal langsung menjadi anggota. Coba tambahkan manual dari halaman detail komunitas.`
-          : `Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`,
-      )
-    } else {
-      setNotice('Usulan komunitas ditolak.')
+      if (approve) {
+        // Avatar usulan ikut ke komunitas yang dibuat. Pra-031
+        // proposalCoverOf mengembalikan null (kolom belum ada) sehingga
+        // komunitas dibuat dengan ubin inisial baku; pasca-031 nilai
+        // "preset:..." / URL foto pengusul tersimpan di cover_url.
+        const { data: comm, error: cErr } = await supabase
+          .from('communities')
+          .insert({
+            name: p.name,
+            description: p.description,
+            created_by: p.proposer_id,
+            is_approved: true,
+            cover_url: proposalCoverOf(p),
+          })
+          .select()
+          .single()
+        if (cErr) {
+          setNotice(friendlyDbError())
+          return
+        }
+        const { error: memErr } = await supabase.from('community_members').insert({
+          community_id: (comm as { id: string }).id,
+          user_id: p.proposer_id,
+          role: 'member',
+        })
+        await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
+        invalidateCatalogCache()
+        setNotice(
+          memErr
+            ? `Komunitas "${p.name}" dibuat, tetapi pengusul gagal langsung menjadi anggota. Coba tambahkan manual dari halaman detail komunitas.`
+            : `Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`,
+        )
+      } else {
+        setNotice('Usulan komunitas ditolak.')
+      }
+      await load()
+    } finally {
+      setDecidingId(null)
     }
-    await load()
   }
 
   async function handleDeleteCommunity(id: string, communityName: string) {
-    if (!window.confirm(`Hapus komunitas "${communityName}" beserta semua postingan dan keanggotaannya? Tindakan ini tidak bisa dibatalkan.`)) return
     const { error: delErr } = await supabase.from('communities').delete().eq('id', id)
+    setConfirmDeleteId(null)
     if (delErr) setNotice(friendlyDbError())
     else {
       await logAudit('community.deleted', 'communities', id, { name: communityName })
@@ -722,13 +749,15 @@ export default function CommunitiesPage() {
                     <button
                       type="button"
                       className="btn btn-primary btn-small"
+                      disabled={decidingId === p.id}
                       onClick={() => void decideProposal(p, true)}
                     >
-                      Setujui &amp; Buat
+                      {decidingId === p.id ? 'Memutuskan…' : 'Setujui & Buat'}
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost btn-small"
+                      disabled={decidingId === p.id}
                       onClick={() => void decideProposal(p, false)}
                     >
                       Tolak
@@ -816,13 +845,32 @@ export default function CommunitiesPage() {
                     </div>
                   </div>
                   <div className="form-actions">
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      onClick={() => void handleDeleteCommunity(c.id, c.name)}
-                    >
-                      Hapus Komunitas
-                    </button>
+                    {confirmDeleteId === c.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-small"
+                          onClick={() => void handleDeleteCommunity(c.id, c.name)}
+                        >
+                          Ya, hapus komunitas ini
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          Batal
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => setConfirmDeleteId(c.id)}
+                      >
+                        Hapus Komunitas
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}

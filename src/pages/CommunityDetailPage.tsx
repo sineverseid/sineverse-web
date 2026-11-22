@@ -18,7 +18,7 @@ import {
   uploadCommunityAvatar,
 } from '../lib/communityAvatar'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import { fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
 import type { Community, CommunityPost, CommunityPostReply } from '../lib/types'
 
 interface MemberRow {
@@ -444,6 +444,9 @@ export default function CommunityDetailPage() {
       return
     }
     setCommunity({ ...community, cover_url: next })
+    // Daftar komunitas di-cache 5 menit: tanpa ini, daftar tetap
+    // menampilkan avatar lama sampai cache kedaluwarsa.
+    invalidateCatalogCache()
     await logAudit('community.avatar_updated', 'communities', community.id, { cover_url: next })
     setNotice('Avatar komunitas disimpan.')
   }

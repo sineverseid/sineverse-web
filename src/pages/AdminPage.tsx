@@ -119,6 +119,10 @@ export default function AdminPage() {
   const [schools, setSchools] = useState<School[]>([])
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
   const [communities, setCommunities] = useState<{ id: string; name: string }[]>([])
+  // Hapus komunitas memakai konfirmasi dua langkah di dalam halaman
+  // (bukan window.confirm — dialog bawaan browser tidak muncul di
+  // semua lingkungan dan tidak enak di HP).
+  const [confirmDeleteCommunityId, setConfirmDeleteCommunityId] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProgressRow[]>([])
   const [mentorLoad, setMentorLoad] = useState<{ name: string; courses: number; pending: number }[]>([])
   const [names, setNames] = useState<Map<string, string>>(new Map())
@@ -206,6 +210,7 @@ export default function AdminPage() {
       setCommunities((commData ?? []) as { id: string; name: string }[])
       setAnnouncements((annData ?? []) as { id: string; title: string; scope: string }[])
       setMentors(profs.filter((p) => p.role === 'mentor').map((p) => ({ id: p.id, name: p.name })))
+      const liveCourseIds = new Set(courseList.map((c) => c.id))
       const rows: ProgressRow[] = profs
         .filter((p) => p.role === 'siswa')
         .map((p) => {
@@ -213,7 +218,12 @@ export default function AdminPage() {
           return {
             userId: p.id,
             name: p.name ?? 'Siswa',
-            courses: ((enrData ?? []) as { user_id: string }[]).filter((e) => e.user_id === p.id).length,
+            // Hanya hitung enrollment yang coursenya masih ada — baris
+            // enrollment yatim (course sudah tidak ada) tidak dihitung,
+            // supaya angkanya sama dengan yang tampil di Akademi.
+            courses: ((enrData ?? []) as { user_id: string; course_id: string }[]).filter(
+              (e) => e.user_id === p.id && liveCourseIds.has(e.course_id),
+            ).length,
             completed: myProg.filter((r) => r.status === 'completed').length,
             inProgress: myProg.filter((r) => r.status === 'in_progress').length,
           }
@@ -479,8 +489,8 @@ export default function AdminPage() {
   }
 
   async function handleDeleteCommunity(id: string, name: string) {
-    if (!window.confirm(`Hapus komunitas "${name}" beserta semua postingan dan keanggotaannya? Tindakan ini tidak bisa dibatalkan.`)) return
     const { error: delErr } = await supabase.from('communities').delete().eq('id', id)
+    setConfirmDeleteCommunityId(null)
     if (delErr) setNotice(delErr.message)
     else {
       await logAudit('community.deleted', 'communities', id, { name })
@@ -763,11 +773,16 @@ export default function AdminPage() {
       <section className="section" id="verifikasi-sekolah">
         <div className="dash-section-head"><h2>Verifikasi Sekolah</h2></div>
         {schools.length === 0 ? <p className="empty">Belum ada sekolah.</p> : (
-          <ul>
+          <ul className="list">
             {schools.map((s) => (
-              <li key={s.id}>
-                {s.name} — {s.is_verified ? 'Terverifikasi' : 'Belum terverifikasi'}{' '}
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleVerifySchool(s, !s.is_verified)}>
+              <li key={s.id} className="list-row">
+                <div className="list-row-main">
+                  <p className="list-row-title">{s.name}</p>
+                  <span className={s.is_verified ? 'pill-active' : 'pill-waiting'}>
+                    {s.is_verified ? 'Terverifikasi' : 'Belum terverifikasi'}
+                  </span>
+                </div>
+                <button type="button" className="btn btn-ghost btn-small list-row-action" onClick={() => void handleVerifySchool(s, !s.is_verified)}>
                   {s.is_verified ? 'Batalkan Verifikasi' : 'Verifikasi'}
                 </button>
               </li>
@@ -792,11 +807,20 @@ export default function AdminPage() {
           </ul>
         )}
         <h3>Semua Komunitas</h3>
-        <ul>
+        <ul className="list">
           {communities.map((c) => (
-            <li key={c.id}>
-              {c.name}{' '}
-              <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleDeleteCommunity(c.id, c.name)}>Hapus Komunitas</button>
+            <li key={c.id} className="list-row">
+              <div className="list-row-main">
+                <p className="list-row-title">{c.name}</p>
+              </div>
+              {confirmDeleteCommunityId === c.id ? (
+                <div className="form-actions list-row-action">
+                  <button type="button" className="btn btn-danger btn-small" onClick={() => void handleDeleteCommunity(c.id, c.name)}>Ya, hapus</button>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setConfirmDeleteCommunityId(null)}>Batal</button>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-ghost btn-small list-row-action" onClick={() => setConfirmDeleteCommunityId(c.id)}>Hapus Komunitas</button>
+              )}
             </li>
           ))}
         </ul>
