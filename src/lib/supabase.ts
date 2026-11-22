@@ -119,6 +119,7 @@ export async function updateProfile(
       | 'gender'
       | 'address'
       | 'school'
+      | 'school_id'
       | 'kelas'
       | 'interests'
       | 'photo_url'
@@ -808,18 +809,21 @@ export async function saveNotificationPrefs(
   if (error) throw error
 }
 
-/** Public-safe profile fields only — NEVER email (Crew Finder rule). */
+/** Public-safe profile fields only — NEVER email (Crew Finder rule).
+ * province/regency (kode referensi) ikut dimuat agar Crew Finder bisa
+ * difilter berdasarkan lokasi — kode wilayah sudah bersifat publik
+ * (kota/regency juga tampil sebagai teks di kartu kru). */
 export async function fetchCrewProfiles(): Promise<
-  Pick<Profile, 'id' | 'name' | 'photo_url' | 'city' | 'bio' | 'skills' | 'interests' | 'availability' | 'is_open_to_crew'>[]
+  Pick<Profile, 'id' | 'name' | 'photo_url' | 'city' | 'province' | 'regency' | 'bio' | 'skills' | 'interests' | 'availability' | 'is_open_to_crew'>[]
 > {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id,name,photo_url,city,bio,skills,interests,availability,is_open_to_crew')
+    .select('id,name,photo_url,city,province,regency,bio,skills,interests,availability,is_open_to_crew')
     .eq('is_open_to_crew', true)
   if (error) throw error
   return (data ?? []) as Pick<
     Profile,
-    'id' | 'name' | 'photo_url' | 'city' | 'bio' | 'skills' | 'interests' | 'availability' | 'is_open_to_crew'
+    'id' | 'name' | 'photo_url' | 'city' | 'province' | 'regency' | 'bio' | 'skills' | 'interests' | 'availability' | 'is_open_to_crew'
   >[]
 }
 
