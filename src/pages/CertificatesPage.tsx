@@ -1,13 +1,15 @@
-// SINEVERSE — Sertifikat: "Sertifikat Saya" (3 jenis dengan tampilan
-// berbeda: course SVS-CRS, ujian SVS-EXM, karya SVS-KRY) + verifikasi
-// sertifikat berdasarkan nomor serial. Verifikasi memakai tautan + nomor
-// serial, dan sejak 22 Nov 2026 juga kode QR (pustaka `qrcode`):
-// /sertifikat/verifikasi?serial=SVS-___-____-____
+// SINEVERSE — Sertifikat: "Sertifikat Saya" (4 jenis dengan tampilan
+// berbeda: course SVS-CRS, ujian SVS-EXM, karya SVS-KRY, apresiasi mentor
+// SVS-MNT) + verifikasi sertifikat berdasarkan nomor serial. Verifikasi
+// memakai tautan + nomor serial, dan sejak 22 Nov 2026 juga kode QR
+// (pustaka `qrcode`): /sertifikat/verifikasi?serial=SVS-___-____-____
+// Setiap sertifikat bisa diunduh sebagai PNG (lib/certificateDownload.ts).
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import QrCode from '../components/QrCode'
+import { downloadCertificatePng, renderCertificate } from '../lib/certificateDownload'
 import { fmtDate } from '../lib/guarded'
 import {
   appBaseUrl,
@@ -52,21 +54,57 @@ const TYPE_LABEL: Record<Certificate['type'], string> = {
   course: 'Sertifikat Course',
   exam: 'Sertifikat Ujian Kompetensi',
   work: 'Sertifikat Karya',
+  mentor: 'Sertifikat Apresiasi Mentor',
 }
 
 const TYPE_STYLE: Record<Certificate['type'], React.CSSProperties> = {
   course: { borderLeft: '4px solid var(--film-green)', background: '#fff' },
   exam: { borderLeft: '4px solid var(--navy)', background: '#fff' },
   work: { borderLeft: '4px solid #b8860b', background: '#fffdf5' },
+  mentor: { borderLeft: '4px solid #b8860b', background: '#fffdf5' },
+}
+
+/** Pratinjau sertifikat sesuai desain referensi (ATM): gambar yang sama
+ *  dengan PNG unduhan, diskalakan ke lebar kartu. */
+function CertificatePreview({
+  cert,
+  ownerName,
+  courseTitle,
+  mentorName,
+}: {
+  cert: Certificate
+  ownerName: string
+  courseTitle: string | null
+  mentorName: string | null
+}) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    void renderCertificate(canvas, { cert, ownerName, courseTitle, mentorName }).catch(() => {
+      // Pratinjau gagal digambar: kartu tetap menampilkan info teks.
+    })
+  }, [cert, ownerName, courseTitle, mentorName])
+  return (
+    <canvas
+      ref={ref}
+      width={877}
+      height={620}
+      style={{ width: '100%', height: 'auto', borderRadius: 8, border: '1px solid var(--light-grey)', display: 'block' }}
+      aria-label={`Pratinjau sertifikat ${cert.serial}`}
+    />
+  )
 }
 
 export function CertificatesPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [certs, setCerts] = useState<Certificate[]>([])
   const [coursesById, setCoursesById] = useState<Map<string, Course>>(new Map())
   const [mentorNames, setMentorNames] = useState<Map<string, string>>(new Map())
   const [copiedSerial, setCopiedSerial] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
+  const [downloadingSerial, setDownloadingSerial] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -113,6 +151,23 @@ export function CertificatesPage() {
     }
   }
 
+  // Nama pemilik untuk sertifikat yang diunduh: nama profil, atau awalan
+  // email bila nama belum diisi.
+  const ownerName =
+    profile?.name?.trim() || user?.email?.split('@')[0] || 'Siswa'
+
+  async function handleDownload(cert: Certificate, courseTitle: string | null, mentorName: string | null) {
+    setDownloadError(null)
+    setDownloadingSerial(cert.serial)
+    try {
+      await downloadCertificatePng({ cert, ownerName, courseTitle, mentorName })
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Gagal mengunduh sertifikat.')
+    } finally {
+      setDownloadingSerial(null)
+    }
+  }
+
   if (loading) return <div className="page"><p className="muted">Memuat sertifikat…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
@@ -123,8 +178,8 @@ export function CertificatesPage() {
         title="Sertifikat Saya"
         subtitle={
           <>
-            Tiga jenis sertifikat SINEVERSE: Course (SVS-CRS), Ujian Kompetensi (SVS-EXM), Karya
-            (SVS-KRY).{' '}
+            Empat jenis sertifikat SINEVERSE: Course (SVS-CRS), Ujian Kompetensi (SVS-EXM), Karya
+            (SVS-KRY), Apresiasi Mentor (SVS-MNT).{' '}
             <Link to="/sertifikat/verifikasi">Verifikasi sertifikat berdasarkan nomor serial →</Link>
           </>
         }
@@ -133,7 +188,8 @@ export function CertificatesPage() {
         <p className="empty">
           Belum ada sertifikat. Sertifikat course diterbitkan oleh mentor atau admin setelah nilai
           akhirmu lulus; sertifikat ujian diterbitkan otomatis saat kamu lulus ujian kompetensi;
-          sertifikat karya diterbitkan untuk pemenang kompetisi.
+          sertifikat karya diterbitkan untuk pemenang kompetisi; sertifikat apresiasi mentor
+          diterbitkan oleh admin untuk mentor course.
         </p>
       ) : (
         <ul className="discussion-list">
@@ -142,22 +198,38 @@ export function CertificatesPage() {
             const mentorName = course?.mentor_id ? mentorNames.get(course.mentor_id) : null
             return (
               <li key={c.id} className="discussion-item" style={TYPE_STYLE[c.type]}>
+                <CertificatePreview cert={c} ownerName={ownerName} courseTitle={course?.title ?? null} mentorName={mentorName ?? null} />
                 <p className="discussion-meta">{TYPE_LABEL[c.type]} · Diterbitkan {fmtDate(c.issued_at)}</p>
                 <h3>{c.serial}</h3>
                 {course && <p><strong>{course.title}</strong></p>}
                 {mentorName && <p className="muted">Mentor: {mentorName}</p>}
-                <p className="muted">Nilai: {c.score ?? '—'}</p>
+                {c.type === 'mentor' ? (
+                  c.note ? <p><em>{c.note}</em></p> : null
+                ) : (
+                  <p className="muted">Nilai: {c.score ?? '—'}</p>
+                )}
                 <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleCopy(c.serial)}>
                   {copiedSerial === c.serial ? 'Disalin' : 'Salin tautan verifikasi'}
                 </button>
                 <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
                 <QrCode value={verificationLink(c.serial)} />
+                <p style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    onClick={() => void handleDownload(c, course?.title ?? null, mentorName ?? null)}
+                    disabled={downloadingSerial === c.serial}
+                  >
+                    {downloadingSerial === c.serial ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
+                  </button>
+                </p>
               </li>
             )
           })}
         </ul>
       )}
       {copyError && <p className="error-box">{copyError}</p>}
+      {downloadError && <p className="error-box">{downloadError}</p>}
     </div>
   )
 }
@@ -170,6 +242,8 @@ export function VerifyCertificatePage() {
   const [mentorName, setMentorName] = useState<string | null>(null)
   const [copiedLink, setCopiedLink] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const autoVerifiedRef = useRef<string | null>(null)
@@ -237,6 +311,24 @@ export function VerifyCertificatePage() {
     }
   }
 
+  async function handleDownloadVerified() {
+    if (!result?.cert) return
+    setDownloadError(null)
+    setDownloading(true)
+    try {
+      await downloadCertificatePng({
+        cert: result.cert,
+        ownerName: result.ownerName ?? 'Penerima',
+        courseTitle,
+        mentorName,
+      })
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Gagal mengunduh sertifikat.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="page page-narrow">
       <h1>Verifikasi Sertifikat</h1>
@@ -257,13 +349,18 @@ export function VerifyCertificatePage() {
       {result?.found && result.cert && (
         <div className="discussion-item" style={TYPE_STYLE[result.cert.type]}>
           <p className="notice-box">Sertifikat ini ASLI dan terdaftar di SINEVERSE.</p>
+          <CertificatePreview cert={result.cert} ownerName={result.ownerName ?? 'Penerima'} courseTitle={courseTitle} mentorName={mentorName} />
           <p><strong>{TYPE_LABEL[result.cert.type]}</strong></p>
           {courseTitle && <p>Course/Program: {courseTitle}</p>}
           {mentorName && <p>Mentor: {mentorName}</p>}
           <p>Penyelenggara: SINEVERSE</p>
           <p>Serial: {result.cert.serial}</p>
           <p>Penerima: {result.ownerName ?? '—'}</p>
-          <p>Nilai: {result.cert.score ?? '—'}</p>
+          {result.cert.type === 'mentor' ? (
+            result.cert.note ? <p><em>{result.cert.note}</em></p> : null
+          ) : (
+            <p>Nilai: {result.cert.score ?? '—'}</p>
+          )}
           <p>Diterbitkan: {fmtDate(result.cert.issued_at)}</p>
           <p>
             Tautan verifikasi:{' '}
@@ -274,7 +371,13 @@ export function VerifyCertificatePage() {
           </button>
           <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
           <QrCode value={verificationLink(result.cert.serial)} />
+          <p style={{ marginTop: '0.5rem' }}>
+            <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleDownloadVerified()} disabled={downloading}>
+              {downloading ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
+            </button>
+          </p>
           {copyError && <p className="error-box">{copyError}</p>}
+          {downloadError && <p className="error-box">{downloadError}</p>}
         </div>
       )}
       <p><Link to="/sertifikat">Kembali ke Sertifikat Saya</Link></p>

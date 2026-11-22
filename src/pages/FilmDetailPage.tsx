@@ -167,16 +167,15 @@ export default function FilmDetailPage() {
   }
 
   // Kirim ulang film yang ditolak: status kembali 'draft', penilaian lama
-  // dihapus, dan film masuk lagi ke antrean "Perlu Dinilai" admin. Film
-  // privat ikut dijadikan publik supaya benar-benar masuk antrean.
+  // dihapus, dan film masuk lagi ke antrean "Perlu Dinilai" admin.
+  // Visibilitas TIDAK diubah: film privat tetap privat (antren admin
+  // menampilkan semua draft, publik maupun privat).
   async function handleResubmit() {
     if (!user) return
-    const makePublic = currentFilm.visibility === 'private'
     const { error: updErr } = await supabase
       .from('films')
       .update({
         status: 'draft',
-        visibility: makePublic ? 'public' : currentFilm.visibility,
         reviewed_by: null,
         review_note: null,
         reviewed_at: null,
@@ -188,11 +187,9 @@ export default function FilmDetailPage() {
     }
     await logAudit('film.resubmitted', 'films', currentFilm.id, { title: currentFilm.title })
     setNotice(
-      makePublic
-        ? 'Film dijadikan publik dan dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.'
-        : 'Film dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.',
+      'Film dikirim ulang untuk dinilai admin. Status kembali menjadi draft dan menunggu penilaian.',
     )
-    setFilm({ ...currentFilm, status: 'draft', visibility: makePublic ? 'public' : currentFilm.visibility, reviewed_by: null, review_note: null, reviewed_at: null })
+    setFilm({ ...currentFilm, status: 'draft', reviewed_by: null, review_note: null, reviewed_at: null })
   }
 
   async function handleVisibility() {

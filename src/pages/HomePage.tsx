@@ -723,7 +723,7 @@ function SiswaHome(props: SiswaHomeProps) {
         <p className="hero-sub">{heroSub}</p>
         <div className="hero-actions">
           <Link to="/akademi" className="btn btn-primary">
-            Jelajahi Academy
+            Jelajahi Akademi
           </Link>
           <Link to="/proyek" className="btn btn-outline-light">
             Cari Proyek &amp; Kru

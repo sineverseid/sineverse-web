@@ -159,25 +159,23 @@ export default function ShowcasePage() {
       setPosterError('Poster belum terunggah: bucket film-posters belum tersedia. Coba lagi nanti atau hubungi admin.')
       return
     }
-    // Film privat tidak masuk antrean penilaian admin, jadi saat dikirim
-    // film langsung dijadikan publik bersama status draft.
-    const makePublic = visibility === 'private'
+    // Visibilitas yang dipilih anggota dihormati: film privat tetap privat
+    // saat dikirim — antrean "Perlu Dinilai" admin menampilkan semua draft,
+    // publik maupun privat, jadi film privat tetap sampai ke penilai.
     const { error: insErr } = await supabase.from('films').insert({
       title: title.trim(),
       description: desc.trim() || null,
       owner_id: user.id,
       film_url: filmUrl.trim() || null,
       poster_url: posterUrl,
-      visibility: makePublic ? 'public' : visibility,
+      visibility,
       show_school: showSchool,
       status: 'draft',
     })
     if (insErr) setNotice(friendlyDbError(insErr))
     else {
       setNotice(
-        makePublic
-          ? 'Film dijadikan publik dan dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.'
-          : 'Film dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.',
+        'Film dikirim untuk dinilai admin. Setelah disetujui, film akan tampil di Showcase.',
       )
       setTitle('')
       setDesc('')
@@ -485,7 +483,7 @@ export default function ShowcasePage() {
               Tampilkan nama sekolah pada film ini
             </label>
             <button type="submit" className="btn btn-primary">
-              {visibility === 'private' ? 'Jadikan Publik & Kirim untuk Dinilai' : 'Kirim untuk Dinilai'}
+              Kirim untuk Dinilai
             </button>
           </form>
           {myFilms.length > 0 && (
@@ -495,11 +493,8 @@ export default function ShowcasePage() {
                 {myFilms.map((f) => (
                   <li key={f.id}>
                     <Link to={`/showcase/${f.id}`}>{f.title}</Link> · {filmStatusLabel(f.status)} · {visibilityLabel(f.visibility)}
-                    {f.status === 'draft' && f.visibility === 'public'
+                    {f.status === 'draft'
                       ? ' · Menunggu penilaian admin'
-                      : ''}
-                    {f.status === 'draft' && f.visibility === 'private'
-                      ? ' · Draft privat, tidak masuk antrean penilaian admin sampai dijadikan publik.'
                       : ''}
                     {f.status === 'rejected' ? (
                       <p className="error-box" style={{ marginTop: '0.5rem' }}>

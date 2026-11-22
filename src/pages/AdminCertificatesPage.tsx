@@ -1,12 +1,14 @@
-// SINEVERSE — Admin Academy: Kelola Sertifikat (READ-ONLY).
-// Penerbitan sertifikat adalah Tahap 5, jadi halaman ini tidak punya
-// tombol terbitkan. Dua bagian: (a) tabel semua sertifikat yang sudah
-// terbit; (b) kelayakan sertifikat course per course: untuk tiap siswa
-// terdaftar yang BELUM punya sertifikat type 'course' di course itu,
-// nilai 5 komponen dihitung dari data mentah (pretest, posttest, tugas
-// mingguan, tugas praktik akhir, diskusi) dengan bobot + ambang lulus
-// dari baris RPS SVS-SEM1. "Layak" hanya bila passed true, selebihnya
-// "Belum layak" beserta komponen yang masih kosong.
+// SINEVERSE — Admin Academy: Kelola Sertifikat.
+// Dua bagian: (a) tabel semua sertifikat yang sudah terbit; (b) kelayakan
+// sertifikat course per course: untuk tiap siswa terdaftar yang BELUM punya
+// sertifikat type 'course' di course itu, nilai 5 komponen dihitung dari
+// data mentah (pretest, posttest, tugas mingguan, tugas praktik akhir,
+// diskusi) dengan bobot + ambang lulus dari baris RPS SVS-SEM1. "Layak"
+// hanya bila passed true, selebihnya "Belum layak" beserta komponen yang
+// masih kosong.
+// Ditambah 22 Nov 2026: penerbitan Sertifikat Apresiasi Mentor (SVS-MNT)
+// dilakukan DI halaman ini oleh admin (migrasi 023). Sertifikat course
+// tetap diterbitkan di Tahap 5 (IssueCourseCertificatePage).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -17,6 +19,7 @@ import {
   discussionParticipationScore,
 } from '../lib/grading'
 import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
+import { issueMentorCertificate } from '../lib/certificates'
 import type {
   Assignment,
   Certificate,
@@ -53,6 +56,7 @@ interface Weights {
 function typeLabel(type: Certificate['type']): string {
   if (type === 'exam') return 'Ujian'
   if (type === 'work') return 'Karya'
+  if (type === 'mentor') return 'Mentor'
   return 'Course'
 }
 
@@ -114,6 +118,13 @@ export default function AdminCertificatesPage() {
   const [loading, setLoading] = useState(true)
   const [loadingEligibility, setLoadingEligibility] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Sertifikat apresiasi mentor (migrasi 023).
+  const [mentorCourseId, setMentorCourseId] = useState('')
+  const [mentorName, setMentorName] = useState<string | null>(null)
+  const [mentorNote, setMentorNote] = useState('')
+  const [issuingMentor, setIssuingMentor] = useState(false)
+  const [mentorResult, setMentorResult] = useState<{ serial: string; alreadyIssued: boolean } | null>(null)
+  const [mentorError, setMentorError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -137,7 +148,10 @@ export default function AdminCertificatesPage() {
         setCourses(courseList)
         setCertificates(certRows)
         setNames(namesMap)
-        if (courseList.length > 0) setSelectedCourseId(courseList[0].id)
+        if (courseList.length > 0) {
+          setSelectedCourseId(courseList[0].id)
+          setMentorCourseId(courseList[0].id)
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat sertifikat.')
       } finally {
@@ -149,6 +163,66 @@ export default function AdminCertificatesPage() {
       cancelled = true
     }
   }, [])
+
+  // Nama mentor dari course yang dipilih di bagian apresiasi mentor.
+  useEffect(() => {
+    if (!mentorCourseId) {
+      setMentorName(null)
+      return
+    }
+    const course = courses.find((c) => c.id === mentorCourseId)
+    const mentorId = course?.mentor_id ?? null
+    if (!mentorId) {
+      setMentorName(null)
+      return
+    }
+    let cancelled = false
+    fetchProfileNames([mentorId])
+      .then((m) => {
+        if (!cancelled) setMentorName(m.get(mentorId) ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setMentorName(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mentorCourseId, courses])
+
+  async function refreshCertificates() {
+    const { data: certData } = await supabase
+      .from('certificates')
+      .select('*')
+      .order('issued_at', { ascending: false })
+    const certRows = (certData ?? []) as Certificate[]
+    setCertificates(certRows)
+    const userIds = [...new Set(certRows.map((c) => c.user_id))]
+    if (userIds.length > 0) {
+      const m = await fetchProfileNames(userIds)
+      setNames((prev) => new Map([...prev, ...m]))
+    }
+  }
+
+  async function handleIssueMentor() {
+    const course = courses.find((c) => c.id === mentorCourseId)
+    const mentorId = course?.mentor_id ?? null
+    if (!mentorId) {
+      setMentorError('Course ini belum punya mentor.')
+      return
+    }
+    setMentorError(null)
+    setMentorResult(null)
+    setIssuingMentor(true)
+    try {
+      const result = await issueMentorCertificate(mentorId, mentorCourseId, mentorNote.trim() || null)
+      setMentorResult(result)
+      await refreshCertificates()
+    } catch (err) {
+      setMentorError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat mentor.')
+    } finally {
+      setIssuingMentor(false)
+    }
+  }
 
   useEffect(() => {
     if (!selectedCourseId) return
@@ -304,7 +378,7 @@ export default function AdminCertificatesPage() {
       <PageHeader
         icon="certificate"
         title="Kelola Sertifikat"
-        subtitle="Daftar sertifikat yang sudah terbit dan kelayakan sertifikat course. Halaman ini hanya baca: penerbitan sertifikat dikerjakan di Tahap 5."
+        subtitle="Daftar sertifikat yang sudah terbit, kelayakan sertifikat course, dan penerbitan sertifikat apresiasi mentor. Sertifikat course diterbitkan di Tahap 5."
       />
       <section className="section">
         <h2>Sertifikat Terbit ({certificates.length})</h2>
@@ -331,6 +405,59 @@ export default function AdminCertificatesPage() {
             </table>
           </div>
         )}
+      </section>
+
+      <section className="section">
+        <h2>Sertifikat Apresiasi Mentor</h2>
+        <p className="muted">
+          Terbitkan sertifikat apresiasi (SVS-MNT) untuk mentor yang mengampu sebuah course.
+          Satu mentor hanya punya satu sertifikat apresiasi per course; bila sudah pernah
+          diterbitkan, nomor serial yang sudah ada akan ditampilkan.
+        </p>
+        <label>
+          Course
+          <select
+            value={mentorCourseId}
+            onChange={(e) => {
+              setMentorCourseId(e.target.value)
+              setMentorResult(null)
+              setMentorError(null)
+            }}
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+          >
+            {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+        </label>
+        <p className="muted">
+          Mentor course ini: {mentorName ? <strong>{mentorName}</strong> : 'belum ada mentor'}
+        </p>
+        <label>
+          Alasan apresiasi
+          <textarea
+            value={mentorNote}
+            onChange={(e) => setMentorNote(e.target.value)}
+            rows={3}
+            placeholder="Mis. membimbing 10 siswa sampai lulus"
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)', width: '100%', boxSizing: 'border-box' }}
+          />
+        </label>
+        <p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void handleIssueMentor()}
+            disabled={issuingMentor || !mentorCourseId || !mentorName}
+          >
+            {issuingMentor ? 'Menerbitkan…' : 'Terbitkan Sertifikat Mentor'}
+          </button>
+        </p>
+        {mentorResult && (
+          <p className="notice-box">
+            Sertifikat mentor terbit: {mentorResult.serial}
+            {mentorResult.alreadyIssued ? ' (sudah pernah diterbitkan sebelumnya untuk course ini).' : '.'}
+          </p>
+        )}
+        {mentorError && <p className="error-box">{mentorError}</p>}
       </section>
 
       <section className="section">
