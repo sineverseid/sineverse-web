@@ -184,28 +184,54 @@ export default function RegisterPage() {
     return () => window.clearTimeout(t)
   }, [username])
 
-  // Cari sekolah terverifikasi (debounce; nama atau NPSN).
+  // Nama kabupaten/kota yang dipilih (schools.regency menyimpan nama
+  // referensi, bukan kode) — untuk membatasi daftar sekolah ke daerah
+  // siswa di formulir pendaftaran.
+  const regencyName = regencies.find((r) => r.code === regency)?.name ?? ''
+
+  // Cari sekolah terverifikasi di kabupaten/kota yang dipilih (debounce;
+  // nama atau NPSN). Begitu kabupaten/kota dipilih, daftar sekolah di
+  // daerah itu langsung dimuat tanpa perlu mengetik.
   useEffect(() => {
     if (manualSchool || selectedSchool) {
       setSchoolResults([])
       return
     }
-    const q = schoolQuery.trim()
-    if (q.length < 2) {
+    // Belum pilih kabupaten/kota: tidak ada daftar yang dimuat.
+    if (!regencyName) {
       setSchoolResults([])
       return
+    }
+    const q = schoolQuery.trim()
+    if (q.length < 2) {
+      // Query pendek: tampilkan 20 sekolah pertama di daerah ini.
+      let cancelled = false
+      setSchoolSearching(true)
+      searchSchools('', regencyName)
+        .then((rows) => {
+          if (!cancelled) setSchoolResults(rows)
+        })
+        .catch(() => {
+          if (!cancelled) setSchoolResults([])
+        })
+        .finally(() => {
+          if (!cancelled) setSchoolSearching(false)
+        })
+      return () => {
+        cancelled = true
+      }
     }
     setSchoolSearching(true)
     const t = window.setTimeout(async () => {
       try {
-        setSchoolResults(await searchSchools(q))
+        setSchoolResults(await searchSchools(q, regencyName))
       } catch {
         setSchoolResults([])
       }
       setSchoolSearching(false)
     }, 400)
     return () => window.clearTimeout(t)
-  }, [schoolQuery, manualSchool, selectedSchool])
+  }, [schoolQuery, manualSchool, selectedSchool, regencyName])
 
   // Selesaikan pendaftaran tertunda bila pengguna masuk lewat jalur yang
   // tidak melewati handleVerifyCode (mis. konfirmasi email ternyata
@@ -732,7 +758,7 @@ export default function RegisterPage() {
           </label>
           <label>
             Provinsi
-            <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency('') }} required>
+            <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency(''); setSelectedSchool(null); setSchoolQuery(''); setSchoolResults([]) }} required>
               <option value="" disabled>
                 Pilih provinsi
               </option>
@@ -747,7 +773,7 @@ export default function RegisterPage() {
             Kabupaten / Kota
             <select
               value={regency}
-              onChange={(e) => setRegency(e.target.value)}
+              onChange={(e) => { setRegency(e.target.value); setSelectedSchool(null); setSchoolQuery(''); setSchoolResults([]) }}
               required
               disabled={!province}
             >
@@ -818,15 +844,22 @@ export default function RegisterPage() {
                       value={schoolQuery}
                       onChange={(e) => handleSchoolQueryChange(e.target.value)}
                       maxLength={120}
-                      placeholder="Ketik nama sekolah atau NPSN…"
+                      placeholder={
+                        regencyName
+                          ? 'Ketik nama sekolah atau NPSN…'
+                          : 'Pilih provinsi dan kabupaten/kota dulu'
+                      }
                       autoComplete="off"
+                      disabled={!regencyName}
                     />
                     <span className="muted" style={{ fontWeight: 400 }}>
                       {schoolSearching
                         ? 'Mencari…'
                         : selectedSchool
                           ? `Terpilih: ${selectedSchool.name}`
-                          : 'Ketik minimal 2 huruf untuk mencari sekolah terverifikasi.'}
+                          : regencyName
+                            ? `Sekolah di ${regencyName} — ketik untuk mencari.`
+                            : 'Pilih provinsi dan kabupaten/kota dulu — sekolah di daerahmu akan muncul di sini.'}
                     </span>
                   </label>
                   {schoolResults.length > 0 && (
@@ -840,6 +873,9 @@ export default function RegisterPage() {
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {!selectedSchool && regencyName && !schoolSearching && schoolQuery.trim().length >= 2 && schoolResults.length === 0 && (
+                    <p className="muted">Tidak ditemukan di {regencyName}.</p>
                   )}
                   <button
                     type="button"

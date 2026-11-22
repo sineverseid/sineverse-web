@@ -8,11 +8,14 @@ import type { FormEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { decideMentorApplication, decideSchoolSubmission, fetchCourses, fetchMentorApplications, fetchProfileNames, fetchRefNameMap, fetchSchoolSubmissions, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
-import type { CommunityProposal, Course, CourseClaim, MentorApplication, School, SchoolSubmission } from '../lib/types'
+import { decideMentorApplication, decideSchoolSubmission, fetchCourses, fetchMentorApplications, fetchProfileNames, fetchProvinces, fetchRefNameMap, fetchRegencies, fetchSchoolSubmissions, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
+import type { CommunityProposal, Course, CourseClaim, MentorApplication, RefProvince, RefRegency, School, SchoolSubmission } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { ADMIN_NAV } from '../lib/workspaceNav'
+
+// Direktori sekolah (Verifikasi Sekolah): 20 baris per halaman.
+const SCHOOL_PAGE_SIZE = 20
 
 interface ProgressRow {
   userId: string
@@ -116,7 +119,24 @@ export default function AdminPage() {
   const [rejectingSubId, setRejectingSubId] = useState<string | null>(null)
   const [subNote, setSubNote] = useState('')
   const [courses, setCourses] = useState<Course[]>([])
-  const [schools, setSchools] = useState<School[]>([])
+  // Direktori sekolah (Verifikasi Sekolah): TIDAK lagi memuat 1.000 baris
+  // sekaligus seperti sebelumnya — daftar difilter di server (provinsi /
+  // kab-kota / status / pencarian nama atau NPSN) dan dipaginasi 20 per
+  // halaman. schools.province / schools.regency menyimpan NAMA referensi
+  // (bukan kode), jadi filter memakai nama; select menyimpan kode hanya
+  // untuk menjalankan cascade kab/kota.
+  const [provinces, setProvinces] = useState<RefProvince[]>([])
+  const [regencies, setRegencies] = useState<RefRegency[]>([])
+  const [schoolSearch, setSchoolSearch] = useState('')
+  const [schoolSearchDebounced, setSchoolSearchDebounced] = useState('')
+  const [schoolProvince, setSchoolProvince] = useState('') // kode provinsi
+  const [schoolRegency, setSchoolRegency] = useState('') // kode kab/kota
+  const [schoolStatus, setSchoolStatus] = useState<'all' | 'verified' | 'unverified'>('all')
+  const [schoolPage, setSchoolPage] = useState(0)
+  const [schoolRows, setSchoolRows] = useState<School[]>([])
+  const [schoolTotal, setSchoolTotal] = useState(0)
+  const [schoolLoading, setSchoolLoading] = useState(true)
+  const [schoolError, setSchoolError] = useState<string | null>(null)
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
   const [communities, setCommunities] = useState<{ id: string; name: string }[]>([])
   // Hapus komunitas memakai konfirmasi dua langkah di dalam halaman
@@ -155,7 +175,6 @@ export default function AdminPage() {
         courseList,
         appData,
         { data: claimData },
-        { data: schoolData },
         { data: propData },
         { data: commData },
         { data: repData },
@@ -169,7 +188,6 @@ export default function AdminPage() {
         fetchCourses(),
         fetchMentorApplications(),
         supabase.from('course_claims').select('*').order('created_at', { ascending: false }),
-        supabase.from('schools').select('*').order('name'),
         supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at'),
         supabase.from('communities').select('id,name').order('name'),
         supabase.from('discussion_reports').select('id').eq('status', 'open'),
@@ -205,7 +223,6 @@ export default function AdminPage() {
       setSchoolSubs(subData)
       setClaims((claimData ?? []) as CourseClaim[])
       setCourses(courseList)
-      setSchools((schoolData ?? []) as School[])
       setProposals((propData ?? []) as CommunityProposal[])
       setCommunities((commData ?? []) as { id: string; name: string }[])
       setAnnouncements((annData ?? []) as { id: string; title: string; scope: string }[])
@@ -249,6 +266,67 @@ export default function AdminPage() {
     const el = document.querySelector(location.hash)
     if (el) el.scrollIntoView()
   }, [loading, location.hash])
+
+  // Daftar provinsi untuk filter direktori sekolah (di-cache).
+  useEffect(() => {
+    let cancelled = false
+    void fetchProvinces().then((rows) => { if (!cancelled) setProvinces(rows) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Daftar kab/kota mengikuti provinsi yang dipilih di filter.
+  useEffect(() => {
+    if (!schoolProvince) {
+      setRegencies([])
+      return
+    }
+    let cancelled = false
+    void fetchRegencies(schoolProvince).then((rows) => { if (!cancelled) setRegencies(rows) })
+    return () => { cancelled = true }
+  }, [schoolProvince])
+
+  // Pencarian sekolah (nama/NPSN) didebounce 300 ms supaya tiap ketikan
+  // tidak langsung menembak database.
+  useEffect(() => {
+    const t = setTimeout(() => setSchoolSearchDebounced(schoolSearch), 300)
+    return () => clearTimeout(t)
+  }, [schoolSearch])
+
+  // Direktori sekolah: difilter di server + dipaginasi. Berjalan tiap
+  // filter/halaman berubah; provinsi dan kab/kota difilter berdasarkan
+  // NAMA referensi yang tersimpan di schools.province / schools.regency.
+  useEffect(() => {
+    let cancelled = false
+    setSchoolLoading(true)
+    setSchoolError(null)
+    const provinceName = provinces.find((p) => p.code === schoolProvince)?.name
+    const regencyName = regencies.find((r) => r.code === schoolRegency)?.name
+    let query = supabase.from('schools').select('*', { count: 'exact' })
+    if (provinceName) query = query.eq('province', provinceName)
+    if (regencyName) query = query.eq('regency', regencyName)
+    if (schoolStatus !== 'all') query = query.eq('is_verified', schoolStatus === 'verified')
+    const q = schoolSearchDebounced.trim()
+    if (q.length > 0) {
+      const safe = q.replace(/[%(),]/g, '')
+      const npsnQ = q.replace(/\D/g, '')
+      const orParts = [`name.ilike.%${safe}%`]
+      if (npsnQ) orParts.push(`npsn.eq.${npsnQ}`)
+      query = query.or(orParts.join(','))
+    }
+    void query
+      .order('name')
+      .range(schoolPage * SCHOOL_PAGE_SIZE, schoolPage * SCHOOL_PAGE_SIZE + SCHOOL_PAGE_SIZE - 1)
+      .then(({ data, count, error: qErr }) => {
+        if (cancelled) return
+        if (qErr) setSchoolError(qErr.message)
+        else {
+          setSchoolRows((data ?? []) as School[])
+          setSchoolTotal(count ?? 0)
+        }
+        setSchoolLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [provinces, regencies, schoolProvince, schoolRegency, schoolStatus, schoolSearchDebounced, schoolPage])
 
   if (profile?.role !== 'admin') {
     return (
@@ -450,8 +528,17 @@ export default function AdminPage() {
     if (updErr) setNotice(updErr.message)
     else {
       await logAudit(verify ? 'school.verified' : 'school.unverified', 'schools', school.id, {})
+      // Perbarui baris di tempat — tanpa memuat ulang seluruh Admin
+      // Panel. Bila status baru tidak lagi cocok dengan filter status
+      // yang aktif, baris keluar dari daftar (total ikut berkurang).
+      const stillMatches = schoolStatus === 'all' || (schoolStatus === 'verified') === verify
+      if (stillMatches) {
+        setSchoolRows((rows) => rows.map((r) => (r.id === school.id ? { ...r, is_verified: verify } : r)))
+      } else {
+        setSchoolRows((rows) => rows.filter((r) => r.id !== school.id))
+        setSchoolTotal((t) => Math.max(0, t - 1))
+      }
       setNotice(`Sekolah ${school.name} ${verify ? 'diverifikasi' : 'batal diverifikasi'}.`)
-      await load()
     }
   }
 
@@ -772,23 +859,82 @@ export default function AdminPage() {
 
       <section className="section" id="verifikasi-sekolah">
         <div className="dash-section-head"><h2>Verifikasi Sekolah</h2></div>
-        {schools.length === 0 ? <p className="empty">Belum ada sekolah.</p> : (
+        <div className="filter-bar">
+          <input
+            className="search-input"
+            value={schoolSearch}
+            onChange={(e) => { setSchoolSearch(e.target.value); setSchoolPage(0) }}
+            placeholder="Cari nama sekolah atau NPSN…"
+            aria-label="Cari sekolah berdasarkan nama atau NPSN"
+          />
+          <select
+            value={schoolProvince}
+            onChange={(e) => { setSchoolProvince(e.target.value); setSchoolRegency(''); setSchoolPage(0) }}
+            aria-label="Filter provinsi"
+          >
+            <option value="">Semua Provinsi</option>
+            {provinces.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+          </select>
+          <select
+            value={schoolRegency}
+            onChange={(e) => { setSchoolRegency(e.target.value); setSchoolPage(0) }}
+            disabled={!schoolProvince}
+            aria-label="Filter kabupaten atau kota"
+          >
+            <option value="">Semua Kab/Kota</option>
+            {regencies.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
+          </select>
+          <select
+            value={schoolStatus}
+            onChange={(e) => { setSchoolStatus(e.target.value as 'all' | 'verified' | 'unverified'); setSchoolPage(0) }}
+            aria-label="Filter status verifikasi"
+          >
+            <option value="all">Semua Status</option>
+            <option value="verified">Terverifikasi</option>
+            <option value="unverified">Belum terverifikasi</option>
+          </select>
+        </div>
+        <p className="muted">
+          {schoolLoading
+            ? 'Memuat sekolah…'
+            : schoolTotal === 0
+              ? 'Tidak ada sekolah yang cocok dengan filter.'
+              : `Menampilkan ${schoolPage * SCHOOL_PAGE_SIZE + 1}–${Math.min(schoolTotal, (schoolPage + 1) * SCHOOL_PAGE_SIZE)} dari ${schoolTotal.toLocaleString('id-ID')} sekolah`}
+        </p>
+        {schoolError ? (
+          <p className="error-box">{schoolError}</p>
+        ) : schoolRows.length === 0 && !schoolLoading ? (
+          <p className="empty">Tidak ada sekolah yang cocok dengan filter.</p>
+        ) : (
           <ul className="list">
-            {schools.map((s) => (
-              <li key={s.id} className="list-row">
-                <div className="list-row-main">
-                  <p className="list-row-title">{s.name}</p>
-                  <span className={s.is_verified ? 'pill-active' : 'pill-waiting'}>
-                    {s.is_verified ? 'Terverifikasi' : 'Belum terverifikasi'}
-                  </span>
-                </div>
-                <button type="button" className="btn btn-ghost btn-small list-row-action" onClick={() => void handleVerifySchool(s, !s.is_verified)}>
-                  {s.is_verified ? 'Batalkan Verifikasi' : 'Verifikasi'}
-                </button>
-              </li>
-            ))}
+            {schoolRows.map((s) => {
+              const wilayah = [s.city && s.city !== s.regency ? s.city : null, s.regency, s.province].filter(Boolean).join(', ')
+              return (
+                <li key={s.id} className="list-row">
+                  <div className="list-row-main">
+                    <p className="list-row-title">{s.name}</p>
+                    <p className="list-row-meta">
+                      NPSN {s.npsn ?? '—'}
+                      <span className={s.is_verified ? 'pill-active' : 'pill-waiting'}>
+                        {s.is_verified ? 'Terverifikasi' : 'Belum terverifikasi'}
+                      </span>
+                    </p>
+                    <p className="list-row-meta">{s.address?.trim() ? s.address : 'Alamat belum tersedia'}</p>
+                    {wilayah && <p className="list-row-meta">{wilayah}</p>}
+                  </div>
+                  <button type="button" className="btn btn-ghost btn-small list-row-action" onClick={() => void handleVerifySchool(s, !s.is_verified)}>
+                    {s.is_verified ? 'Batalkan Verifikasi' : 'Verifikasi'}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
+        <div className="form-actions">
+          <button type="button" className="btn btn-ghost btn-small" disabled={schoolPage === 0 || schoolLoading} onClick={() => setSchoolPage((p) => Math.max(0, p - 1))}>← Sebelumnya</button>
+          <span className="muted">Halaman {schoolPage + 1} dari {Math.max(1, Math.ceil(schoolTotal / SCHOOL_PAGE_SIZE))}</span>
+          <button type="button" className="btn btn-ghost btn-small" disabled={(schoolPage + 1) * SCHOOL_PAGE_SIZE >= schoolTotal || schoolLoading} onClick={() => setSchoolPage((p) => p + 1)}>Berikutnya →</button>
+        </div>
       </section>
 
       <section className="section">

@@ -5,6 +5,7 @@
 // gabung/keluar, aktivitas klub.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
@@ -33,8 +34,55 @@ export default function SchoolsPage() {
   const [actClub, setActClub] = useState('')
   const [actDate, setActDate] = useState('')
 
+  // Siswa hanya melihat sekolahnya sendiri (+ klub film di sekolah itu).
+  // Mentor/admin tetap melihat direktori lengkap seperti sebelumnya.
+  const isSiswa = profile?.role === 'siswa'
+  const ownSchool: School | null = isSiswa && schools ? schools[0] ?? null : null
+
   async function load() {
     try {
+      if (isSiswa) {
+        // Cabang siswa: satu sekolah (dari profile.school_id) + klub
+        // film di sekolah itu saja — bukan 1.000 baris direktori.
+        let own: School | null = null
+        if (profile?.school_id) {
+          const { data: sData, error: sErr } = await supabase.from('schools').select('*').eq('id', profile.school_id).maybeSingle()
+          if (sErr) {
+            if (isMissingTableError(sErr)) {
+              setSchools(null)
+              setClubs(null)
+              return
+            }
+            throw sErr
+          }
+          own = (sData ?? null) as School | null
+        }
+        setSchools(own ? [own] : [])
+        const { data: cData, error: cErr } = own
+          ? await supabase.from('film_clubs').select('*').eq('school_id', own.id).order('name')
+          : await supabase.from('film_clubs').select('*').is('school_id', null).order('name')
+        if (cErr) throw cErr
+        const shownClubs = (cData ?? []) as FilmClub[]
+        setClubs(shownClubs)
+        const clubIds = shownClubs.map((c) => c.id)
+        const [aRes, memRes, cmRes] = await Promise.all([
+          clubIds.length > 0
+            ? supabase.from('club_activities').select('*').in('club_id', clubIds).order('starts_at', { ascending: true })
+            : Promise.resolve({ data: [] as ClubActivity[] }),
+          user
+            ? supabase.from('school_members').select('school_id').eq('user_id', user.id)
+            : Promise.resolve({ data: null as { school_id: string }[] | null }),
+          user
+            ? supabase.from('club_members').select('club_id').eq('user_id', user.id)
+            : Promise.resolve({ data: null as { club_id: string }[] | null }),
+        ])
+        setActivities((aRes.data ?? []) as ClubActivity[])
+        if (user) {
+          setMySchools(new Set(((memRes.data ?? []) as { school_id: string }[]).map((m) => m.school_id)))
+          setClubMembers(new Set(((cmRes.data ?? []) as { club_id: string }[]).map((m) => m.club_id)))
+        }
+        return
+      }
       const { data: sData, error: sErr } = await supabase.from('schools').select('*').order('name')
       if (sErr) {
         if (isMissingTableError(sErr)) {
@@ -72,7 +120,7 @@ export default function SchoolsPage() {
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
+  }, [user?.id, profile?.role, profile?.school_id])
 
   async function toggleSchool(id: string, joined: boolean) {
     if (!user) return
@@ -128,7 +176,9 @@ export default function SchoolsPage() {
     e.preventDefault()
     if (!user || !clubName.trim()) return
     const { error } = await supabase.from('film_clubs').insert({
-      school_id: clubSchool || null,
+      // Siswa membuat klub di sekolahnya sendiri (tanpa pilih sekolah);
+      // mentor/admin tetap memilih lewat select di form.
+      school_id: isSiswa ? (ownSchool?.id ?? null) : (clubSchool || null),
       name: clubName.trim(),
       description: clubDesc.trim() || null,
       created_by: user.id,
@@ -175,22 +225,55 @@ export default function SchoolsPage() {
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">
-        <h2>Sekolah</h2>
-        {schools.length === 0 ? (
+        <h2>{isSiswa ? 'Sekolahmu' : 'Sekolah'}</h2>
+        {isSiswa && schools.length === 0 ? (
+          profile?.school ? (
+            <ul className="course-list">
+              <li className="course-card">
+                <div style={{ padding: '1.1rem 1.25rem' }}>
+                  <h3>{profile.school}</h3>
+                  <p className="muted">Sekolahmu belum terdaftar di data referensi.</p>
+                  <p className="muted">Minta admin memverifikasi pengajuan sekolahmu, atau perbarui sekolah di profil.</p>
+                  <p><Link to="/profil/edit" className="btn btn-secondary btn-small">Perbarui Sekolah di Profil →</Link></p>
+                </div>
+              </li>
+            </ul>
+          ) : (
+            <div>
+              <p className="empty">{profile?.school_id ? 'Sekolahmu tidak ditemukan di data referensi.' : 'Kamu belum mengatur sekolahmu.'}</p>
+              <p><Link to="/profil/edit" className="btn btn-secondary btn-small">Atur Sekolah di Profil →</Link></p>
+            </div>
+          )
+        ) : schools.length === 0 ? (
           <EmptyState message="Belum ada sekolah terdaftar." />
         ) : (
           <ul className="course-list">
             {schools.map((s) => {
               const joined = mySchools.has(s.id)
+              const wilayah = [s.city && s.city !== s.regency ? s.city : null, s.regency, s.province].filter(Boolean).join(', ')
               return (
                 <li key={s.id} className="course-card">
                   <div style={{ padding: '1.1rem 1.25rem' }}>
                     <h3>{s.name}</h3>
-                    {s.city && <p>{s.city}</p>}
-                    {s.description && <p>{s.description}</p>}
-                    <p className="muted">{s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
-                    {!s.is_verified && (
-                      <p className="muted">Sekolah ini belum terverifikasi oleh admin.</p>
+                    {isSiswa ? (
+                      <>
+                        <p className="muted">NPSN {s.npsn ?? '—'} · {s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
+                        {s.address?.trim() ? <p>{s.address}</p> : <p className="muted">Alamat belum tersedia</p>}
+                        {wilayah && <p className="muted">{wilayah}</p>}
+                        {s.description && <p>{s.description}</p>}
+                        {!s.is_verified && (
+                          <p className="muted">Sekolah ini belum terverifikasi oleh admin.</p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {s.city && <p>{s.city}</p>}
+                        {s.description && <p>{s.description}</p>}
+                        <p className="muted">{s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
+                        {!s.is_verified && (
+                          <p className="muted">Sekolah ini belum terverifikasi oleh admin.</p>
+                        )}
+                      </>
                     )}
                     {user && (
                       <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleSchool(s.id, joined)}>
@@ -211,11 +294,14 @@ export default function SchoolsPage() {
                       <p className="muted">Memuat anggota…</p>
                     )}
                     {joined && roster[s.id] && (
-                      <ul>
-                        {roster[s.id].map((n, i) => (
-                          <li key={i}>{n}</li>
-                        ))}
-                      </ul>
+                      <>
+                        {isSiswa && <p className="muted">{roster[s.id].length} anggota</p>}
+                        <ul>
+                          {roster[s.id].map((n, i) => (
+                            <li key={i}>{n}</li>
+                          ))}
+                        </ul>
+                      </>
                     )}
                     {joined && !roster[s.id] && !rosterLoading.has(s.id) && !rosterError.has(s.id) && (
                       <p className="muted">Lihat daftar anggota.</p>
@@ -229,9 +315,9 @@ export default function SchoolsPage() {
       </section>
 
       <section className="section">
-        <h2>Klub Film</h2>
+        <h2>{isSiswa ? 'Klub Film di Sekolahmu' : 'Klub Film'}</h2>
         {(clubs ?? []).length === 0 ? (
-          <EmptyState message="Belum ada klub film." />
+          <EmptyState message={isSiswa ? 'Belum ada klub film di sekolahmu.' : 'Belum ada klub film.'} />
         ) : (
           <ul className="discussion-list">
             {(clubs ?? []).map((c) => (
@@ -264,15 +350,19 @@ export default function SchoolsPage() {
                 Nama klub
                 <input value={clubName} onChange={(e) => setClubName(e.target.value)} required placeholder="Mis. Klub Film SMA 1" />
               </label>
-              <label>
-                Sekolah (opsional)
-                <select value={clubSchool} onChange={(e) => setClubSchool(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-                  <option value="">— Tanpa sekolah tertentu —</option>
-                  {schools.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </label>
+              {isSiswa ? (
+                <p className="muted">Sekolah: {ownSchool?.name ?? profile?.school ?? '—'}</p>
+              ) : (
+                <label>
+                  Sekolah (opsional)
+                  <select value={clubSchool} onChange={(e) => setClubSchool(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+                    <option value="">— Tanpa sekolah tertentu —</option>
+                    {schools.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 Deskripsi
                 <textarea value={clubDesc} onChange={(e) => setClubDesc(e.target.value)} rows={2} />
