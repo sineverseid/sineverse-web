@@ -13,12 +13,14 @@ import { fmtDate } from '../lib/guarded'
 import {
   FINAL_PROJECT_STATUS_LABEL,
   createFinalProject,
+  fetchMentoredFinalProjects,
   fetchMyCompletedCourseCount,
   fetchMyFinalProjects,
   fetchPublishedFinalProjects,
+  fetchSubmittedFinalProjects,
 } from '../lib/finalProjects'
 import type { FinalProject } from '../lib/finalProjects'
-import { logAudit, supabase } from '../lib/supabase'
+import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 
 interface MentorOption {
   id: string
@@ -26,12 +28,16 @@ interface MentorOption {
 }
 
 export default function FinalProjectsPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const navigate = useNavigate()
   const [mine, setMine] = useState<FinalProject[]>([])
   const [published, setPublished] = useState<FinalProject[]>([])
   const [completedCount, setCompletedCount] = useState<number | null>(null)
   const [mentors, setMentors] = useState<MentorOption[]>([])
+  // K14: mentor/admin tidak mendaftar sebagai siswa — mereka me-review.
+  const isReviewer = profile?.role === 'mentor' || profile?.role === 'admin'
+  const [review, setReview] = useState<FinalProject[]>([])
+  const [ownerNames, setOwnerNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -46,20 +52,41 @@ export default function FinalProjectsPage() {
       setLoading(false)
       return
     }
+    const reviewer = profile?.role === 'mentor' || profile?.role === 'admin'
     let cancelled = false
     void (async () => {
       try {
-        const [my, pub, count, mentorRows] = await Promise.all([
+        const [my, pub, extra] = await Promise.all([
           fetchMyFinalProjects(user.id),
           fetchPublishedFinalProjects(),
-          fetchMyCompletedCourseCount(user.id),
-          supabase.from('profiles').select('id,name').eq('role', 'mentor').order('name'),
+          reviewer
+            ? (async () => {
+                const list = profile?.role === 'admin'
+                  ? await fetchSubmittedFinalProjects()
+                  : await fetchMentoredFinalProjects(user.id)
+                const names = await fetchProfileNames(list.map((p) => p.owner_id)).catch(() => new Map<string, string>())
+                return { list, names, count: null as number | null, mentors: [] as MentorOption[] }
+              })()
+            : (async () => {
+                const [count, mentorRows] = await Promise.all([
+                  fetchMyCompletedCourseCount(user.id),
+                  supabase.from('profiles').select('id,name').eq('role', 'mentor').order('name'),
+                ])
+                return {
+                  list: [] as FinalProject[],
+                  names: new Map<string, string>(),
+                  count,
+                  mentors: (mentorRows.error ? [] : (mentorRows.data ?? [])) as MentorOption[],
+                }
+              })(),
         ])
         if (cancelled) return
         setMine(my)
         setPublished(pub)
-        setCompletedCount(count)
-        if (!mentorRows.error) setMentors((mentorRows.data ?? []) as MentorOption[])
+        setReview(extra.list)
+        setOwnerNames(extra.names)
+        setCompletedCount(extra.count)
+        setMentors(extra.mentors)
       } catch {
         if (!cancelled) setError('Gagal memuat Final Project. Coba lagi.')
       } finally {
@@ -69,11 +96,16 @@ export default function FinalProjectsPage() {
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user, profile?.role])
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim() || creating) return
+    // K14: mentor/admin tidak mendaftarkan Final Project sebagai siswa.
+    if (profile?.role === 'mentor' || profile?.role === 'admin') {
+      setNotice('Mentor dan admin tidak mendaftarkan Final Project sebagai siswa.')
+      return
+    }
     setCreating(true)
     setNotice(null)
     try {
@@ -106,6 +138,32 @@ export default function FinalProjectsPage() {
       />
       {notice && <p className="notice-box">{notice}</p>}
 
+      {isReviewer ? (
+        <section className="section">
+          <h2>{profile?.role === 'admin' ? 'Proyek untuk Direview' : 'Proyek yang Kamu Dampingi'}</h2>
+          <p className="muted">
+            {profile?.role === 'admin'
+              ? 'Proyek akhir yang sudah dikirim siswa untuk dinilai. Buka proyek untuk menilai dan mengubah statusnya.'
+              : 'Proyek akhir siswa yang memilihmu sebagai mentor pendamping. Buka proyek untuk menilai dan mengubah statusnya.'}
+          </p>
+          {review.length === 0 ? (
+            <p className="empty">Belum ada proyek untuk direview.</p>
+          ) : (
+            <ul>
+              {review.map((p) => (
+                <li key={p.id}>
+                  <Link to={`/proyek-akhir/${p.id}`}>{p.title}</Link>
+                  {' · '}{FINAL_PROJECT_STATUS_LABEL[p.status]}
+                  {ownerNames.get(p.owner_id) ? <span className="muted"> · {ownerNames.get(p.owner_id)}</span> : null}
+                  {p.description ? <span className="muted"> — {p.description}</span> : null}
+                  <span className="muted"> · {fmtDate(p.created_at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : (
+      <>
       <p className="notice-box">
         {completedCount === null
           ? 'Jumlah course yang kamu selesaikan belum bisa dimuat.'
@@ -152,6 +210,8 @@ export default function FinalProjectsPage() {
           </button>
         </form>
       </section>
+      </>
+      )}
 
       <section className="section">
         <h2>Proyek Saya ({mine.length})</h2>

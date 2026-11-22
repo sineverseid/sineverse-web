@@ -133,12 +133,16 @@ export default function MentorAnalyticsPage() {
         const lessonIn = lessonIds.length > 0 ? lessonIds : noId
         const [{ data: prog }, { data: quizzes }, { data: assigns }, { data: disc }] =
           await Promise.all([
-            supabase.from('lesson_progress').select('lesson_id').in('lesson_id', lessonIn).eq('status', 'completed'),
+            // P32 (K13): progres HANYA dihitung untuk siswa yang terdaftar
+            // di course itu — baris progres admin (yang sengaja disimpan
+            // per aturan no-delete) dan siswa non-terdaftar ikut terhitung
+            // bila user_id tidak diambil/difilter.
+            supabase.from('lesson_progress').select('lesson_id,user_id').in('lesson_id', lessonIn).eq('status', 'completed'),
             supabase.from('quizzes').select('id,kind,passing_score,lesson_id').in('lesson_id', lessonIn),
             supabase.from('assignments').select('id,kind,lesson_id').in('lesson_id', lessonIn),
             supabase.from('discussions').select('id,lesson_id,user_id').in('lesson_id', lessonIn),
           ])
-        const progRows = (prog ?? []) as { lesson_id: string }[]
+        const progRows = (prog ?? []) as { lesson_id: string; user_id: string }[]
         const quizRows = (quizzes ?? []) as Quiz[]
         const assignRows = (assigns ?? []) as Assignment[]
         const discRows = (disc ?? []) as Discussion[]
@@ -190,8 +194,15 @@ export default function MentorAnalyticsPage() {
           const s = stats.get(lessonCourse.get(l.id) ?? '')
           if (s) s.lessons += 1
         }
+        // P32 (K13): "Lesson Selesai" hanya menghitung progres milik siswa
+        // yang terdaftar di course itu.
+        const enrolledByCourse = new Map<string, Set<string>>()
+        for (const c of mine) enrolledByCourse.set(c.id, new Set())
+        for (const e of enrRows) enrolledByCourse.get(e.course_id)?.add(e.user_id)
         for (const p of progRows) {
-          const s = stats.get(lessonCourse.get(p.lesson_id) ?? '')
+          const cid = lessonCourse.get(p.lesson_id) ?? ''
+          if (!enrolledByCourse.get(cid)?.has(p.user_id)) continue
+          const s = stats.get(cid)
           if (s) s.completedLessons += 1
         }
         for (const a of attRows) {
@@ -211,9 +222,7 @@ export default function MentorAnalyticsPage() {
         // (formula 5 komponen Tahap 3 — tidak dihitung ulang di sini), lalu
         // dirata-rata lintas siswa yang punya nilai. Postingan diskusi
         // dihitung per course; siswa aktif = siswa terdaftar yang posting.
-        const enrolledByCourse = new Map<string, Set<string>>()
-        for (const c of mine) enrolledByCourse.set(c.id, new Set())
-        for (const e of enrRows) enrolledByCourse.get(e.course_id)?.add(e.user_id)
+        // (enrolledByCourse sudah dibangun di atas, sebelum hitung progres.)
         const attemptsByUser = new Map<string, QuizAttempt[]>()
         for (const a of attRows) {
           if (!attemptsByUser.has(a.user_id)) attemptsByUser.set(a.user_id, [])

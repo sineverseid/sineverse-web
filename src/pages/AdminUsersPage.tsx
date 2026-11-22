@@ -1,11 +1,15 @@
 // SINEVERSE — Admin Panel: Pengguna.
 // Manajemen pengguna (master prompt §04: User Management). Admin melihat
-// semua profil, bisa memfilter per role dan mencari nama/email.
-// Perubahan role TIDAK dilakukan dari sini: peran mentor diubah otomatis
-// oleh trigger database saat lamaran mentor disetujui (lihat Admin Panel).
+// semua profil, bisa memfilter per role dan mencari nama/email, dan
+// mengubah peran pengguna dari tabel (K18). Setiap perubahan peran
+// dicatat lewat logAudit; admin tidak bisa mengubah perannya sendiri.
+// Peran mentor juga tetap berubah otomatis lewat trigger database saat
+// lamaran mentor disetujui (lihat Admin Panel). Perubahan peran lewat
+// sini memakai jalur update profiles yang sama, dijaga trigger
+// enforce_role_change_admin_only (migrasi 008) — hanya admin yang bisa.
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { logAudit, supabase } from '../lib/supabase'
 import type { Profile, Role } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -21,6 +25,31 @@ export default function AdminUsersPage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  async function handleRoleChange(p: Profile, nextRole: Role) {
+    if (!user || p.id === user.id || nextRole === p.role || busyId) return
+    if (
+      !window.confirm(
+        `Ubah peran ${p.name ?? p.email ?? ''} dari ${ROLE_LABEL[p.role]} menjadi ${ROLE_LABEL[nextRole]}? Perubahan ini tercatat di audit log.`,
+      )
+    )
+      return
+    setBusyId(p.id)
+    const prevRole = p.role
+    const { error: updErr } = await supabase.from('profiles').update({ role: nextRole }).eq('id', p.id)
+    if (updErr) {
+      setNotice(`Gagal mengubah peran: ${updErr.message}`)
+      setBusyId(null)
+      return
+    }
+    // Audit log best-effort (logAudit tidak pernah melempar).
+    await logAudit('user.role_changed', 'profiles', p.id, { user_id: p.id, from: prevRole, to: nextRole })
+    setProfiles((prev) => (prev ?? []).map((row) => (row.id === p.id ? { ...row, role: nextRole } : row)))
+    setNotice(`Peran ${p.name ?? p.email ?? ''} diubah menjadi ${ROLE_LABEL[nextRole]}.`)
+    setBusyId(null)
+  }
 
   useEffect(() => {
     if (!user) return
@@ -75,9 +104,11 @@ export default function AdminUsersPage() {
       <PageHeader
         icon="community"
         title="Pengguna"
-        subtitle="Semua akun terdaftar di platform, per role. Peran mentor diubah otomatis saat lamaran disetujui."
+        subtitle="Semua akun terdaftar di platform, per role. Admin dapat mengubah peran pengguna dari tabel; setiap perubahan tercatat di audit log."
       />
       <WorkspaceNav entries={ADMIN_NAV} />
+      {notice && <p className="notice-box">{notice}</p>}
+      <p className="muted">Peranmu sendiri tidak bisa diubah dari halaman ini. Peran mentor juga berubah otomatis saat lamaran disetujui.</p>
       {loading && <p className="muted">Memuat pengguna…</p>}
       {error && <p className="error-box">{error}</p>}
       {!loading && !error && profiles !== null && (
@@ -89,7 +120,7 @@ export default function AdminUsersPage() {
             <button type="button" className={filter === 'mentor' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('mentor')}>Mentor ({counts.mentor})</button>
             <button type="button" className={filter === 'admin' ? 'pill-tab active' : 'pill-tab'} onClick={() => setFilter('admin')}>Admin ({counts.admin})</button>
           </div>
-          <p className="muted">Peran tidak diubah dari halaman ini. Peran mentor berubah otomatis saat lamaran disetujui.</p>
+          <p className="muted">Pilih peran baru di kolom Peran untuk mengubahnya (konfirmasi dulu). Baris akunmu sendiri terkunci.</p>
           <div className="form" style={{ marginBottom: '1rem' }}>
             <label>
               Cari nama / username / email / kota
@@ -122,7 +153,23 @@ export default function AdminUsersPage() {
                       <td>{p.name ?? '—'}</td>
                       <td>{p.username ?? '—'}</td>
                       <td>{p.email ?? '—'}</td>
-                      <td><span className="chip">{ROLE_LABEL[p.role]}</span></td>
+                      <td>
+                        {p.id === user?.id ? (
+                          <span className="chip">{ROLE_LABEL[p.role]} (kamu)</span>
+                        ) : (
+                          <select
+                            value={p.role}
+                            disabled={busyId === p.id}
+                            onChange={(e) => void handleRoleChange(p, e.target.value as Role)}
+                            aria-label={`Ubah peran ${p.name ?? p.email ?? ''}`}
+                            style={{ fontFamily: 'inherit', padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+                          >
+                            <option value="siswa">Siswa</option>
+                            <option value="mentor">Mentor</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        )}
+                      </td>
                       <td>{p.city ?? '—'}</td>
                       <td>
                         {p.school ?? '—'}

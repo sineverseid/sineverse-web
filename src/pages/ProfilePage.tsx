@@ -43,7 +43,12 @@ export default function ProfilePage() {
     setConfirmPassword('')
   }
 
-  const role = profile?.role ?? 'siswa'
+  // K20: role kosong ('') lolos dari `??` dan me-render Peran kosong
+  // (yang terlihat live pada Mentor Uji) — pakai `||` supaya string
+  // kosong/null sama-sama jatuh ke 'siswa'. Label tampil Indonesia.
+  const role = profile?.role || 'siswa'
+  const ROLE_LABEL: Record<string, string> = { siswa: 'Siswa', mentor: 'Mentor', admin: 'Admin' }
+  const roleLabelShort = ROLE_LABEL[role] ?? role
   const roleLabel =
     role === 'admin'
       ? 'Admin SINEVERSE'
@@ -145,7 +150,7 @@ export default function ProfilePage() {
           </div>
           <div>
             <dt>Peran</dt>
-            <dd>{profile?.role ?? 'siswa'}</dd>
+            <dd>{roleLabelShort}</dd>
           </div>
           <div>
             <dt>Sekolah</dt>

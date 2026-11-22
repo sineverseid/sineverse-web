@@ -3,7 +3,7 @@
 // + tautan resmi, tanpa pendaftaran di aplikasi.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
@@ -23,6 +23,15 @@ async function uploadEventPoster(userId: string, file: File): Promise<string | n
   const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg'
   const uploadFile = new File([blob], `poster.${ext}`, { type: blob.type || 'image/jpeg' })
   return uploadToBucket('event-posters', `${userId}/${Date.now()}.${ext}`, uploadFile)
+}
+
+/** Ubah ISO timestamptz ke nilai input datetime-local (waktu lokal). */
+function toLocalInput(value: string | null): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 /** Placeholder netral untuk acara tanpa poster: gradasi navy (class
@@ -400,7 +409,8 @@ function EventsAnalytics() {
 
 export function EventDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const navigate = useNavigate()
+  const { user, profile } = useAuth()
   const [event, setEvent] = useState<SineEvent | null>(null)
   const [missing, setMissing] = useState(false)
   const [sessions, setSessions] = useState<EventSession[]>([])
@@ -410,6 +420,17 @@ export function EventDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [posterBroken, setPosterBroken] = useState(false)
+  // Edit/hapus acara (K7): hanya pembuat acara atau admin.
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editStartsAt, setEditStartsAt] = useState('')
+  const [editEndsAt, setEditEndsAt] = useState('')
+  const [editLocation, setEditLocation] = useState('')
+  const [editCapacity, setEditCapacity] = useState('')
+  const [editOrganizer, setEditOrganizer] = useState('')
+  const [editOfficialLink, setEditOfficialLink] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -462,6 +483,69 @@ export function EventDetailPage() {
 
   const currentEvent = event
   const full = currentEvent.capacity !== null && count >= currentEvent.capacity
+  const canEditEvent = profile?.role === 'admin' || currentEvent.created_by === user?.id
+
+  function startEdit() {
+    setEditTitle(currentEvent.title)
+    setEditDescription(currentEvent.description ?? '')
+    setEditStartsAt(toLocalInput(currentEvent.starts_at))
+    setEditEndsAt(toLocalInput(currentEvent.ends_at))
+    setEditLocation(currentEvent.location ?? '')
+    setEditCapacity(currentEvent.capacity === null ? '' : String(currentEvent.capacity))
+    setEditOrganizer(currentEvent.organizer ?? '')
+    setEditOfficialLink(currentEvent.official_link ?? '')
+    setEditError(null)
+    setEditing(true)
+  }
+
+  async function handleSaveEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !canEditEvent) return
+    const cap = editCapacity ? Number(editCapacity) : null
+    if (cap !== null && (Number.isNaN(cap) || cap < 0)) {
+      setEditError('Kapasitas tidak boleh negatif.')
+      return
+    }
+    if (editStartsAt && editEndsAt && new Date(editEndsAt) < new Date(editStartsAt)) {
+      setEditError('Waktu selesai tidak boleh lebih awal dari waktu mulai.')
+      return
+    }
+    setEditError(null)
+    const patch = {
+      title: editTitle.trim(),
+      description: editDescription.trim() || null,
+      starts_at: editStartsAt ? new Date(editStartsAt).toISOString() : null,
+      ends_at: editEndsAt ? new Date(editEndsAt).toISOString() : null,
+      location: editLocation.trim() || null,
+      capacity: cap,
+      organizer: editOrganizer.trim() || null,
+      official_link: editOfficialLink.trim() || null,
+    }
+    const { error: updErr } = await supabase.from('events').update(patch).eq('id', currentEvent.id)
+    if (updErr) {
+      setEditError(`Gagal menyimpan acara: ${updErr.message}`)
+      return
+    }
+    setEvent({ ...currentEvent, ...patch })
+    setEditing(false)
+    setNotice('Acara diperbarui.')
+  }
+
+  async function handleDeleteEvent() {
+    if (!user || !canEditEvent) return
+    if (
+      !window.confirm(
+        `Hapus acara "${currentEvent.title}"? Sesi/rundown dan pendaftaran ikut terhapus. Tindakan ini tidak bisa dibatalkan.`,
+      )
+    )
+      return
+    const { error: delErr } = await supabase.from('events').delete().eq('id', currentEvent.id)
+    if (delErr) {
+      setNotice(`Gagal menghapus acara: ${delErr.message}`)
+      return
+    }
+    navigate('/acara')
+  }
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault()
@@ -518,6 +602,62 @@ export function EventDetailPage() {
       </p>
       <p>{currentEvent.description ?? ''}</p>
       {notice && <p className="notice-box">{notice}</p>}
+
+      {canEditEvent && !editing && (
+        <div className="form-actions">
+          <button type="button" className="btn btn-secondary btn-small" onClick={startEdit}>
+            Edit Acara
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleDeleteEvent()}>
+            Hapus Acara
+          </button>
+        </div>
+      )}
+
+      {canEditEvent && editing && (
+        <section className="section">
+          <h2>Edit Acara</h2>
+          <form className="form" onSubmit={handleSaveEdit}>
+            {editError && <p className="error-box">{editError}</p>}
+            <label>
+              Judul acara
+              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+            </label>
+            <label>
+              Deskripsi
+              <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={3} />
+            </label>
+            <label>
+              Mulai
+              <input type="datetime-local" value={editStartsAt} onChange={(e) => setEditStartsAt(e.target.value)} />
+            </label>
+            <label>
+              Selesai
+              <input type="datetime-local" value={editEndsAt} onChange={(e) => setEditEndsAt(e.target.value)} />
+            </label>
+            <label>
+              Lokasi
+              <input value={editLocation} onChange={(e) => setEditLocation(e.target.value)} placeholder="Kota / daring" />
+            </label>
+            <label>
+              Kapasitas peserta (kosong = tanpa batas)
+              <input type="number" min={1} value={editCapacity} onChange={(e) => setEditCapacity(e.target.value)} placeholder="Mis. 50" />
+            </label>
+            <label>
+              Penyelenggara (acara eksternal)
+              <input value={editOrganizer} onChange={(e) => setEditOrganizer(e.target.value)} placeholder="Nama penyelenggara" />
+            </label>
+            <label>
+              Tautan resmi (acara eksternal)
+              <input value={editOfficialLink} onChange={(e) => setEditOfficialLink(e.target.value)} placeholder="https://…" />
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="btn btn-primary">Simpan Perubahan</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Batal</button>
+            </div>
+          </form>
+        </section>
+      )}
 
       {currentEvent.kind === 'external' && (
         <p className="notice-box">

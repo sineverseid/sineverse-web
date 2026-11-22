@@ -184,6 +184,14 @@ export function CompetitionDetailPage() {
   const [usage, setUsage] = useState(false)
   const [scoreInputs, setScoreInputs] = useState<Record<string, string>>({})
   const [scoreComment, setScoreComment] = useState('')
+  // Kelola kompetisi (K7): status, kriteria/kategori, panel juri.
+  const [judges, setJudges] = useState<{ id: string; judge_id: string }[]>([])
+  const [judgeCandidates, setJudgeCandidates] = useState<{ id: string; name: string | null }[]>([])
+  const [selectedJudgeId, setSelectedJudgeId] = useState('')
+  const [newStatus, setNewStatus] = useState<CompetitionStatus | ''>('')
+  const [critRows, setCritRows] = useState<{ name: string; weight: number }[]>([])
+  const [categoriesText, setCategoriesText] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const isAdmin = profile?.role === 'admin'
 
@@ -195,7 +203,7 @@ export function CompetitionDetailPage() {
       try {
         // Kompetisi, submissions, winners, dan status juri semuanya hanya
         // butuh compId (+ user) — dimuat paralel, bukan berurutan.
-        const [compRes, sData, wData, jData] = await Promise.all([
+        const [compRes, sData, wData, jData, jgData] = await Promise.all([
           supabase.from('competitions').select('*').eq('id', compId).maybeSingle(),
           supabase.from('competition_submissions').select('*').eq('competition_id', compId).order('created_at', { ascending: true }),
           supabase.from('competition_winners').select('*').eq('competition_id', compId).order('rank'),
@@ -207,6 +215,13 @@ export function CompetitionDetailPage() {
                 .eq('judge_id', user.id)
                 .maybeSingle()
             : Promise.resolve({ data: null } as { data: null }),
+          user
+            ? supabase
+                .from('competition_judges')
+                .select('id,judge_id')
+                .eq('competition_id', compId)
+                .order('created_at')
+            : Promise.resolve({ data: [] } as { data: { id: string; judge_id: string }[] }),
         ])
         const { data, error: qErr } = compRes
         if (qErr) {
@@ -219,27 +234,33 @@ export function CompetitionDetailPage() {
         if (cancelled) return
         setComp(data as Competition | null)
         const sRows = (sData.data ?? []) as CompetitionSubmission[]
+        const judgeRows = ((jgData.data ?? []) as { id: string; judge_id: string }[])
         if (!cancelled) {
           setSubs(sRows)
           setWinners((wData.data ?? []) as CompetitionWinner[])
+          setJudges(judgeRows)
           if (user) setIsJudge(jData.data !== null)
         }
         // Nama peserta dan skor independen satu sama lain (keduanya hanya
         // butuh sRows + status kompetisi) — dimuat paralel.
         const c = data as Competition | null
         const scoresNeeded = !!c && (c.status === 'selesai' || isAdmin)
-        const [namesMap, scData] = await Promise.all([
-          fetchProfileNames(sRows.map((s) => s.user_id)),
+        const [namesMap, scData, candData] = await Promise.all([
+          fetchProfileNames([...sRows.map((s) => s.user_id), ...judgeRows.map((j) => j.judge_id)]),
           scoresNeeded
             ? supabase
                 .from('competition_scores')
                 .select('*')
                 .in('submission_id', sRows.map((s) => s.id))
             : Promise.resolve({ data: null } as { data: null }),
+          isAdmin
+            ? supabase.from('profiles').select('id,name').in('role', ['mentor', 'admin']).order('name')
+            : Promise.resolve({ data: null } as { data: null }),
         ])
         if (!cancelled) {
           setNames(namesMap)
           if (scoresNeeded) setScores((scData.data ?? []) as CompetitionScore[])
+          if (candData.data) setJudgeCandidates(candData.data as { id: string; name: string | null }[])
         }
       } catch (err) {
         if (!cancelled) setError('Gagal memuat kompetisi. Coba lagi nanti.')
@@ -254,12 +275,23 @@ export function CompetitionDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user?.id])
 
+  // Isi form kelola dari data kompetisi saat halaman dibuka (sekali per
+  // kompetisi); penyimpanan sesudahnya memperbarui state lokal sendiri.
+  useEffect(() => {
+    if (!comp) return
+    setCritRows(Array.isArray(comp.criteria) ? comp.criteria : [])
+    setCategoriesText((comp.categories ?? []).join(', '))
+    setNewStatus(comp.status)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comp?.id])
+
   if (loading) return <div className="page"><p className="muted">Memuat kompetisi…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (missing) return <div className="page"><h1>Kompetisi</h1><MigrationNotice migration="007" /></div>
   if (!comp) return <div className="page"><p className="empty">Kompetisi tidak ditemukan.</p><Link to="/kompetisi">Kembali</Link></div>
 
   const currentComp = comp
+  const canManage = isAdmin || currentComp.created_by === user?.id
   const criteria: { name: string; weight: number }[] = Array.isArray(currentComp.criteria) ? currentComp.criteria : []
   const canSubmit =
     currentComp.status === 'dibuka' && (!currentComp.deadline || new Date() < new Date(currentComp.deadline))
@@ -326,6 +358,100 @@ export function CompetitionDetailPage() {
     setNotice(`Penilaian untuk karya ${names.get(sub.user_id) ?? ''} tersimpan. Skor tetap tersembunyi dari peserta sampai kompetisi selesai.`)
   }
 
+  // --- Kelola kompetisi (K7): hanya pembuat kompetisi atau admin. ---
+  // RLS 007: update competitions diizinkan untuk pembuat + admin; panel
+  // juri HANYA dikelola admin (competition_judges_admin_all), jadi form
+  // juri tidak ditampilkan ke pembuat non-admin.
+
+  async function handleStatusChange(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !canManage || !newStatus || newStatus === currentComp.status || busy) return
+    if (
+      newStatus === 'selesai' &&
+      !window.confirm('Ubah status menjadi "Selesai"? Skor juri akan terlihat oleh peserta.')
+    )
+      return
+    setBusy(true)
+    const { error: updErr } = await supabase
+      .from('competitions')
+      .update({ status: newStatus })
+      .eq('id', currentComp.id)
+    setBusy(false)
+    if (updErr) {
+      setNotice(`Gagal mengubah status: ${updErr.message}`)
+      return
+    }
+    setComp({ ...currentComp, status: newStatus })
+    setNotice(`Status kompetisi diubah menjadi "${effectiveStatusLabel({ ...currentComp, status: newStatus })}".`)
+  }
+
+  async function handleSaveCriteria(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !canManage || busy) return
+    const clean = critRows
+      .map((r) => ({ name: r.name.trim(), weight: r.weight }))
+      .filter((r) => r.name)
+    for (const r of clean) {
+      if (!Number.isFinite(r.weight) || r.weight < 0 || r.weight > 100) {
+        setNotice(`Bobot "${r.name}" harus antara 0 dan 100.`)
+        return
+      }
+    }
+    const categories = categoriesText.split(',').map((s) => s.trim()).filter(Boolean)
+    setBusy(true)
+    const { error: updErr } = await supabase
+      .from('competitions')
+      .update({ criteria: clean, categories })
+      .eq('id', currentComp.id)
+    setBusy(false)
+    if (updErr) {
+      setNotice(`Gagal menyimpan kriteria: ${updErr.message}`)
+      return
+    }
+    setComp({ ...currentComp, criteria: clean, categories })
+    setCritRows(clean)
+    setNotice('Kriteria dan kategori kompetisi disimpan.')
+  }
+
+  async function handleAddJudge(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !isAdmin || !selectedJudgeId || busy) return
+    setBusy(true)
+    const { data, error: insErr } = await supabase
+      .from('competition_judges')
+      .insert({ competition_id: currentComp.id, judge_id: selectedJudgeId })
+      .select('id,judge_id')
+      .single()
+    setBusy(false)
+    if (insErr) {
+      setNotice(
+        insErr.message.toLowerCase().includes('duplicate')
+          ? 'Pengguna itu sudah menjadi juri kompetisi ini.'
+          : `Gagal menambah juri: ${insErr.message}`,
+      )
+      return
+    }
+    setJudges((prev) => [...prev, data as { id: string; judge_id: string }])
+    const nameMap = await fetchProfileNames([selectedJudgeId])
+    setNames((prev) => new Map([...prev, ...nameMap]))
+    setSelectedJudgeId('')
+    setNotice('Juri ditambahkan.')
+  }
+
+  async function handleRemoveJudge(judgeRow: { id: string; judge_id: string }) {
+    if (!user || !isAdmin || busy) return
+    if (!window.confirm(`Hapus juri ${names.get(judgeRow.judge_id) ?? ''} dari kompetisi ini?`)) return
+    setBusy(true)
+    const { error: delErr } = await supabase.from('competition_judges').delete().eq('id', judgeRow.id)
+    setBusy(false)
+    if (delErr) {
+      setNotice(`Gagal menghapus juri: ${delErr.message}`)
+      return
+    }
+    setJudges((prev) => prev.filter((j) => j.id !== judgeRow.id))
+    setNotice('Juri dihapus.')
+  }
+
   async function handleIssueWinnerCerts() {
     if (!isAdmin || winners.length === 0) return
     const issued: string[] = []
@@ -381,6 +507,144 @@ export function CompetitionDetailPage() {
       </p>
       <p>{currentComp.description ?? ''}</p>
       {notice && <p className="notice-box">{notice}</p>}
+
+      {canManage && (
+        <section className="section">
+          <h2>Kelola Kompetisi</h2>
+          <form className="form" onSubmit={handleStatusChange}>
+            <label>
+              Status kompetisi
+              <select
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value as CompetitionStatus)}
+                style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+              >
+                <option value="draft">Draf</option>
+                <option value="dibuka">Dibuka</option>
+                <option value="penjurian">Penjurian</option>
+                <option value="selesai">Selesai</option>
+              </select>
+            </label>
+            <p className="muted">
+              Alur: Draf → Dibuka (karya bisa dikirim sampai tenggat) → Penjurian (juri menilai)
+              → Selesai (skor terlihat peserta). Kompetisi yang tenggatnya lewat tetap harus
+              diubah statusnya di sini secara manual.
+            </p>
+            <button type="submit" className="btn btn-primary btn-small" disabled={busy || !newStatus || newStatus === currentComp.status}>
+              Ubah Status
+            </button>
+          </form>
+
+          <form className="form" onSubmit={handleSaveCriteria}>
+            <label>
+              Kategori (pisahkan dengan koma)
+              <input
+                value={categoriesText}
+                onChange={(e) => setCategoriesText(e.target.value)}
+                placeholder="Mis. Film Pendek Fiksi, Dokumenter"
+              />
+            </label>
+            <p className="muted">Kriteria penilaian (bobot 0–100 per kriteria):</p>
+            {critRows.length === 0 && <p className="empty">Belum ada kriteria penilaian.</p>}
+            {critRows.map((row, idx) => (
+              <div key={idx} className="form-actions">
+                <label>
+                  Nama kriteria
+                  <input
+                    value={row.name}
+                    onChange={(e) =>
+                      setCritRows((prev) => prev.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r)))
+                    }
+                    placeholder="Mis. Sinematografi"
+                  />
+                </label>
+                <label>
+                  Bobot (%)
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={row.weight}
+                    onChange={(e) =>
+                      setCritRows((prev) =>
+                        prev.map((r, i) => (i === idx ? { ...r, weight: Number(e.target.value) } : r)),
+                      )
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => setCritRows((prev) => prev.filter((_, i) => i !== idx))}
+                >
+                  Hapus
+                </button>
+              </div>
+            ))}
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => setCritRows((prev) => [...prev, { name: '', weight: 0 }])}
+              >
+                Tambah Kriteria
+              </button>
+              <button type="submit" className="btn btn-primary btn-small" disabled={busy}>
+                Simpan Kriteria &amp; Kategori
+              </button>
+            </div>
+          </form>
+
+          {isAdmin ? (
+            <div>
+              <h3>Panel Juri</h3>
+              {judges.length === 0 ? (
+                <p className="empty">Belum ada juri untuk kompetisi ini.</p>
+              ) : (
+                <ul className="discussion-list">
+                  {judges.map((j) => (
+                    <li key={j.id} className="discussion-item">
+                      <p>
+                        <strong>{names.get(j.judge_id) ?? 'Juri'}</strong>
+                      </p>
+                      <button type="button" className="btn btn-ghost btn-small" disabled={busy} onClick={() => void handleRemoveJudge(j)}>
+                        Hapus Juri
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <form className="form" onSubmit={handleAddJudge}>
+                <label>
+                  Tambah juri (mentor / admin)
+                  <select
+                    value={selectedJudgeId}
+                    onChange={(e) => setSelectedJudgeId(e.target.value)}
+                    style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+                  >
+                    <option value="">Pilih pengguna</option>
+                    {judgeCandidates
+                      .filter((c) => !judges.some((j) => j.judge_id === c.id))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name ?? c.id}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button type="submit" className="btn btn-primary btn-small" disabled={busy || !selectedJudgeId}>
+                  Tambah Juri
+                </button>
+              </form>
+            </div>
+          ) : (
+            <p className="muted">
+              Panel juri hanya dikelola admin. Juri saat ini:{' '}
+              {judges.length === 0 ? 'belum ada.' : judges.map((j) => names.get(j.judge_id) ?? 'Juri').join(', ')}
+            </p>
+          )}
+        </section>
+      )}
 
       {winners.length > 0 && (
         <section className="section">

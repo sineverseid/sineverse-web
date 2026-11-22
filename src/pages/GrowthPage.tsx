@@ -203,9 +203,20 @@ export default function GrowthPage() {
     [projects, myProjectIds],
   )
 
+  // K8: proyek undangan saja TIDAK boleh bocor di tab Kolaborasi — judul
+  // dan deskripsinya disembunyikan kecuali untuk admin, pemilik, atau
+  // anggota proyek (logika canSee yang sama dengan ProjectsPage).
   const crossSchoolProjects = useMemo(
-    () => projects.filter((p) => p.school_id),
-    [projects],
+    () =>
+      projects.filter(
+        (p) =>
+          p.school_id &&
+          (p.access_mode !== 'invite_only' ||
+            isAdmin ||
+            p.owner_id === user?.id ||
+            myProjectIds.has(p.id)),
+      ),
+    [projects, isAdmin, user?.id, myProjectIds],
   )
 
   const schoolName = (id: string | null) => (id ? projectSchoolNames.get(id) ?? '—' : '—')

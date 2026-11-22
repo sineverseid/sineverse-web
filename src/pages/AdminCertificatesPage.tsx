@@ -199,11 +199,14 @@ export default function AdminCertificatesPage() {
         // BUGFIX 22 Nov 2026: daftar penerima JANGAN diturunkan dari sertifikat
         // yang sudah ada — dengan 0 sertifikat di DB, dropdown Penerima/Siswa
         // kosong selamanya dan admin tidak bisa menerbitkan sertifikat pertama.
-        // Ambil langsung semua profil peserta (siswa + mentor) dari tabel profiles.
+        // Ambil langsung semua profil peserta dari tabel profiles.
+        // K19: HANYA siswa — sertifikat Academy dan Event adalah untuk
+        // siswa; mentor tidak boleh muncul sebagai penerima (dulu Mentor Uji
+        // tampil di kedua dropdown).
         const { data: memberData } = await supabase
           .from('profiles')
           .select('id')
-          .in('role', ['siswa', 'mentor'])
+          .eq('role', 'siswa')
           .order('name')
         const userIds = [
           ...new Set([
@@ -285,10 +288,11 @@ export default function AdminCertificatesPage() {
     setCertificates(certRows)
     setMgmtHasMore(certRows.length === mgmtPage * 100)
     // Sama seperti load(): penerima diambil dari profiles, bukan dari sertifikat.
+    // K19: hanya siswa (sertifikat Academy/Event bukan untuk mentor).
     const { data: memberData } = await supabase
       .from('profiles')
       .select('id')
-      .in('role', ['siswa', 'mentor'])
+      .eq('role', 'siswa')
       .order('name')
     const userIds = [
       ...new Set([
@@ -512,11 +516,14 @@ export default function AdminCertificatesPage() {
           .select('*')
           .eq('course_id', selectedCourseId)
         const enrRows = (enrData ?? []) as Enrollment[]
+        // K12: hanya sertifikat yang masih VALID yang mengecualikan siswa
+        // dari kelayakan — sertifikat yang dicabut boleh diterbitkan ulang.
         const { data: certData } = await supabase
           .from('certificates')
           .select('user_id')
           .eq('course_id', selectedCourseId)
           .eq('type', 'course')
+          .eq('status', 'valid')
         const certified = new Set(((certData ?? []) as { user_id: string }[]).map((c) => c.user_id))
         const pending = enrRows.filter((e) => !certified.has(e.user_id))
         if (pending.length === 0) {

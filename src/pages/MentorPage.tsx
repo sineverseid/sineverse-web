@@ -74,6 +74,8 @@ export default function MentorPage() {
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
   const isAdmin = profile?.role === 'admin'
   const isSiswa = profile?.role === 'siswa'
+  // K2: hanya peran mentor yang boleh mengajukan klaim mengampu. Admin
+  // tetap bisa MEMANTAU workspace ini (migrasi 022), tapi tidak mengklaim.
 
   function friendlyError(err: unknown): string {
     const msg = err instanceof Error ? err.message : ''
@@ -178,6 +180,11 @@ export default function MentorPage() {
 
   async function handleClaim(courseId: string) {
     if (!user) return
+    // K2: guard mentor-only — admin memantau saja, tidak mengklaim course.
+    if (profile?.role !== 'mentor') {
+      setNotice('Hanya mentor yang bisa mengajukan untuk mengampu course. Admin memantau lewat halaman ini.')
+      return
+    }
     // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
     // sama dikembalikan ke 'pending', bukan insert duplikat.
     const existing = claims.find((cl) => cl.course_id === courseId)
@@ -292,7 +299,8 @@ export default function MentorPage() {
           <div className="stat-grid">
             <div className="stat-card">
               <span className="stat-num">{rows.length}</span>
-              <span className="stat-label">Course Diampu</span>
+              {/* K2: admin tidak mengampu apa pun — angkanya total course yang dipantau, bukan "Course Diampu". */}
+              <span className="stat-label">{isAdmin ? 'Total Course' : 'Course Diampu'}</span>
             </div>
             <div className="stat-card">
               <span className="stat-num">{totalStudents}</span>
@@ -403,6 +411,8 @@ export default function MentorPage() {
             </div>
           </section>
 
+          {/* K2: seksi klaim hanya untuk mentor — admin memantau saja. */}
+          {profile?.role === 'mentor' && (
           <section className="section">
             <div className="dash-section-head">
               <h2>Ajukan untuk Mengampu</h2>
@@ -438,6 +448,7 @@ export default function MentorPage() {
               </ul>
             )}
           </section>
+          )}
         </>
       )}
     </div>

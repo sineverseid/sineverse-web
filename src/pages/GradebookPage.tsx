@@ -285,7 +285,18 @@ export default function GradebookPage() {
                 </tr>
               </thead>
               <tbody>
-                {grades.map((g) => (
+                {grades.map((g) => {
+                  // K13: course tanpa satu pun komponen nilai BUKAN "0.0 /
+                  // Belum lulus" — tidak ada nilai sama sekali (dulu baris
+                  // ini yang membuat Gradebook bertentangan dengan
+                  // notifikasi nilai yang sudah masuk).
+                  const hasAnyGrade =
+                    g.components.pretest !== null ||
+                    g.components.posttest !== null ||
+                    g.components.weeklyAssignments !== null ||
+                    g.components.finalPractice !== null ||
+                    g.components.discussion !== null
+                  return (
                   <tr key={g.course.id}>
                     <td>
                       <Link to={`/course/${g.course.id}`}>{g.course.title}</Link>
@@ -314,15 +325,20 @@ export default function GradebookPage() {
                         : g.components.discussion.toFixed(1)}
                     </td>
                     <td>
-                      <strong>{g.components.final.toFixed(1)}</strong>
+                      <strong>{hasAnyGrade ? g.components.final.toFixed(1) : '—'}</strong>
                     </td>
                     <td>
-                      <span className={g.components.passed ? 'badge-pass' : 'badge-fail'}>
-                        {g.components.passed ? 'Lulus' : 'Belum lulus'}
-                      </span>
+                      {!hasAnyGrade ? (
+                        <span className="muted">Belum ada nilai</span>
+                      ) : (
+                        <span className={g.components.passed ? 'badge-pass' : 'badge-fail'}>
+                          {g.components.passed ? 'Lulus' : 'Belum lulus'}
+                        </span>
+                      )}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

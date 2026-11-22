@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { countEnrollments, countUsersByRole } from '../lib/counts'
 import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
 import type { Rps } from '../lib/types'
 import {
@@ -182,13 +183,16 @@ export default function AdminAnalyticsPage() {
         // Batch tingkat atas paralel: course + profil + enrollment +
         // modules + baris RPS + hitung sertifikat.
         const noId = ['00000000-0000-0000-0000-000000000000']
+        // B62 (K13): .error tiap batch DIPERIKSA — gagal = error state,
+        // bukan agregat 0 + empty state yang menyamarkan kegagalan.
+        // fetchCourses sudah melempar sendiri bila gagal.
         const [
           courseList,
-          { data: profileRows },
-          { data: enrRowsRaw },
-          { data: modRowsRaw },
-          { data: rpsRow },
-          { data: certRowsRaw },
+          { data: profileRows, error: profileErr },
+          { data: enrRowsRaw, error: enrErr },
+          { data: modRowsRaw, error: modErr },
+          { data: rpsRow, error: rpsErr },
+          { data: certRowsRaw, error: certErr },
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
@@ -197,6 +201,22 @@ export default function AdminAnalyticsPage() {
           supabase.from('rps').select('*').eq('code', BRAND.rpsCode).maybeSingle(),
           supabase.from('certificates').select('id,issued_at'),
         ])
+        {
+          const failed = (
+            [
+              ['profil', profileErr],
+              ['enrollment', enrErr],
+              ['modul', modErr],
+              ['RPS', rpsErr],
+              ['sertifikat', certErr],
+            ] as const
+          )
+            .filter(([, e]) => e)
+            .map(([name, e]) => `${name} (${e?.message ?? 'gagal'})`)
+          if (failed.length > 0) {
+            throw new Error(`Gagal memuat analitik: ${failed.join('; ')}.`)
+          }
+        }
         const profs = (profileRows ?? []) as { id: string; role: string }[]
         const enrRows = (enrRowsRaw ?? []) as {
           id: string
@@ -218,10 +238,11 @@ export default function AdminAnalyticsPage() {
         const pass = rps?.passing_grade ?? PASSING_GRADE
 
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
-        const { data: lessonRowsRaw } = await supabase
+        const { data: lessonRowsRaw, error: lessonErr } = await supabase
           .from('lessons')
           .select('id,module_id,title')
           .in('module_id', modRows.length > 0 ? modRows.map((m) => m.id) : noId)
+        if (lessonErr) throw new Error(`Gagal memuat analitik: lesson (${lessonErr.message}).`)
         const lessonRows = (lessonRowsRaw ?? []) as { id: string; module_id: string; title: string }[]
         const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
         const lessonTitle = new Map(lessonRows.map((l) => [l.id, l.title]))
@@ -230,19 +251,39 @@ export default function AdminAnalyticsPage() {
 
         // Progres + kuis + tugas + diskusi paralel, lalu percobaan +
         // submission paralel. Pengelompokan per course dihitung di JS.
-        const [{ data: progRaw }, { data: quizRaw }, { data: assignRaw }, { data: discRaw }] = await Promise.all([
+        const [
+          { data: progRaw, error: progErr },
+          { data: quizRaw, error: quizErr },
+          { data: assignRaw, error: assignErr },
+          { data: discRaw, error: discErr },
+        ] = await Promise.all([
           supabase.from('lesson_progress').select('lesson_id,user_id').in('lesson_id', lessonIn).eq('status', 'completed'),
           supabase.from('quizzes').select('id,kind,lesson_id').in('lesson_id', lessonIn),
           supabase.from('assignments').select('id,kind,lesson_id').in('lesson_id', lessonIn),
           supabase.from('discussions').select('id,lesson_id,user_id').in('lesson_id', lessonIn),
         ])
+        {
+          const failed = (
+            [
+              ['progres lesson', progErr],
+              ['kuis', quizErr],
+              ['tugas', assignErr],
+              ['diskusi', discErr],
+            ] as const
+          )
+            .filter(([, e]) => e)
+            .map(([name, e]) => `${name} (${e?.message ?? 'gagal'})`)
+          if (failed.length > 0) {
+            throw new Error(`Gagal memuat analitik: ${failed.join('; ')}.`)
+          }
+        }
         const progRows = (progRaw ?? []) as { lesson_id: string; user_id: string }[]
         const quizRows = (quizRaw ?? []) as { id: string; kind?: string | null; lesson_id: string }[]
         const assignRows = (assignRaw ?? []) as { id: string; kind?: string | null; lesson_id: string }[]
         const discRows = (discRaw ?? []) as { id: string; lesson_id: string; user_id: string }[]
         const quizCourse = new Map(quizRows.map((q) => [q.id, lessonCourse.get(q.lesson_id) ?? '']))
         const assignCourse = new Map(assignRows.map((a) => [a.id, lessonCourse.get(a.lesson_id) ?? '']))
-        const [{ data: attRaw }, { data: subRaw }] = await Promise.all([
+        const [{ data: attRaw, error: attErr }, { data: subRaw, error: subErr }] = await Promise.all([
           supabase
             .from('quiz_attempts')
             .select('quiz_id,user_id,score')
@@ -252,6 +293,19 @@ export default function AdminAnalyticsPage() {
             .select('assignment_id,user_id,score,submitted_at')
             .in('assignment_id', assignRows.length > 0 ? assignRows.map((a) => a.id) : noId),
         ])
+        {
+          const failed = (
+            [
+              ['percobaan kuis', attErr],
+              ['submission', subErr],
+            ] as const
+          )
+            .filter(([, e]) => e)
+            .map(([name, e]) => `${name} (${e?.message ?? 'gagal'})`)
+          if (failed.length > 0) {
+            throw new Error(`Gagal memuat analitik: ${failed.join('; ')}.`)
+          }
+        }
         const attRows = (attRaw ?? []) as { quiz_id: string; user_id: string; score: number | null }[]
         const subRows = (subRaw ?? []) as {
           assignment_id: string
@@ -450,10 +504,14 @@ export default function AdminAnalyticsPage() {
             submissions: yearBuckets(subTs),
           },
         })
+        // K13: angka ringkasan lewat helper bersama (lib/counts.ts) —
+        // definisi "enrollment" di sini = siswa terdaftar (bukan waitlist),
+        // sama seperti halaman Kelola Enrollment dan Beranda admin.
+        const roleCounts = countUsersByRole(profs)
         setSummary({
-          siswa: profs.filter((p) => p.role === 'siswa').length,
-          mentor: profs.filter((p) => p.role === 'mentor').length,
-          enrollments: enrRows.length,
+          siswa: roleCounts.siswa,
+          mentor: roleCounts.mentor,
+          enrollments: countEnrollments(enrRows).enrolled,
           certificates: certCount ?? 0,
           discussionPosts: discRows.length,
         })
@@ -497,7 +555,7 @@ export default function AdminAnalyticsPage() {
           <div className="stat-grid">
             <div className="stat-card"><span className="stat-num">{summary.siswa}</span><span className="stat-label">Total siswa</span></div>
             <div className="stat-card"><span className="stat-num">{summary.mentor}</span><span className="stat-label">Total mentor</span></div>
-            <div className="stat-card"><span className="stat-num">{summary.enrollments}</span><span className="stat-label">Total enrollment</span></div>
+            <div className="stat-card"><span className="stat-num">{summary.enrollments}</span><span className="stat-label">Total enrollment (terdaftar)</span></div>
             <div className="stat-card"><span className="stat-num">{summary.certificates}</span><span className="stat-label">Sertifikat diterbitkan</span></div>
             <div className="stat-card"><span className="stat-num">{summary.discussionPosts}</span><span className="stat-label">Postingan diskusi</span></div>
           </div>

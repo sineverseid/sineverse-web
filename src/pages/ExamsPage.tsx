@@ -10,7 +10,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { fetchCompetencyExams, fetchExamAttempts, supabase } from '../lib/supabase'
+import { fetchCompetencyExams, fetchEnrollment, fetchExamAttempts, supabase } from '../lib/supabase'
 import type { CompetencyExam, ExamAttempt } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -99,7 +99,12 @@ export function ExamsPage() {
 
 export function ExamPage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  // K5: admin tidak boleh ikut ujian sama sekali; hanya siswa terdaftar di
+  // course ujian (atau mentor course, sebagai pratinjau read-only).
+  const isAdmin = profile?.role === 'admin'
+  const [enrolled, setEnrolled] = useState<boolean | null>(null)
+  const [isCourseMentor, setIsCourseMentor] = useState(false)
   const [exam, setExam] = useState<CompetencyExam | null>(null)
   const [questions, setQuestions] = useState<ExamQuestion[] | null>(null)
   const [missingQuestions, setMissingQuestions] = useState(false)
@@ -141,6 +146,25 @@ export function ExamPage() {
         } else if (!cancelled) setQuestions((data ?? []) as ExamQuestion[])
         const atts = await attP
         if (!cancelled) setAttempts(atts.filter((a) => a.exam_id === examId))
+        // K5: cek enrollment + mentor course bila ujian terhubung ke course.
+        // Ujian tanpa course_id tidak punya enrollment untuk dicek (sertifikat
+        // pun tidak bisa terbit sebelum dihubungkan) — siswa tetap boleh
+        // mengerjakan, admin tetap diblokir.
+        const found = list.find((e) => e.id === examId) ?? null
+        if (found?.course_id) {
+          try {
+            const [enr, { data: cRow }] = await Promise.all([
+              fetchEnrollment(currentUser.id, found.course_id),
+              supabase.from('courses').select('mentor_id').eq('id', found.course_id).maybeSingle(),
+            ])
+            if (!cancelled) {
+              setEnrolled(enr !== null)
+              setIsCourseMentor((cRow as { mentor_id?: string } | null)?.mentor_id === currentUser.id)
+            }
+          } catch {
+            if (!cancelled) setEnrolled(false)
+          }
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat ujian.')
       } finally {
@@ -164,6 +188,19 @@ export function ExamPage() {
     e.preventDefault()
     const currentExam = exam
     if (!user || !questions || !currentExam) return
+    // K5: admin tidak boleh ikut ujian (RPC 022 juga menolak — ini pesan jelasnya).
+    if (isAdmin) {
+      setResult({ score: null, passed: null, serial: null, note: 'Kamu masuk sebagai admin (mode pantau). Admin tidak mengikuti ujian kompetensi.' })
+      return
+    }
+    if (isCourseMentor) {
+      setResult({ score: null, passed: null, serial: null, note: 'Kamu mentor course ini (pratinjau). Pratinjau tidak tercatat sebagai percobaan.' })
+      return
+    }
+    if (enrolled === false) {
+      setResult({ score: null, passed: null, serial: null, note: 'Ujian ini hanya bisa diikuti oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course.' })
+      return
+    }
     setSubmitting(true)
     setResult(null)
     try {
@@ -233,6 +270,33 @@ export function ExamPage() {
         <MigrationNotice migration="009" />
       ) : (questions ?? []).length === 0 ? (
         <p className="empty">Belum ada soal untuk ujian ini. Mentor menambahkan soal lewat Course Builder.</p>
+      ) : isAdmin || isCourseMentor ? (
+        <>
+          <p className="muted">
+            {isAdmin
+              ? 'Kamu masuk sebagai admin (mode pantau): soal hanya bisa dibaca, tidak bisa dijawab.'
+              : 'Kamu mentor course ini (pratinjau): soal hanya bisa dibaca — pratinjau tidak tercatat sebagai percobaan.'}
+          </p>
+          <ol>
+            {(questions ?? []).map((q) => (
+              <li key={q.id}>
+                <strong>{q.question}</strong>
+                {q.kind !== 'short' && Array.isArray(q.options) && q.options.length > 0 && (
+                  <ul>
+                    {q.options.map((opt) => (
+                      <li key={String(opt)}>{String(opt)}</li>
+                    ))}
+                  </ul>
+                )}
+                {q.explanation && <p className="muted">Penjelasan: {q.explanation}</p>}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : enrolled === false ? (
+        <p className="notice-box">
+          Ujian ini hanya bisa diikuti oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course, lalu kembali ke sini.
+        </p>
       ) : (
         <form className="form" onSubmit={handleSubmit}>
           {(questions ?? []).map((q, i) => (

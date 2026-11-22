@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { countUsersByRole, userBreakdownLabel } from '../lib/counts'
 import { fmtDate } from '../lib/guarded'
 import { decideMentorApplication, decideSchoolSubmission, fetchCourses, fetchMentorApplications, fetchProfileNames, fetchProvinces, fetchRefNameMap, fetchRegencies, fetchSchoolSubmissions, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, RefProvince, RefRegency, School, SchoolSubmission } from '../lib/types'
@@ -100,7 +101,7 @@ async function fetchMentorLoad(
 export default function AdminPage() {
   const { user, profile } = useAuth()
   const location = useLocation()
-  const [counts, setCounts] = useState({ users: 0, siswa: 0, mentor: 0, courses: 0, enrollments: 0, pendingApps: 0, openReports: 0 })
+  const [counts, setCounts] = useState({ users: 0, siswa: 0, mentor: 0, admin: 0, courses: 0, enrollments: 0, pendingApps: 0, openReports: 0 })
   const [apps, setApps] = useState<MentorApplication[]>([])
   const [claims, setClaims] = useState<CourseClaim[]>([])
   // Penolakan klaim meminta alasan (migrasi 022: decision_note).
@@ -138,6 +139,9 @@ export default function AdminPage() {
   const [schoolLoading, setSchoolLoading] = useState(true)
   const [schoolError, setSchoolError] = useState<string | null>(null)
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
+  // K11: kunci klik ganda "Setujui & Buat" — tanpa ini dua klik cepat
+  // membuat dua komunitas bernama sama + dua baris anggota + dua audit log.
+  const [decidingProposalId, setDecidingProposalId] = useState<string | null>(null)
   const [communities, setCommunities] = useState<{ id: string; name: string }[]>([])
   // Hapus komunitas memakai konfirmasi dua langkah di dalam halaman
   // (bukan window.confirm — dialog bawaan browser tidak muncul di
@@ -169,18 +173,23 @@ export default function AdminPage() {
     try {
       // Semua fetch tingkat atas independen — jalankan paralel (Promise.all),
       // bukan 12 await berurutan seperti sebelumnya.
+      // B61 (K13): .error tiap query DIPERIKSA — bila satu query gagal
+      // (RLS/jaringan), panel menampilkan error-box, bukan "0 pengguna ·
+      // 0 enrollment" yang menyamarkan kegagalan sebagai angka 0.
+      // fetchCourses / fetchMentorApplications / fetchSchoolSubmissions
+      // sudah melempar sendiri bila gagal.
       const [
-        { data: profiles },
-        { count: enrCount },
+        { data: profiles, error: profilesErr },
+        { count: enrCount, error: enrCountErr },
         courseList,
         appData,
-        { data: claimData },
-        { data: propData },
-        { data: commData },
-        { data: repData },
-        { data: annData },
-        { data: progData },
-        { data: enrData },
+        { data: claimData, error: claimErr },
+        { data: propData, error: propErr },
+        { data: commData, error: commErr },
+        { data: repData, error: repErr },
+        { data: annData, error: annErr },
+        { data: progData, error: progErr },
+        { data: enrData, error: enrRowsErr },
         subData,
       ] = await Promise.all([
         supabase.from('profiles').select('id,name,role,photo_url'),
@@ -196,6 +205,24 @@ export default function AdminPage() {
         supabase.from('enrollments').select('user_id,course_id'),
         fetchSchoolSubmissions(),
       ])
+      const failedSources = (
+        [
+          ['profil', profilesErr],
+          ['enrollment (hitung)', enrCountErr],
+          ['klaim course', claimErr],
+          ['usulan komunitas', propErr],
+          ['komunitas', commErr],
+          ['laporan diskusi', repErr],
+          ['pengumuman', annErr],
+          ['progres lesson', progErr],
+          ['enrollment (baris)', enrRowsErr],
+        ] as const
+      )
+        .filter(([, e]) => e)
+        .map(([name, e]) => `${name} (${e?.message ?? 'gagal'})`)
+      if (failedSources.length > 0) {
+        throw new Error(`Gagal memuat Admin Panel: ${failedSources.join('; ')}.`)
+      }
       const profs = (profiles ?? []) as { id: string; name: string | null; role: string; photo_url: string | null }[]
       const mentors = profs.filter((p) => p.role === 'mentor')
       // Nama profil, beban mentor, dan nama wilayah independen satu sama
@@ -210,10 +237,15 @@ export default function AdminPage() {
       setPhotos(new Map(profs.map((p) => [p.id, p.photo_url ?? null])))
       setProvinceNames(provMap)
       setRegencyNames(regMap)
+      // K13: hitung pengguna lewat helper bersama (lib/counts.ts) supaya
+      // angka yang sama di Beranda admin, Analitik, dan halaman ini
+      // didefinisikan satu kali.
+      const roleCounts = countUsersByRole(profs)
       setCounts({
-        users: profs.length,
-        siswa: profs.filter((p) => p.role === 'siswa').length,
-        mentor: profs.filter((p) => p.role === 'mentor').length,
+        users: roleCounts.total,
+        siswa: roleCounts.siswa,
+        mentor: roleCounts.mentor,
+        admin: roleCounts.admin,
         courses: courseList.length,
         enrollments: enrCount ?? 0,
         pendingApps: appData.filter((a) => a.status === 'pending').length,
@@ -543,36 +575,59 @@ export default function AdminPage() {
   }
 
   async function decideProposal(p: CommunityProposal, approve: boolean) {
-    const { error: updErr } = await supabase
-      .from('community_proposals')
-      .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
-      .eq('id', p.id)
-    if (updErr) {
-      setNotice(updErr.message)
-      return
-    }
-    if (approve) {
-      // Persetujuan membuat komunitas + menggabungkan pengusul.
-      const { data: comm, error: cErr } = await supabase
-        .from('communities')
-        .insert({ name: p.name, description: p.description, created_by: p.proposer_id, is_approved: true })
-        .select()
-        .single()
-      if (cErr) {
-        setNotice(cErr.message)
+    // K11: tolak pemanggilan kedua selagi satu keputusan masih berjalan,
+    // dan hanya putuskan usulan yang masih pending (pengaman lintas tab).
+    if (decidingProposalId) return
+    setDecidingProposalId(p.id)
+    try {
+      const { data: updated, error: updErr } = await supabase
+        .from('community_proposals')
+        .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
+        .eq('id', p.id)
+        .eq('status', 'pending')
+        .select('id')
+      if (updErr) {
+        setNotice(updErr.message)
         return
       }
-      await supabase.from('community_members').insert({
-        community_id: (comm as { id: string }).id,
-        user_id: p.proposer_id,
-        role: 'member',
-      })
-      await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
-      setNotice(`Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`)
-    } else {
-      setNotice('Usulan komunitas ditolak.')
+      if (!updated || updated.length === 0) {
+        setNotice('Usulan ini sudah diputuskan sebelumnya.')
+        return
+      }
+      if (approve) {
+        // Persetujuan membuat komunitas + menggabungkan pengusul.
+        const { data: comm, error: cErr } = await supabase
+          .from('communities')
+          .insert({ name: p.name, description: p.description, created_by: p.proposer_id, is_approved: true })
+          .select()
+          .single()
+        if (cErr) {
+          setNotice(cErr.message)
+          return
+        }
+        // K11: kegagalan insert anggota JANGAN ditelan — komunitas setengah
+        // jadi harus dilaporkan keras, bukan dibiarkan tanpa anggota.
+        const { error: mErr } = await supabase.from('community_members').insert({
+          community_id: (comm as { id: string }).id,
+          user_id: p.proposer_id,
+          role: 'member',
+        })
+        if (mErr) {
+          setNotice(
+            `Komunitas "${p.name}" berhasil dibuat, tetapi pengusul gagal ditambahkan sebagai anggota: ${mErr.message}. Tambahkan pengusul dari halaman komunitas atau hapus komunitas ini dan putuskan ulang usulannya.`,
+          )
+          await load()
+          return
+        }
+        await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
+        setNotice(`Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`)
+      } else {
+        setNotice('Usulan komunitas ditolak.')
+      }
+      await load()
+    } finally {
+      setDecidingProposalId(null)
     }
-    await load()
   }
 
   async function handleDeleteCommunity(id: string, name: string) {
@@ -637,9 +692,9 @@ export default function AdminPage() {
       <section className="section">
         <div className="dash-section-head"><h2>Ringkasan</h2><Link className="dash-more" to="/admin/pengguna">Lihat Semua →</Link></div>
         <dl className="profile-list">
-          <div><dt>Pengguna</dt><dd>{counts.users} (Siswa {counts.siswa} · Mentor {counts.mentor})</dd></div>
+          <div><dt>Pengguna</dt><dd>{userBreakdownLabel({ total: counts.users, siswa: counts.siswa, mentor: counts.mentor, admin: counts.admin, lain: 0 })}</dd></div>
           <div><dt>Course</dt><dd>{counts.courses}</dd></div>
-          <div><dt>Pendaftaran</dt><dd>{counts.enrollments}</dd></div>
+          <div><dt>Pendaftaran (terdaftar)</dt><dd>{counts.enrollments}</dd></div>
           <div><dt>Lamaran mentor pending</dt><dd>{counts.pendingApps}</dd></div>
           <div><dt>Laporan diskusi terbuka</dt><dd>{counts.openReports}</dd></div>
         </dl>
@@ -737,7 +792,7 @@ export default function AdminPage() {
       </section>
 
       <section className="section" id="pengajuan-sekolah">
-        <div className="dash-section-head"><h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} pending)</h2></div>
+        <div className="dash-section-head"><h2>Pengajuan Sekolah Manual ({schoolSubs.filter((s) => s.status === 'pending').length} pending)</h2></div>
         {schoolSubs.length === 0 ? <p className="empty">Tidak ada pengajuan sekolah.</p> : (
           <ul className="discussion-list">
             {schoolSubs.map((s) => (
@@ -946,8 +1001,8 @@ export default function AdminPage() {
               <li key={p.id}>
                 <strong>{p.name}</strong> — {p.description ?? ''} (pengusul: {names.get(p.proposer_id) ?? '—'})
                 <div className="form-actions">
-                  <button type="button" className="btn btn-primary btn-small" onClick={() => void decideProposal(p, true)}>Setujui &amp; Buat</button>
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void decideProposal(p, false)}>Tolak</button>
+                  <button type="button" className="btn btn-primary btn-small" disabled={decidingProposalId === p.id} onClick={() => void decideProposal(p, true)}>{decidingProposalId === p.id ? 'Memproses…' : 'Setujui & Buat'}</button>
+                  <button type="button" className="btn btn-ghost btn-small" disabled={decidingProposalId === p.id} onClick={() => void decideProposal(p, false)}>Tolak</button>
                 </div>
               </li>
             ))}

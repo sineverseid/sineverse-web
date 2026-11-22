@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { countCourseEnrollments } from '../lib/counts'
 import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
 import type { Course, Enrollment } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -75,8 +76,13 @@ export default function AdminEnrollmentsPage() {
   if (loading) return <div className="page"><p className="muted">Memuat…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
-  const countEnrolled = (courseId: string) => enrollments.filter((e) => e.course_id === courseId).length
-  const countWaitlisted = (courseId: string) => waitlist.filter((w) => w.course_id === courseId).length
+  // K13: hitung terdaftar/waitlist lewat helper bersama (lib/counts.ts) —
+  // definisi yang sama dengan Analitik ("Total enrollment (terdaftar)")
+  // dan Beranda admin: waitlist bukan enrollment, pipeline = keduanya.
+  const countEnrolled = (courseId: string) =>
+    countCourseEnrollments(enrollments, waitlist, courseId).enrolled
+  const countWaitlisted = (courseId: string) =>
+    countCourseEnrollments(enrollments, waitlist, courseId).waitlisted
   const selectedEnrollments = enrollments.filter((e) => e.course_id === selectedCourseId)
   const selectedWaitlist = waitlist.filter((w) => w.course_id === selectedCourseId)
 

@@ -25,6 +25,7 @@ export default function NotificationPrefsPage() {
     komunitas: true,
   })
   const [missing, setMissing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -47,8 +48,10 @@ export default function NotificationPrefsPage() {
             setCats((c) => ({ ...c, ...(prefs.categories as Record<string, boolean>) }))
           }
         }
-      } catch {
-        if (!cancelled) setMissing(true)
+      } catch (err) {
+        // K9: gagal memuat (bukan tabel hilang) tampil sebagai error,
+        // bukan sebagai MigrationNotice — keduanya beda penyebab.
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Gagal memuat preferensi.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -74,6 +77,7 @@ export default function NotificationPrefsPage() {
   }
 
   if (loading) return <div className="page"><p className="muted">Memuat pengaturan…</p></div>
+  if (loadError) return <div className="page"><h1>Pengaturan Notifikasi</h1><p className="error-box">{loadError}</p></div>
   if (missing) return <div className="page"><h1>Pengaturan Notifikasi</h1><MigrationNotice migration="008" /></div>
 
   return (

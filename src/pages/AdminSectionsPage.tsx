@@ -6,9 +6,10 @@
 // Lesson sambutan "Selamat Datang di SINEVERSE" (Orientasi, urutan 0)
 // adalah data seed: penghapusannya butuh konfirmasi kedua yang eksplisit.
 import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourses, fetchLessons, fetchModules, supabase } from '../lib/supabase'
+import { fetchCourses, fetchLessons, fetchModules, invalidateCatalogCache, supabase } from '../lib/supabase'
 import type { Course, Lesson, Module } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
@@ -37,6 +38,9 @@ export default function AdminSectionsPage() {
   const [moveTarget, setMoveTarget] = useState<Record<string, string>>({})
   const [editingModuleId, setEditingModuleId] = useState<string | null>(null)
   const [editModuleTitle, setEditModuleTitle] = useState('')
+  const [newSectionTitle, setNewSectionTitle] = useState('')
+  const [newLessonTitle, setNewLessonTitle] = useState<Record<string, string>>({})
+  const [newLessonContent, setNewLessonContent] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -199,6 +203,54 @@ export default function AdminSectionsPage() {
     await reloadCourse()
   }
 
+  async function addSection(e: FormEvent) {
+    e.preventDefault()
+    if (!selectedCourseId) return
+    if (!newSectionTitle.trim()) {
+      setNotice('Judul section tidak boleh kosong.')
+      return
+    }
+    const nextOrder = modules.length > 0 ? Math.max(...modules.map((m) => m.order_index)) + 1 : 1
+    const { error: insErr } = await supabase.from('modules').insert({
+      course_id: selectedCourseId,
+      title: newSectionTitle.trim(),
+      order_index: nextOrder,
+      is_published: true,
+    })
+    if (insErr) {
+      setNotice(`Gagal menambah section: ${insErr.message}`)
+      return
+    }
+    invalidateCatalogCache()
+    setNotice(`Section "${newSectionTitle.trim()}" ditambahkan.`)
+    setNewSectionTitle('')
+    await reloadCourse()
+  }
+
+  async function addLesson(e: FormEvent, moduleId: string) {
+    e.preventDefault()
+    const title = (newLessonTitle[moduleId] ?? '').trim()
+    if (!title) {
+      setNotice('Judul lesson tidak boleh kosong.')
+      return
+    }
+    const { error: insErr } = await supabase.from('lessons').insert({
+      module_id: moduleId,
+      title,
+      content: (newLessonContent[moduleId] ?? '').trim() || null,
+      order_index: lessonsOf(moduleId).length,
+    })
+    if (insErr) {
+      setNotice(`Gagal menambah lesson: ${insErr.message}`)
+      return
+    }
+    invalidateCatalogCache()
+    setNotice(`Lesson "${title}" ditambahkan.`)
+    setNewLessonTitle((prev) => ({ ...prev, [moduleId]: '' }))
+    setNewLessonContent((prev) => ({ ...prev, [moduleId]: '' }))
+    await reloadCourse()
+  }
+
   return (
     <div className="page">
       <PageHeader
@@ -219,6 +271,24 @@ export default function AdminSectionsPage() {
           </select>
         </label>
         {selectedCourse && <p className="muted">{modules.length} section · {lessons.length} lesson</p>}
+      </section>
+
+      <section className="section">
+        <h2>Tambah Section</h2>
+        <form className="form" onSubmit={addSection}>
+          <label>
+            Judul section baru
+            <input
+              value={newSectionTitle}
+              onChange={(e) => setNewSectionTitle(e.target.value)}
+              required
+              placeholder="Mis. Section 3 — Minggu 3"
+            />
+          </label>
+          <button type="submit" className="btn btn-primary btn-small" disabled={!selectedCourseId}>
+            Tambah Section
+          </button>
+        </form>
       </section>
 
       {loadingCourse && <p className="muted">Memuat…</p>}
@@ -258,7 +328,7 @@ export default function AdminSectionsPage() {
               <p className="empty">Section ini belum punya lesson.</p>
             ) : (
               <ul className="discussion-list">
-                {modLessons.map((lesson) => (
+                {modLessons.map((lesson, idx) => (
                   <li key={lesson.id} className="discussion-item">
                     {editingLessonId === lesson.id ? (
                       <form
@@ -284,7 +354,11 @@ export default function AdminSectionsPage() {
                     ) : (
                       <>
                         <p>
-                          <strong>{lesson.order_index + 1}. {lesson.title}</strong>
+                          {/* Nomor urut dihitung per section (posisi di
+                              daftar ini), bukan dari order_index global —
+                              sebelumnya lesson bernomor 2–6 di SETIAP
+                              section karena order_index tidak diulang. */}
+                          <strong>{idx + 1}. {lesson.title}</strong>
                           {isWelcomeLesson(lesson, modules) && ' (lesson sambutan seed)'}
                         </p>
                         {lesson.video_url && <p className="muted">Video: {lesson.video_url}</p>}
@@ -314,6 +388,33 @@ export default function AdminSectionsPage() {
                 ))}
               </ul>
             )}
+            <form
+              className="form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void addLesson(e, mod.id)
+              }}
+            >
+              <h3>Tambah Lesson ke section ini</h3>
+              <label>
+                Judul lesson
+                <input
+                  value={newLessonTitle[mod.id] ?? ''}
+                  onChange={(e) => setNewLessonTitle((prev) => ({ ...prev, [mod.id]: e.target.value }))}
+                  required
+                  placeholder="Mis. Pengenalan kamera"
+                />
+              </label>
+              <label>
+                Konten (opsional)
+                <textarea
+                  value={newLessonContent[mod.id] ?? ''}
+                  onChange={(e) => setNewLessonContent((prev) => ({ ...prev, [mod.id]: e.target.value }))}
+                  rows={3}
+                />
+              </label>
+              <button type="submit" className="btn btn-primary btn-small">Tambah Lesson</button>
+            </form>
           </section>
         )
       })}

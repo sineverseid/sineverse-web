@@ -191,12 +191,15 @@ export default function AdminAcademyAnalyticsPage() {
         // modules + submission. Assignments menyusul setelah lesson
         // diketahui (butuh lesson_id). Pengelompokan dihitung di JS.
         const noId = ['00000000-0000-0000-0000-000000000000']
+        // B62 (K13): .error tiap batch DIPERIKSA — gagal = error state,
+        // bukan agregat 0 + empty state. fetchCourses sudah melempar
+        // sendiri bila gagal.
         const [
           courseList,
-          { data: profileRows },
-          { data: enrRowsRaw },
-          { data: modRowsRaw },
-          { data: subRowsRaw },
+          { data: profileRows, error: profileErr },
+          { data: enrRowsRaw, error: enrErr },
+          { data: modRowsRaw, error: modErr },
+          { data: subRowsRaw, error: subErr },
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
@@ -206,6 +209,21 @@ export default function AdminAcademyAnalyticsPage() {
             .from('submissions')
             .select('id,assignment_id,user_id,score,submitted_at,graded_at,is_late'),
         ])
+        {
+          const failed = (
+            [
+              ['profil', profileErr],
+              ['enrollment', enrErr],
+              ['modul', modErr],
+              ['submission', subErr],
+            ] as const
+          )
+            .filter(([, e]) => e)
+            .map(([name, e]) => `${name} (${e?.message ?? 'gagal'})`)
+          if (failed.length > 0) {
+            throw new Error(`Gagal memuat analitik akademi: ${failed.join('; ')}.`)
+          }
+        }
         const profs = (profileRows ?? []) as { id: string; role: string }[]
         const enrRows = (enrRowsRaw ?? []) as {
           id: string
@@ -224,17 +242,19 @@ export default function AdminAcademyAnalyticsPage() {
           is_late: boolean
         }[]
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
-        const { data: lessonRowsRaw } = await supabase
+        const { data: lessonRowsRaw, error: lessonErr } = await supabase
           .from('lessons')
           .select('id,module_id')
           .in('module_id', modRows.length > 0 ? modRows.map((m) => m.id) : noId)
+        if (lessonErr) throw new Error(`Gagal memuat analitik akademi: lesson (${lessonErr.message}).`)
         const lessonRows = (lessonRowsRaw ?? []) as { id: string; module_id: string }[]
         const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
         const lessonIds = lessonRows.map((l) => l.id)
-        const { data: assignRowsRaw } = await supabase
+        const { data: assignRowsRaw, error: assignErr } = await supabase
           .from('assignments')
           .select('id,lesson_id,due_date')
           .in('lesson_id', lessonIds.length > 0 ? lessonIds : noId)
+        if (assignErr) throw new Error(`Gagal memuat analitik akademi: tugas (${assignErr.message}).`)
         const assignRows = (assignRowsRaw ?? []) as {
           id: string
           lesson_id: string

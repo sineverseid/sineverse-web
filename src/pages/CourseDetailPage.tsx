@@ -1022,6 +1022,9 @@ export default function CourseDetailPage() {
     </>
   )
 
+  // K6: Tugas/Diskusi hanya untuk peserta course + mentor pengampu —
+  // tamu dan siswa yang belum terdaftar tidak melihat isinya.
+  const canSeeCourseContent = enrolled || isCourseMentor
   const tabList = isAdmin
     ? [
         { id: 'ringkasan', label: 'Ringkasan' },
@@ -1030,8 +1033,12 @@ export default function CourseDetailPage() {
     : [
         { id: 'deskripsi', label: 'Deskripsi' },
         { id: 'materi', label: 'Materi' },
-        { id: 'tugas', label: 'Tugas' },
-        { id: 'diskusi', label: 'Diskusi' },
+        ...(canSeeCourseContent
+          ? [
+              { id: 'tugas', label: 'Tugas' },
+              { id: 'diskusi', label: 'Diskusi' },
+            ]
+          : []),
       ]
   const activeTabId = tabList.some((t) => t.id === activeTab) ? activeTab : tabList[0].id
 
@@ -1121,10 +1128,28 @@ export default function CourseDetailPage() {
         <>
           {activeTabId === 'deskripsi' && deskripsiPanel}
           {activeTabId === 'materi' && materiPanel}
-          {activeTabId === 'tugas' && tugasPanel}
-          {activeTabId === 'diskusi' && diskusiPanel}
+          {canSeeCourseContent && activeTabId === 'tugas' && tugasPanel}
+          {canSeeCourseContent && activeTabId === 'diskusi' && diskusiPanel}
           {gradesSection}
-          {liveSection}
+          {/* K6: tautan Meet Kelas Live hanya untuk peserta + mentor course. */}
+          {canSeeCourseContent ? (
+            liveSection
+          ) : (
+            <section className="section" aria-label="Kelas Live">
+              <h2>Kelas Live</h2>
+              <p className="muted">
+                Kelas live dan tautan Meet hanya tersedia untuk siswa yang terdaftar di course ini.
+                {!user ? (
+                  <>
+                    {' '}
+                    <Link to="/login">Masuk</Link> lalu daftar ke course ini.
+                  </>
+                ) : (
+                  ' Daftar dulu lewat tombol di atas.'
+                )}
+              </p>
+            </section>
+          )}
         </>
       )}
     </div>

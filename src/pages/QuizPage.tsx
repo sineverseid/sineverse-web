@@ -8,7 +8,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { fetchQuizAttempts, fetchQuizQuestions, supabase } from '../lib/supabase'
+import { fetchEnrollment, fetchQuizAttempts, fetchQuizQuestions, supabase } from '../lib/supabase'
 import type { Quiz, QuizAttempt, QuizKind, QuizQuestion } from '../lib/types'
 
 /** Label jenis kuis (migrasi 015): kuis lama tanpa kind dibaca sebagai 'Kuis'. */
@@ -24,6 +24,10 @@ export default function QuizPage() {
   // Mode pantau (migrasi 022): admin boleh MEMBUKA kuis untuk memantau,
   // tetapi tidak boleh mengerjakannya sebagai peserta.
   const isAdmin = profile?.role === 'admin'
+  // K4: hanya siswa terdaftar di course pemilik kuis yang boleh submit;
+  // mentor course mendapat pratinjau read-only (tanpa attempt tercatat).
+  const [enrolled, setEnrolled] = useState<boolean | null>(null)
+  const [isCourseMentor, setIsCourseMentor] = useState(false)
   const [quiz, setQuiz] = useState<Quiz | null>(null)
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null)
   const [missing, setMissing] = useState(false)
@@ -63,6 +67,30 @@ export default function QuizPage() {
         if (qs === null) setMissing(true)
         else setQuestions(qs)
         setAttempts(atts.filter((a) => a.quiz_id === quizId))
+        // K4: tentukan course pemilik kuis lewat lesson -> module -> course,
+        // lalu cek enrollment + apakah pengguna mentor course ini.
+        try {
+          const { data: lRow } = await supabase
+            .from('lessons')
+            .select('module_id, modules(course_id)')
+            .eq('id', (q as Quiz).lesson_id)
+            .maybeSingle()
+          const cid = (lRow as unknown as { modules?: { course_id?: string } } | null)?.modules?.course_id
+          if (cid) {
+            const [enr, { data: cRow }] = await Promise.all([
+              fetchEnrollment(currentUser.id, cid),
+              supabase.from('courses').select('mentor_id').eq('id', cid).maybeSingle(),
+            ])
+            if (!cancelled) {
+              setEnrolled(enr !== null)
+              setIsCourseMentor((cRow as { mentor_id?: string } | null)?.mentor_id === currentUser.id)
+            }
+          } else if (!cancelled) {
+            setEnrolled(false)
+          }
+        } catch {
+          if (!cancelled) setEnrolled(false)
+        }
       } catch (err) {
         if (!cancelled) {
           if (isMissingTableError(err)) setMissing(true)
@@ -97,6 +125,16 @@ export default function QuizPage() {
     // Admin hanya memantau (migrasi 022): RPC juga menolak, ini pesan jelasnya.
     if (isAdmin) {
       setResult({ score: null, note: 'Kamu masuk sebagai admin (mode pantau). Admin tidak mengerjakan kuis.' })
+      return
+    }
+    // K4: pratinjau mentor tidak tercatat sebagai attempt; hanya siswa
+    // terdaftar di course ini yang boleh mengerjakan kuis.
+    if (isCourseMentor) {
+      setResult({ score: null, note: 'Kamu mentor course ini (pratinjau). Pratinjau tidak tercatat sebagai percobaan.' })
+      return
+    }
+    if (enrolled !== true) {
+      setResult({ score: null, note: 'Kuis ini hanya bisa dikerjakan oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course.' })
       return
     }
     setSubmitting(true)
@@ -154,10 +192,12 @@ export default function QuizPage() {
 
       {(questions ?? []).length === 0 ? (
         <p className="empty">Belum ada soal untuk kuis ini. Mentor menambahkan soal lewat Course Builder.</p>
-      ) : isAdmin ? (
+      ) : isAdmin || isCourseMentor ? (
         <>
           <p className="muted">
-            Kamu masuk sebagai admin (mode pantau): soal hanya bisa dibaca, tidak bisa dijawab.
+            {isAdmin
+              ? 'Kamu masuk sebagai admin (mode pantau): soal hanya bisa dibaca, tidak bisa dijawab.'
+              : 'Kamu mentor course ini (pratinjau): soal hanya bisa dibaca — pratinjau tidak tercatat sebagai percobaan dan tidak menggelembungkan hitungan Attempt.'}
           </p>
           <ol>
             {(questions ?? []).map((q) => (
@@ -175,6 +215,10 @@ export default function QuizPage() {
             ))}
           </ol>
         </>
+      ) : enrolled !== true ? (
+        <p className="notice-box">
+          Kuis ini hanya bisa dikerjakan oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course, lalu kembali ke sini.
+        </p>
       ) : (
         <form className="form" onSubmit={handleSubmit}>
           {(questions ?? []).map((q, i) => (

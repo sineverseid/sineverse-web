@@ -8,7 +8,7 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchSubmissions, supabase, uploadToBucket, addSubmissionFiles, fetchRubricForAssignment, fetchSubmissionFiles } from '../lib/supabase'
+import { fetchEnrollment, fetchSubmissions, supabase, uploadToBucket, addSubmissionFiles, fetchRubricForAssignment, fetchSubmissionFiles } from '../lib/supabase'
 import type { Assignment, RubricWithCriteria, Submission, SubmissionFile } from '../lib/types'
 
 type AssignmentRow = Assignment & { due_date?: string | null; rubric?: string | null }
@@ -40,6 +40,10 @@ export default function AssignmentPage() {
   // Course pemilik tugas — dibutuhkan untuk path upload storage yang
   // sesuai konvensi README (<course-id>/<assignment-id>/<user-id>/...).
   const [courseId, setCourseId] = useState<string | null>(null)
+  // K3: hanya siswa terdaftar di course pemilik tugas yang boleh submit;
+  // mentor course hanya membaca (menilai lewat Antrean Penilaian).
+  const [enrolled, setEnrolled] = useState<boolean | null>(null)
+  const [isCourseMentor, setIsCourseMentor] = useState(false)
   // Signed URL per file lampiran (bucket submission-files privat).
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
 
@@ -70,9 +74,11 @@ export default function AssignmentPage() {
         // Tentukan course pemilik tugas (untuk path upload storage).
         // Pakai helper RPC migrasi 014; bila gagal, telusuri lewat
         // lesson -> module -> course.
+        let resolvedCourseId: string | null = null
         try {
           const { data: cid, error: cErr } = await supabase.rpc('course_id_for_assignment', { p_assignment_id: assignmentId })
           if (!cErr && typeof cid === 'string' && cid) {
+            resolvedCourseId = cid
             if (!cancelled) setCourseId(cid)
           } else {
             const { data: lRow } = await supabase
@@ -81,10 +87,30 @@ export default function AssignmentPage() {
               .eq('id', (data as AssignmentRow).lesson_id)
               .maybeSingle()
             const mid = (lRow as unknown as { modules?: { course_id?: string } } | null)?.modules?.course_id
-            if (mid && !cancelled) setCourseId(mid)
+            if (mid) {
+              resolvedCourseId = mid
+              if (!cancelled) setCourseId(mid)
+            }
           }
         } catch {
           // courseId tetap null; upload file diblokir dengan pesan jujur.
+        }
+        // K3: cek enrollment + apakah pengguna mentor course ini.
+        if (resolvedCourseId) {
+          try {
+            const [enr, { data: cRow }] = await Promise.all([
+              fetchEnrollment(currentUser.id, resolvedCourseId),
+              supabase.from('courses').select('mentor_id').eq('id', resolvedCourseId).maybeSingle(),
+            ])
+            if (!cancelled) {
+              setEnrolled(enr !== null)
+              setIsCourseMentor((cRow as { mentor_id?: string } | null)?.mentor_id === currentUser.id)
+            }
+          } catch {
+            if (!cancelled) setEnrolled(false)
+          }
+        } else if (!cancelled) {
+          setEnrolled(false)
         }
         const all = await subsP
         if (cancelled) return
@@ -192,6 +218,16 @@ export default function AssignmentPage() {
     // Admin hanya memantau (migrasi 022): RLS juga menolak, ini pesan jelasnya.
     if (isAdmin) {
       setNotice('Kamu masuk sebagai admin (mode pantau). Admin tidak mengumpulkan tugas.')
+      return
+    }
+    // K3: mentor course tidak mengumpulkan tugasnya sendiri; hanya siswa
+    // terdaftar di course ini yang boleh submit.
+    if (isCourseMentor) {
+      setNotice('Kamu mentor course ini. Tugas hanya bisa dibaca di sini; nilai pengiriman lewat Antrean Penilaian.')
+      return
+    }
+    if (enrolled !== true) {
+      setNotice('Tugas ini hanya bisa dikumpulkan oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course, lalu kembali ke sini.')
       return
     }
     if (!user || !currentAssignment || (!content.trim() && files.length === 0)) {
@@ -318,6 +354,14 @@ export default function AssignmentPage() {
       {isAdmin ? (
         <p className="muted">
           Kamu masuk sebagai admin (mode pantau): tugas hanya bisa dibaca, tidak bisa dikumpulkan. Pantau pengiriman lewat Monitoring Tugas.
+        </p>
+      ) : isCourseMentor ? (
+        <p className="muted">
+          Kamu mentor course ini: tugas hanya bisa dibaca di sini. Nilai pengiriman lewat Antrean Penilaian.
+        </p>
+      ) : enrolled !== true ? (
+        <p className="notice-box">
+          Tugas ini hanya bisa dikumpulkan oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course, lalu kembali ke sini untuk mengumpulkan tugas.
         </p>
       ) : (
       <form className="form" onSubmit={handleSubmit}>

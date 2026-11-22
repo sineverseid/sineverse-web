@@ -125,6 +125,13 @@ export default function AdminQuizzesPage() {
         title="Kelola Kuis"
         subtitle="Semua kuis, pretest, dan posttest di semua course beserta hasil attempt-nya."
       />
+      <p>
+        <Link to="/mentor/course-builder" className="btn btn-primary">Buat Kuis</Link>
+      </p>
+      <p className="muted">
+        Kuis, pretest, dan posttest dibuat dari Course Builder: pilih course, buka builder-nya,
+        lalu tambah kuis di lesson yang diinginkan.
+      </p>
       {rows !== null && rows.length === 0 && <p className="empty">Belum ada kuis.</p>}
       {rows !== null && rows.length > 0 && (
         <div className="grade-table-wrap">

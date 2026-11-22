@@ -124,6 +124,13 @@ export default function AdminAssignmentsPage() {
         title="Monitoring Tugas"
         subtitle="Semua tugas di semua course: jumlah pengumpulan, yang belum dinilai, dan yang terlambat."
       />
+      <p>
+        <Link to="/mentor/course-builder" className="btn btn-primary">Buat Tugas</Link>
+      </p>
+      <p className="muted">
+        Tugas dibuat dari Course Builder: pilih course, buka builder-nya, lalu tambah tugas
+        di lesson yang diinginkan.
+      </p>
       {rows !== null && rows.length === 0 && <p className="empty">Belum ada tugas.</p>}
       {rows !== null && rows.length > 0 && (
         <div className="grade-table-wrap">

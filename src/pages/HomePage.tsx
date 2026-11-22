@@ -30,6 +30,7 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
 import { courseIllustration, rpsWeekLabel } from '../lib/brand'
+import { countEnrollments, countUsersByRole } from '../lib/counts'
 import {
   decideMentorApplication,
   decideSchoolSubmission,
@@ -42,6 +43,7 @@ import {
   fetchProfileNames,
   fetchRefNameMap,
   fetchSchoolSubmissions,
+  fetchSchoolTotals,
   fetchSubmissions,
   logAudit,
   supabase,
@@ -1778,6 +1780,9 @@ function AdminHome(props: {
     unverifiedSchools: 0,
   })
   const [usersError, setUsersError] = useState<string | null>(null)
+  // B64 (K13): sumber data yang gagal dimuat (bukan profil) — ditampilkan
+  // sebagai penanda per sumber, bukan disamarkan sebagai angka 0.
+  const [loadWarnings, setLoadWarnings] = useState<string[]>([])
   const [targetLabels, setTargetLabels] = useState<
     Map<string, { label: string; to: string | null }>
   >(new Map())
@@ -1814,6 +1819,18 @@ function AdminHome(props: {
 
   async function load() {
     try {
+      // B64 (K13): fetch best-effort yang gagal TETAP dicatat sumbernya —
+      // fallback dipakai untuk angka, tapi kegagalannya ditampilkan sebagai
+      // penanda, bukan disamarkan sebagai 0.
+      const failedSources: string[] = []
+      async function tracked<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+        try {
+          return await fn()
+        } catch {
+          failedSources.push(label)
+          return fallback
+        }
+      }
       // Tujuh fetch independen dijalankan PARALEL dalam satu batch, bukan
       // berurutan — sebelumnya delapan await berurutan membuat Beranda admin
       // paling lambat. fetchProfileNames menyusul setelah profil didapat.
@@ -1827,16 +1844,19 @@ function AdminHome(props: {
         schoolData,
         dData,
         mData,
+        schoolTotals,
       ] = await Promise.all([
         supabase.from('profiles').select('id,name,role,created_at'),
-        safe(
+        tracked(
+          'film',
           async () =>
             supabase.from('films').select('id', { count: 'exact', head: true }),
           { count: 0 } as { count: number | null },
         ),
         // Enrollment + sertifikat diambil sebagai baris (bukan hitung saja)
         // supaya bisa difilter periode lewat enrolled_at / issued_at.
-        safe(
+        tracked(
+          'enrollment',
           async () => {
             const { data } = await supabase
               .from('enrollments')
@@ -1850,23 +1870,26 @@ function AdminHome(props: {
           },
           [] as { id: string; user_id: string; course_id: string; enrolled_at: string }[],
         ),
-        safe(
+        tracked(
+          'sertifikat',
           async () => {
             const { data } = await supabase.from('certificates').select('id,issued_at')
             return (data ?? []) as { id: string; issued_at: string }[]
           },
           [] as { id: string; issued_at: string }[],
         ),
-        safe(async () => fetchMentorApplications(), [] as MentorApplication[]),
-        safe(async () => fetchSchoolSubmissions(), [] as SchoolSubmission[]),
-        safe(
+        tracked('lamaran mentor', async () => fetchMentorApplications(), [] as MentorApplication[]),
+        tracked('pengajuan sekolah', async () => fetchSchoolSubmissions(), [] as SchoolSubmission[]),
+        tracked(
+          'sekolah',
           async () => {
             const { data } = await supabase.from('schools').select('*').order('name')
             return (data ?? []) as School[]
           },
           [] as School[],
         ),
-        safe(
+        tracked(
+          'laporan diskusi',
           async () => {
             const { data } = await supabase
               .from('discussion_reports')
@@ -1877,7 +1900,8 @@ function AdminHome(props: {
           },
           [] as DiscussionReport[],
         ),
-        safe(
+        tracked(
+          'laporan moderasi',
           async () => {
             const { data } = await supabase
               .from('moderation_reports')
@@ -1888,6 +1912,10 @@ function AdminHome(props: {
           },
           [] as ModerationReport[],
         ),
+        // K13: total sekolah dari hitung server (count exact) — panjang
+        // array select('*') di atas terpotong di 1000 baris oleh PostgREST
+        // dan pernah membuat hero menampilkan "1000 sekolah".
+        tracked('total sekolah', async () => fetchSchoolTotals(), { total: 0, verified: 0, unverified: 0 }),
       ])
       // Kegagalan memuat profil jangan disamarkan sebagai 0 pengguna.
       if (profilesErr) {
@@ -1912,17 +1940,21 @@ function AdminHome(props: {
       ])
       setProvinceNames(provMap)
       setRegencyNames(regMap)
+      // K13: angka ringkasan lewat helper bersama (lib/counts.ts); total +
+      // belum-terverifikasi sekolah dari hitung server, bukan panjang
+      // array (terpotong 1000 baris).
+      const roleCounts = countUsersByRole(profs)
       setCounts({
-        users: profs.length,
-        siswa: profs.filter((p) => p.role === 'siswa').length,
-        mentor: profs.filter((p) => p.role === 'mentor').length,
-        admin: profs.filter((p) => p.role === 'admin').length,
-        schools: schoolData.length,
+        users: roleCounts.total,
+        siswa: roleCounts.siswa,
+        mentor: roleCounts.mentor,
+        admin: roleCounts.admin,
+        schools: schoolTotals.total,
         films: filmCount ?? 0,
-        enrollments: enrRows.length,
+        enrollments: countEnrollments(enrRows).enrolled,
         pendingApps: appData.filter((a) => a.status === 'pending').length,
         openReports: dData.length + mData.length,
-        unverifiedSchools: schoolData.filter((s) => !s.is_verified).length,
+        unverifiedSchools: schoolTotals.unverified,
       })
       setApps(appData)
       setSchoolSubs(subData)
@@ -1933,7 +1965,7 @@ function AdminHome(props: {
       // Progress Academy (data asli): lesson selesai / (siswa terdaftar ×
       // lesson) di semua course. Hanya progres siswa yang terdaftar di
       // course lesson itu yang dihitung; gagal memuat → null ("—").
-      const academy = await safe(
+      const academy = await tracked('progres academy',
         async () => {
           const { data: modData } = await supabase
             .from('modules')
@@ -2077,7 +2109,7 @@ function AdminHome(props: {
 
       // Aktivitas terbaru: audit log; bila tabel tidak ada, pakai
       // pendaftaran terbaru sebagai gantinya (data asli saja).
-      const aRows = await safe(
+      const aRows = await tracked('audit log',
         async () => {
           const { data } = await supabase
             .from('audit_log')
@@ -2101,7 +2133,7 @@ function AdminHome(props: {
           })),
         )
       } else {
-        const newest = await safe(
+        const newest = await tracked('pendaftaran terbaru',
           async () => {
             const { data } = await supabase
               .from('profiles')
@@ -2121,6 +2153,8 @@ function AdminHome(props: {
           })),
         )
       }
+      // B64: tampilkan sumber data yang gagal dimuat sebagai penanda.
+      setLoadWarnings(failedSources)
     } catch {
       setError('Gagal memuat Ringkasan SINEVERSE. Coba muat ulang halaman.')
     } finally {
@@ -2333,6 +2367,12 @@ function AdminHome(props: {
 
       {notice && <p className="notice-box">{notice}</p>}
       {usersError && <p className="error-box">{usersError}</p>}
+      {loadWarnings.length > 0 && (
+        <p className="error-box">
+          Sebagian data gagal dimuat: {loadWarnings.join(', ')}. Angka dari sumber tersebut mungkin
+          menampilkan 0 — coba muat ulang halaman.
+        </p>
+      )}
 
       <section className="section" aria-label="Statistik platform">
         <div className="dash-section-head">
@@ -2453,7 +2493,7 @@ function AdminHome(props: {
           </div>
           <div className="stat-card">
             <span className="stat-num">{counts.unverifiedSchools}</span>
-            <span className="stat-label">Sekolah belum terverifikasi</span>
+            <span className="stat-label">Sekolah di direktori belum terverifikasi</span>
             <Link to="/admin#verifikasi-sekolah">Tinjau →</Link>
           </div>
           <div className="stat-card">
@@ -2557,7 +2597,7 @@ function AdminHome(props: {
 
       <section className="section">
         <div className="dash-section-head">
-          <h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} menunggu)</h2>
+          <h2>Pengajuan Sekolah Manual ({schoolSubs.filter((s) => s.status === 'pending').length} menunggu)</h2>
           <Link to="/admin#pengajuan-sekolah" className="dash-more">
             Lihat Semua →
           </Link>
@@ -2622,31 +2662,44 @@ function AdminHome(props: {
 
       <section className="section">
         <div className="dash-section-head">
-          <h2>Sekolah Belum Terverifikasi ({unverified.length})</h2>
+          <h2>Sekolah di Direktori Belum Terverifikasi ({counts.unverifiedSchools})</h2>
           <Link to="/admin#verifikasi-sekolah" className="dash-more">
             Lihat Semua →
           </Link>
         </div>
-        {unverified.length === 0 ? (
+        {counts.unverifiedSchools === 0 ? (
           <p className="empty">Semua sekolah sudah terverifikasi.</p>
+        ) : unverified.length === 0 ? (
+          <p className="empty">
+            Daftar sekolah belum terverifikasi tidak dapat dimuat di sini — buka Verifikasi
+            Sekolah untuk melihat {counts.unverifiedSchools} sekolah tersebut.
+          </p>
         ) : (
-          <ul className="discussion-list">
-            {unverified.map((s) => (
-              <li key={s.id} className="discussion-item">
-                <h3>{s.name}</h3>
-                {s.city && <p className="muted">{s.city}</p>}
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-small"
-                    onClick={() => void handleVerifySchool(s, true)}
-                  >
-                    Verifikasi
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="discussion-list">
+              {unverified.map((s) => (
+                <li key={s.id} className="discussion-item">
+                  <h3>{s.name}</h3>
+                  {s.city && <p className="muted">{s.city}</p>}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void handleVerifySchool(s, true)}
+                    >
+                      Verifikasi
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {counts.unverifiedSchools > unverified.length && (
+              <p className="muted">
+                Menampilkan {unverified.length} dari {counts.unverifiedSchools} sekolah belum
+                terverifikasi — lihat semua di Verifikasi Sekolah.
+              </p>
+            )}
+          </>
         )}
       </section>
 
