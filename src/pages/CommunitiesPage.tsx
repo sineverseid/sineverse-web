@@ -233,7 +233,7 @@ export default function CommunitiesPage() {
   async function toggleJoin(id: string, joined: boolean, communityName?: string) {
     if (!user) return
     if (joined) {
-      if (!window.confirm('Yakin keluar dari community ini?')) return
+      if (!window.confirm('Yakin keluar dari komunitas ini?')) return
       const wasMentor = myRoles.get(id) === 'mentor'
       const { error } = await supabase
         .from('community_members')
@@ -269,8 +269,8 @@ export default function CommunitiesPage() {
         seeking_mentor_restored: seekingRestored,
       })
       setNotice(
-        `Kamu sudah keluar dari community${communityName ? ` "${communityName}"` : ''}.` +
-          (seekingRestored ? ' Community ini kembali ditandai sedang mencari pembimbing.' : ''),
+        `Kamu sudah keluar dari komunitas${communityName ? ` "${communityName}"` : ''}.` +
+          (seekingRestored ? ' Komunitas ini kembali ditandai sedang mencari pembimbing.' : ''),
       )
       await load()
     } else {
@@ -363,14 +363,18 @@ export default function CommunitiesPage() {
         setNotice(friendlyDbError())
         return
       }
-      await supabase.from('community_members').insert({
+      const { error: memErr } = await supabase.from('community_members').insert({
         community_id: (comm as { id: string }).id,
         user_id: p.proposer_id,
         role: 'member',
       })
       await logAudit('community_proposal.approved', 'community_proposals', p.id, { community_id: (comm as { id: string }).id })
       invalidateCatalogCache()
-      setNotice(`Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`)
+      setNotice(
+        memErr
+          ? `Komunitas "${p.name}" dibuat, tetapi pengusul gagal langsung menjadi anggota. Coba tambahkan manual dari halaman detail komunitas.`
+          : `Komunitas "${p.name}" dibuat dan pengusul langsung menjadi anggotanya.`,
+      )
     } else {
       setNotice('Usulan komunitas ditolak.')
     }
@@ -433,8 +437,8 @@ export default function CommunitiesPage() {
       <div className="page">
         <PageHeader
           icon="community"
-          title="Community"
-          subtitle="Moderasi Community. Admin tidak bergabung ke community."
+          title="Komunitas"
+          subtitle="Moderasi Komunitas. Admin tidak bergabung ke komunitas."
         />
         {notice && <p className="notice-box">{notice}</p>}
 
@@ -477,7 +481,7 @@ export default function CommunitiesPage() {
 
         <section className="section">
           <div className="section-head">
-            <h2>Laporan Community</h2>
+            <h2>Laporan Komunitas</h2>
             <Link to="/admin/moderasi">Moderasi →</Link>
           </div>
           {modReports === null ? (
@@ -486,7 +490,7 @@ export default function CommunitiesPage() {
               <Link to="/admin/moderasi">Lihat Moderasi</Link>
             </p>
           ) : modReports.length === 0 ? (
-            <p className="empty">Tidak ada laporan community.</p>
+            <p className="empty">Tidak ada laporan komunitas.</p>
           ) : (
             <ul className="discussion-list">
               {modReports.map((r) => {
@@ -527,11 +531,11 @@ export default function CommunitiesPage() {
 
         <section className="section">
           <div className="section-head">
-            <h2>Semua Community ({items.length})</h2>
+            <h2>Semua Komunitas ({items.length})</h2>
             <Link to="/admin">Admin Panel →</Link>
           </div>
           {items.length === 0 ? (
-            <EmptyState message="Belum ada community." />
+            <EmptyState message="Belum ada komunitas." />
           ) : (
             <ul className="discussion-list">
               {items.map((c) => (
@@ -573,19 +577,19 @@ export default function CommunitiesPage() {
       <div className="page">
         <PageHeader
           icon="community"
-          title="Community"
-          subtitle="Community yang kamu ikuti dan community lain yang bisa kamu ikuti."
+          title="Komunitas"
+          subtitle="Komunitas yang kamu ikuti dan komunitas lain yang bisa kamu ikuti."
         />
         {notice && <p className="notice-box">{notice}</p>}
 
         <section className="section">
-          <h2>Community Mencari Pembimbing ({seeking.length})</h2>
+          <h2>Komunitas Mencari Pembimbing ({seeking.length})</h2>
           <p className="muted">
-            Community yang sedang membutuhkan pembimbing. Jadi pembimbing berarti kamu membimbing
-            diskusi dan karya anggota community itu.
+            Komunitas yang sedang membutuhkan pembimbing. Jadi pembimbing berarti kamu membimbing
+            diskusi dan karya anggota komunitas itu.
           </p>
           {seeking.length === 0 ? (
-            <p className="empty">Tidak ada community yang sedang mencari pembimbing saat ini.</p>
+            <p className="empty">Tidak ada komunitas yang sedang mencari pembimbing saat ini.</p>
           ) : (
             <ul className="course-list">
               {seeking.map((c) => (
@@ -613,9 +617,9 @@ export default function CommunitiesPage() {
         </section>
 
         <section className="section">
-          <h2>Community yang Kamu Ikuti ({joined.length})</h2>
+          <h2>Komunitas yang Kamu Ikuti ({joined.length})</h2>
           {joined.length === 0 ? (
-            <p className="empty">Kamu belum mengikuti community apa pun.</p>
+            <p className="empty">Kamu belum mengikuti komunitas apa pun.</p>
           ) : (
             <ul className="course-list">
               {joined.map((c) => (
@@ -656,9 +660,9 @@ export default function CommunitiesPage() {
         </section>
 
         <section className="section">
-          <h2>Community Lain ({others.length})</h2>
+          <h2>Komunitas Lain ({others.length})</h2>
           {others.length === 0 ? (
-            <p className="empty">Tidak ada community lain saat ini.</p>
+            <p className="empty">Tidak ada komunitas lain saat ini.</p>
           ) : (
             <ul className="course-list">
               {others.map((c) => (
@@ -712,7 +716,7 @@ export default function CommunitiesPage() {
     <div className="page">
       <PageHeader
         icon="community"
-        title="Community"
+        title="Komunitas"
         subtitle="Bergabung dengan komunitas filmmaker pelajar di seluruh Indonesia."
       />
       {notice && <p className="notice-box">{notice}</p>}

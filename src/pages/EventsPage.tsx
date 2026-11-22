@@ -43,8 +43,8 @@ export function EventsPage() {
         throw qErr
       }
       setEvents((data ?? []) as SineEvent[])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat acara.')
+    } catch {
+      setError('Gagal memuat acara. Coba lagi nanti.')
     } finally {
       setLoading(false)
     }
@@ -86,7 +86,7 @@ export function EventsPage() {
       created_by: user.id,
     })
     if (insErr) {
-      setNotice(insErr.message)
+      setNotice('Gagal membuat acara. Coba lagi nanti.')
       return
     }
     setNotice('Acara dibuat. Tambahkan sesi/rundown dari halaman detail acara.')
@@ -103,10 +103,10 @@ export function EventsPage() {
     <div className="page">
       <PageHeader
         icon="event"
-        title="Events"
+        title="Acara"
         subtitle="Workshop, screening, webinar, dan festival film pelajar."
       />
-      <div className="about-tabs" role="tablist" aria-label="Tab Events">
+      <div className="about-tabs" role="tablist" aria-label="Tab Acara">
         <button type="button" role="tab" aria-selected={tab === 'kalender'} className={`about-tab${tab === 'kalender' ? ' active' : ''}`} onClick={() => setTab('kalender')}>Kalender Acara</button>
         <button type="button" role="tab" aria-selected={tab === 'kompetisi'} className={`about-tab${tab === 'kompetisi' ? ' active' : ''}`} onClick={() => setTab('kompetisi')}>Kompetisi &amp; Festival</button>
         <button type="button" role="tab" aria-selected={tab === 'sertifikat'} className={`about-tab${tab === 'sertifikat' ? ' active' : ''}`} onClick={() => setTab('sertifikat')}>Sertifikat Saya</button>
@@ -247,7 +247,7 @@ function EventsAnalytics() {
           winners: win.error ? null : (win.count ?? 0),
         })
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat analitik.')
+        if (!cancelled) setError('Gagal memuat analitik. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -336,7 +336,7 @@ export function EventDetailPage() {
           if (user) setRegistered(((regs ?? []) as EventRegistration[]).some((r) => r.user_id === user.id))
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat acara.')
+        if (!cancelled) setError('Gagal memuat acara. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -367,7 +367,7 @@ export function EventDetailPage() {
       user_id: user.id,
       attended: false,
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mendaftar acara. Coba lagi nanti.')
     else {
       setRegistered(true)
       setCount((c) => c + 1)
@@ -378,7 +378,7 @@ export function EventDetailPage() {
   async function handleCancel() {
     if (!user) return
     const { error: delErr } = await supabase.from('event_registrations').delete().eq('event_id', currentEvent.id).eq('user_id', user.id)
-    if (delErr) setNotice(delErr.message)
+    if (delErr) setNotice('Gagal membatalkan pendaftaran. Coba lagi nanti.')
     else {
       setRegistered(false)
       setCount((c) => Math.max(0, c - 1))

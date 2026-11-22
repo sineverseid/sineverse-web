@@ -30,7 +30,7 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 function filmStatusLabel(status: string): string {
-  if (status === 'draft') return 'Draft'
+  if (status === 'draft') return 'Draf'
   if (status === 'published') return 'Dipublikasikan'
   if (status === 'rejected') return 'Ditolak'
   return status

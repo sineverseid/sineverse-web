@@ -62,8 +62,8 @@ export function CompetitionsPage() {
         throw qErr
       }
       setItems((data ?? []) as Competition[])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal memuat kompetisi.')
+    } catch {
+      setError('Gagal memuat kompetisi. Coba lagi nanti.')
     } finally {
       setLoading(false)
     }
@@ -92,7 +92,7 @@ export function CompetitionsPage() {
       created_by: user.id,
     })
     if (insErr) {
-      setNotice(insErr.message)
+      setNotice('Gagal membuat kompetisi. Coba lagi nanti.')
       return
     }
     setNotice('Kompetisi dibuat sebagai draf. Atur kategori, kriteria, dan juri dari halaman detail, lalu ubah status menjadi "dibuka".')
@@ -151,7 +151,7 @@ export function CompetitionsPage() {
                   Status: {effectiveStatusLabel(c)}
                   {c.deadline ? ` · Tenggat: ${fmtDate(c.deadline)}` : ''}
                   {c.status === 'dibuka' && c.deadline && new Date(c.deadline).getTime() < Date.now()
-                    ? ' · Submission sudah melewati tenggat.'
+                    ? ' · Pengiriman karya sudah melewati tenggat.'
                     : ''}
                 </p>
               </Link>
@@ -241,7 +241,7 @@ export function CompetitionDetailPage() {
           if (scoresNeeded) setScores((scData.data ?? []) as CompetitionScore[])
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat kompetisi.')
+        if (!cancelled) setError('Gagal memuat kompetisi. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -271,7 +271,7 @@ export function CompetitionDetailPage() {
     e.preventDefault()
     if (!user) return
     if (!canSubmit) {
-      setNotice('Submission hanya dibuka saat kompetisi berstatus "dibuka" dan sebelum tenggat.')
+      setNotice('Pengiriman karya hanya dibuka saat kompetisi berstatus "dibuka" dan sebelum tenggat.')
       return
     }
     if (!copyright || !usage) {
@@ -288,7 +288,7 @@ export function CompetitionDetailPage() {
       usage_consent: true,
       status: 'submitted',
     })
-    if (insErr) setNotice(insErr.message)
+    if (insErr) setNotice('Gagal mengirim karya. Coba lagi nanti.')
     else {
       setNotice('Karya terkirim untuk kompetisi ini.')
       setLink('')
@@ -318,7 +318,7 @@ export function CompetitionDetailPage() {
         { onConflict: 'submission_id,judge_id,criterion' },
       )
       if (upErr) {
-        setNotice(upErr.message)
+        setNotice('Gagal menyimpan penilaian. Coba lagi nanti.')
         return
       }
     }
@@ -355,7 +355,7 @@ export function CompetitionDetailPage() {
         serial,
         score: null,
       })
-      if (insErr) failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: ${insErr.message}`)
+      if (insErr) failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: gagal diterbitkan, coba lagi.`)
       else {
         seq += 1
         issued.push(`${names.get(sub.user_id) ?? 'Pemenang'}, ${serial}`)
@@ -413,7 +413,7 @@ export function CompetitionDetailPage() {
           <p className="notice-box">Kamu sudah mengirim karya untuk kompetisi ini (status: {submissionStatusLabel(mySub.status)}).</p>
         ) : !canSubmit ? (
           <p className="empty">
-            Submission {currentComp.status === 'dibuka' ? 'sudah melewati tenggat.' : `belum dibuka (status saat ini: ${effectiveStatusLabel(currentComp)}).`}
+            Pengiriman karya {currentComp.status === 'dibuka' ? 'sudah melewati tenggat.' : `belum dibuka (status saat ini: ${effectiveStatusLabel(currentComp)}).`}
           </p>
         ) : (
           <form className="form" onSubmit={handleSubmit}>

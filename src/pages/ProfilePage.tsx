@@ -15,6 +15,7 @@ export default function ProfilePage() {
   const [pwMessage, setPwMessage] = useState<string | null>(null)
   const [pwError, setPwError] = useState<string | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
 
   async function handleChangePassword(e: FormEvent) {
     e.preventDefault()
@@ -115,11 +116,15 @@ export default function ProfilePage() {
         </div>
       </dl>
       <ProfilePhotoUpload />
+      {refreshMessage && <p className="notice-box">{refreshMessage}</p>}
       <p className="muted">
         <button
           type="button"
           className="link-button"
-          onClick={() => void refreshProfile()}
+          onClick={() => {
+            setRefreshMessage(null)
+            void refreshProfile().then(() => setRefreshMessage('Profil dimuat ulang.'))
+          }}
         >
           Muat ulang profil
         </button>

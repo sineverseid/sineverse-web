@@ -9,6 +9,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
 import {
+  appBaseUrl,
   fetchCourses,
   fetchMyCertificates,
   fetchProfileNames,
@@ -19,7 +20,10 @@ import type { Certificate, Course } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
 function verificationLink(serial: string): string {
-  return `${window.location.origin}/sertifikat/verifikasi?serial=${serial}`
+  // Perbaikan 22 Nov 2026: tautan lama hanya memakai origin sehingga
+  // kehilangan segmen /sineverse-web/ dan rute hash (#/) — tautan yang
+  // disalin tidak bisa dibuka. appBaseUrl() sudah mencakup segmen pertama.
+  return `${appBaseUrl()}#/sertifikat/verifikasi?serial=${serial}`
 }
 
 /** Salin teks ke clipboard; fallback ke execCommand bila API clipboard

@@ -77,7 +77,7 @@ export function LibraryPage() {
           if (!cancelled) setBookmarks(new Set(((bm ?? []) as { library_item_id: string }[]).map((b) => b.library_item_id)))
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat Pustaka.')
+        if (!cancelled) setError('Gagal memuat Pustaka. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -99,11 +99,11 @@ export function LibraryPage() {
     if (!user) return
     if (marked) {
       const { error: delErr } = await supabase.from('library_bookmarks').delete().eq('library_item_id', itemId).eq('user_id', user.id)
-      if (delErr) setNotice(delErr.message)
+      if (delErr) setNotice('Gagal mengubah bookmark. Coba lagi.')
       else setBookmarks((b) => { const n = new Set(b); n.delete(itemId); return n })
     } else {
       const { error: insErr } = await supabase.from('library_bookmarks').insert({ library_item_id: itemId, user_id: user.id })
-      if (insErr) setNotice(insErr.message)
+      if (insErr) setNotice('Gagal mengubah bookmark. Coba lagi.')
       else setBookmarks((b) => new Set(b).add(itemId))
     }
   }
@@ -112,7 +112,7 @@ export function LibraryPage() {
     <div className="page">
       <PageHeader
         icon="library"
-        title="Library"
+        title="Pustaka"
         subtitle="Naskah, glosarium, template, dan bacaan filmmaking, lengkap dengan dasar hukum dan atribusi."
       />
       {notice && <p className="notice-box">{notice}</p>}
@@ -210,7 +210,7 @@ export function LibraryDetailPage() {
           if (!cancelled) setBookmarked(bm !== null)
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat item Pustaka.')
+        if (!cancelled) setError('Gagal memuat item Pustaka. Coba lagi nanti.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -233,11 +233,12 @@ export function LibraryDetailPage() {
   async function toggleBookmark() {
     if (!user) return
     if (bookmarked) {
-      await supabase.from('library_bookmarks').delete().eq('library_item_id', currentItem.id).eq('user_id', user.id)
-      setBookmarked(false)
+      const { error: delErr } = await supabase.from('library_bookmarks').delete().eq('library_item_id', currentItem.id).eq('user_id', user.id)
+      if (delErr) setNotice('Gagal menghapus bookmark. Coba lagi.')
+      else setBookmarked(false)
     } else {
       const { error: insErr } = await supabase.from('library_bookmarks').insert({ library_item_id: currentItem.id, user_id: user.id })
-      if (insErr) setNotice(insErr.message)
+      if (insErr) setNotice('Gagal menyimpan bookmark. Coba lagi.')
       else setBookmarked(true)
     }
   }
@@ -251,7 +252,7 @@ export function LibraryDetailPage() {
       attribution: editAttr.trim() || null,
       usage_limits: editLimits.trim() || null,
     }).eq('id', currentItem.id)
-    if (updErr) setNotice(updErr.message)
+    if (updErr) setNotice('Gagal menyimpan perubahan. Coba lagi nanti.')
     else {
       invalidateCatalogCache()
       setItem({ ...currentItem, title: editTitle.trim(), body: editBody, legal_basis: editLegal.trim() || null, attribution: editAttr.trim() || null, usage_limits: editLimits.trim() || null })
@@ -263,7 +264,7 @@ export function LibraryDetailPage() {
   async function handleDelete() {
     if (!window.confirm(`Hapus item "${currentItem.title}" dari Pustaka?`)) return
     const { error: delErr } = await supabase.from('library_items').delete().eq('id', currentItem.id)
-    if (delErr) setNotice(delErr.message)
+    if (delErr) setNotice('Gagal menghapus item. Coba lagi nanti.')
     else {
       invalidateCatalogCache()
       setNotice('Item dihapus. Kembali ke daftar Pustaka…')

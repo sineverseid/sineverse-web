@@ -543,7 +543,7 @@ export default function HomePage() {
                         ? (e) => {
                             e.preventDefault()
                             setExploreNotice(
-                              'Masuk terlebih dahulu untuk membuka Community/Projects.',
+                              'Masuk terlebih dahulu untuk membuka Komunitas/Proyek.',
                             )
                             window.setTimeout(() => navigate('/login'), 1600)
                           }
@@ -786,7 +786,7 @@ function SiswaHome(props: SiswaHomeProps) {
                     <div className="course-card-body">
                       <h3>{c.title}</h3>
                       <p>
-                        {done}/{total} lesson selesai
+                        {done}/{total} materi selesai
                       </p>
                       <div
                         className="progress-track"
@@ -1225,7 +1225,7 @@ function MentorHome(props: {
       return
     }
     setNotice(
-      'Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).',
+      'Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor kursus itu (lihat Admin Panel).',
     )
     const { data } = await supabase
       .from('course_claims')
@@ -1247,7 +1247,7 @@ function MentorHome(props: {
         <p className="hero-eyebrow">MENTOR WORKSPACE</p>
         <h1>Halo, {firstName}!</h1>
         <p className="hero-sub">
-          {rows.length} course diampu · {totalStudents} siswa · {pendingTotal} submission
+          {rows.length} kursus diampu · {totalStudents} siswa · {pendingTotal} tugas
           menunggu dinilai
         </p>
         <div className="hero-actions">
@@ -1267,9 +1267,9 @@ function MentorHome(props: {
           <h2>Antrean Penilaian Terbaru</h2>
           <Link to="/mentor/penilaian">Lihat semua →</Link>
         </div>
-        <p className="muted">{pendingTotal} submission menunggu dinilai.</p>
+        <p className="muted">{pendingTotal} tugas menunggu dinilai.</p>
         {queue.length === 0 ? (
-          <p className="empty">Tidak ada submission yang menunggu penilaian.</p>
+          <p className="empty">Tidak ada tugas yang menunggu penilaian.</p>
         ) : (
           <ul className="discussion-list">
             {queue.map((row) => (
@@ -1301,7 +1301,7 @@ function MentorHome(props: {
         <h2>Kursus yang Kamu Ampu</h2>
         {rows.length === 0 ? (
           <p className="empty">
-            Kamu belum mengampu course apa pun. Ajukan course tanpa mentor di bawah.
+            Kamu belum mengampu kursus apa pun. Ajukan kursus tanpa mentor di bawah.
           </p>
         ) : (
           <ul className="course-list">
@@ -1310,7 +1310,7 @@ function MentorHome(props: {
                 <Link to={`/mentor/course/${r.course.id}`}>
                   <h3>{r.course.title}</h3>
                   <p className="muted">
-                    {r.students} siswa · {r.pending} submission menunggu penilaian
+                    {r.students} siswa · {r.pending} tugas menunggu penilaian
                   </p>
                 </Link>
               </li>
@@ -1336,7 +1336,7 @@ function MentorHome(props: {
       <section className="section">
         <h2>Kursus Tanpa Pengampu</h2>
         {unassigned.length === 0 ? (
-          <p className="empty">Tidak ada course tanpa mentor saat ini.</p>
+          <p className="empty">Tidak ada kursus tanpa mentor saat ini.</p>
         ) : (
           <ul
             className="plain-list"
@@ -1369,7 +1369,7 @@ function MentorHome(props: {
       <section className="section">
         <h2>Baru Dinilai</h2>
         {graded.length === 0 ? (
-          <p className="empty">Belum ada submission yang kamu nilai.</p>
+          <p className="empty">Belum ada tugas yang kamu nilai.</p>
         ) : (
           <ul className="discussion-list">
             {graded.map((row) => (
@@ -1798,7 +1798,7 @@ function AdminHome(props: {
         <h1>Ringkasan SINEVERSE</h1>
         <p className="hero-sub">
           Halo, {firstName}! {counts.users} pengguna · {counts.schools} sekolah ·{' '}
-          {courses.length} course · {counts.films} film · {counts.enrollments} enrollment
+          {courses.length} kursus · {counts.films} film · {counts.enrollments} pendaftaran kursus
         </p>
         <div className="hero-actions">
           <Link to="/admin" className="btn btn-primary">
@@ -1840,7 +1840,7 @@ function AdminHome(props: {
 
       <section className="section">
         <div className="section-head">
-          <h2>Lamaran Mentor ({apps.length} pending)</h2>
+          <h2>Lamaran Mentor ({apps.length} menunggu)</h2>
           <Link to="/admin#lamaran-mentor">Admin Panel →</Link>
         </div>
         {apps.length === 0 ? (
