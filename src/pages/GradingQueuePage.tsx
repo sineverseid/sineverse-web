@@ -379,7 +379,20 @@ export default function GradingQueuePage() {
           {!recap ? (
             <p className="muted">Memuat rekap…</p>
           ) : recap.total === 0 ? (
-            <p className="empty">Belum ada submission yang dinilai di course yang kamu ampu.</p>
+            <div className="empty-card">
+              <span className="empty-card-icon" aria-hidden="true">
+                <Icon name="grade" size={32} />
+              </span>
+              <h3>Belum ada nilai masuk</h3>
+              <p>
+                Rekap nilai akan terisi setelah kamu menilai submission dari course yang
+                kamu ampu. Nilai, sebaran predikat, dan daftar nilai terbaru muncul di
+                sini.
+              </p>
+              <p>
+                <Link to="/mentor">Lihat Course Saya →</Link>
+              </p>
+            </div>
           ) : (
             <>
               <div className="stat-grid">
@@ -464,7 +477,20 @@ export default function GradingQueuePage() {
         Diurutkan dari yang paling lama dikirim (tertua dulu). {rows.length} submission belum dinilai.
       </p>
       {rows.length === 0 ? (
-        <p className="empty">Tidak ada submission yang menunggu penilaian.</p>
+        <div className="empty-card">
+          <span className="empty-card-icon" aria-hidden="true">
+            <Icon name="fileText" size={32} />
+          </span>
+          <h3>Antrean kosong</h3>
+          <p>
+            Tidak ada submission yang menunggu penilaian. Submission baru dari siswa di
+            course yang kamu ampu akan muncul di sini, diurutkan dari yang paling lama
+            dikirim.
+          </p>
+          <p>
+            <Link to="/mentor">Lihat Course Saya →</Link>
+          </p>
+        </div>
       ) : (
         <ul className="list">
           {rows.map((row) => (

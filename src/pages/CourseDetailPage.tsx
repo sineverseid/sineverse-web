@@ -28,7 +28,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
-import { GRADEBOOK_WEIGHTS, PASSING_GRADE, RPS_COURSE_ORDER, rpsWeekLabel } from '../lib/brand'
+import { courseIllustration, GRADEBOOK_WEIGHTS, PASSING_GRADE, rpsWeekLabel } from '../lib/brand'
 import {
   avgOrNull,
   bestScoresByQuiz,
@@ -66,20 +66,6 @@ import type {
   QuizAttempt,
   Submission,
 } from '../lib/types'
-
-// Ilustrasi course menurut urutan RPS (index+1 = nomor file).
-const COURSE_ILLUSTRATIONS = [
-  './illustrations/course-01-dasar-sinematografi.jpg',
-  './illustrations/course-02-penulisan-skenario.jpg',
-  './illustrations/course-03-storyboard.jpg',
-  './illustrations/course-04-penyutradaraan.jpg',
-  './illustrations/course-05-editing-film.jpg',
-  './illustrations/course-06-tata-suara.jpg',
-  './illustrations/course-07-film-dokumenter.jpg',
-  './illustrations/course-08-jobdesk-crew.jpg',
-  './illustrations/course-09-produksi-manajemen.jpg',
-  './illustrations/course-10-akting-kamera.jpg',
-] as const
 
 /** Lencana tenggat tugas dari due_date asli: terlewat (merah), dekat
  *  (≤3 hari, kuning), jauh (hijau), atau tanpa tenggat (abu-abu). */
@@ -520,8 +506,7 @@ export default function CourseDetailPage() {
     })
   // Hero: cover_url bila ada, kalau tidak ilustrasi RPS, kalau tidak ada
   // keduanya (course di luar urutan RPS) tampilkan fallback gradasi.
-  const rpsIdx = (RPS_COURSE_ORDER as readonly string[]).indexOf(course.id)
-  const heroSrc = course.cover_url ?? (rpsIdx === -1 ? null : COURSE_ILLUSTRATIONS[rpsIdx])
+  const heroSrc = course.cover_url ?? courseIllustration(course.id)
   const isComplete = enrolled && allLessons.length > 0 && percent === 100
   const lessonTitleById = new Map(allLessons.map((l) => [l.id, l.title]))
   // Jumlah balasan dihitung dari baris diskusi itu sendiri (parent_id),
@@ -746,7 +731,6 @@ export default function CourseDetailPage() {
     <section className="section" aria-label="Deskripsi">
       {isCourseMentor && <h2>Tentang Course</h2>}
       {course.description && <p>{course.description}</p>}
-      {learnList}
       {enrolled && nextLesson && !noMentor && (
         <p>
           <Link to={`/lesson/${nextLesson.id}`} className="btn-mint">
@@ -768,6 +752,7 @@ export default function CourseDetailPage() {
         </p>
       )}
       {enrollBlock}
+      {learnList}
     </section>
   )
 
@@ -1064,8 +1049,8 @@ export default function CourseDetailPage() {
       )}
       <div className="detail-title-row">
         <h1>{course.title}</h1>
-        {enrolled && allLessons.length > 0 && (
-          <span className="pill-active">{isComplete ? 'Selesai' : 'Aktif'}</span>
+        {course.mentor_id && (
+          <span className="pill-active">{enrolled && isComplete ? 'Selesai' : 'Aktif'}</span>
         )}
       </div>
       <p className="muted">

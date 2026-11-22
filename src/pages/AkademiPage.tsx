@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import CourseCard from '../components/CourseCard'
+import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import { RPS_COURSE_ORDER, rpsWeekLabel } from '../lib/brand'
 import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
@@ -37,6 +38,9 @@ export default function AkademiPage() {
   const [category, setCategory] = useState<string>('Semua')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Penanda muat awal katalog selesai — dipakai supaya pesan kosong tidak
+  // sempat tampil saat daftar course masih dimuat (lihat "Semua Kursus").
+  const [coursesLoaded, setCoursesLoaded] = useState(false)
   // Progres Academy (admin saja): per course jumlah siswa + lesson selesai.
   const [adminStats, setAdminStats] = useState<Map<
     string,
@@ -69,6 +73,7 @@ export default function AkademiPage() {
       .then(async (data) => {
         if (cancelled) return
         setCourses(data)
+        setCoursesLoaded(true)
         const mentorIds = data.map((c) => c.mentor_id).filter((id): id is string => !!id)
         if (mentorIds.length > 0) {
           const names = await fetchProfileNames(mentorIds).catch(() => new Map<string, string>())
@@ -485,7 +490,12 @@ export default function AkademiPage() {
                       ) : (
                         <Link to={`/course/${c.id}`}>{c.title}</Link>
                       )}
-                      {week && <span className="muted"> · {week}</span>}
+                      {week && <span className="muted"> · {week}</span>}{' '}
+                      {c.mentor_id ? (
+                        <span className="pill-active">Bisa dimulai</span>
+                      ) : (
+                        <span className="pill-waiting">Menunggu mentor</span>
+                      )}
                     </p>
                     <p className="kurikulum-status">{status}</p>
                     {isMentor && isMine && (
@@ -497,6 +507,11 @@ export default function AkademiPage() {
                       <p className="kurikulum-status">Bukan course kamu</p>
                     )}
                   </div>
+                  {!(isMentor && !isMine) && (
+                    <span className="kurikulum-chevron" aria-hidden="true">
+                      <Icon name="chevronRight" size={18} />
+                    </span>
+                  )}
                 </li>
               )
             })}
@@ -717,7 +732,9 @@ export default function AkademiPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {!coursesLoaded ? (
+          <p className="muted">Memuat course…</p>
+        ) : filtered.length === 0 ? (
           <EmptyState
             message={
               visibleCourses.length === 0

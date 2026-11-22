@@ -29,6 +29,7 @@ import type { IconName } from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
+import { courseIllustration, rpsWeekLabel } from '../lib/brand'
 import {
   decideMentorApplication,
   decideSchoolSubmission,
@@ -941,27 +942,51 @@ function SiswaHome(props: SiswaHomeProps) {
       )}
 
       <section className="section">
-        <div className="section-head">
+        <div className="dash-section-head">
           <h2>Rekomendasi Untukmu</h2>
-          <Link to="/growth">Buka Growth →</Link>
+          <Link to="/akademi" className="dash-more">
+            Lihat Semua →
+          </Link>
         </div>
         {recommendations.length === 0 ? (
           <p className="empty">Tidak ada rekomendasi saat ini.</p>
         ) : (
-          <ul className="rec-list">
-            {recommendations.map((r) => (
-              <li key={`${r.kind}-${r.id}`} className="rec-row">
-                <Link to={r.to}>
-                  <p className="rec-label">
-                    {r.kind === 'course' ? 'KURSUS' : 'PROYEK MENCARI KRU'} • Skor kecocokan{' '}
-                    {r.score} dari {r.kind === 'course' ? 20 : 25}
-                  </p>
-                  <h3>{r.title}</h3>
-                  <p className="rec-desc">{r.description ?? r.reason}</p>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {recommendations.map((r) => {
+              // Kartu rekomendasi memakai treatment kartu kursus dashboard:
+              // thumbnail asli, judul, meta, tombol putar/chevron. Alasan
+              // (reason) menjelaskan kenapa direkomendasikan — skor angka
+              // internal tidak ditampilkan karena tidak bermakna bagi siswa.
+              const course = r.kind === 'course' ? courseById.get(r.id) : undefined
+              const cover =
+                course?.cover_url ??
+                (r.kind === 'course' ? courseIllustration(r.id) : null)
+              const week = r.kind === 'course' ? rpsWeekLabel(r.id) : null
+              const meta =
+                r.kind === 'course'
+                  ? [week, course?.category ?? 'Kursus'].filter(Boolean).join(' · ')
+                  : 'Proyek mencari kru'
+              return (
+                <Link key={`${r.kind}-${r.id}`} to={r.to} className="dash-course">
+                  <div className="dash-course-cover">
+                    {cover ? (
+                      <img src={cover} alt="" loading="lazy" />
+                    ) : (
+                      <Icon name={r.kind === 'course' ? 'film' : 'crew'} size={32} />
+                    )}
+                  </div>
+                  <div className="dash-course-body">
+                    <h3>{r.title}</h3>
+                    <p className="dash-course-meta">{meta}</p>
+                    <p className="dash-course-meta">{r.reason}</p>
+                  </div>
+                  <span className="dash-course-play">
+                    <Icon name={r.kind === 'course' ? 'play' : 'chevronRight'} size={20} />
+                  </span>
                 </Link>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
         )}
       </section>
 
@@ -1454,8 +1479,13 @@ function MentorHome(props: {
             <span className="pill-active">Mentor</span>
           </div>
           <p>
-            {rows.length} kursus diampu · {totalStudents} siswa · {pendingTotal} tugas
-            menunggu dinilai
+            <span style={{ whiteSpace: 'nowrap' }}>{rows.length} kursus diampu</span>
+            {' · '}
+            <span style={{ whiteSpace: 'nowrap' }}>{totalStudents} siswa</span>
+            {' · '}
+            <span style={{ whiteSpace: 'nowrap' }}>
+              {pendingTotal} tugas menunggu dinilai
+            </span>
           </p>
           <div className="dash-hero-actions">
             <Link to="/mentor/penilaian" className="btn-mint">
