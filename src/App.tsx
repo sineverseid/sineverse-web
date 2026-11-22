@@ -1,74 +1,83 @@
 // SINEVERSE — routing (HashRouter: GitHub Pages has no server fallback,
 // so BrowserRouter would 404 on refresh).
 import { HashRouter, Link, Route, Routes } from 'react-router-dom'
+import { Suspense, lazy } from 'react'
 import Layout from './components/Layout'
 import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
-import AdminAcademyAnalyticsPage from './pages/AdminAcademyAnalyticsPage'
-import AdminAnalyticsPage from './pages/AdminAnalyticsPage'
-import AdminAssignmentsPage from './pages/AdminAssignmentsPage'
-import AdminCertificatesPage from './pages/AdminCertificatesPage'
-import AdminDiscussionsPage from './pages/AdminDiscussionsPage'
-import AdminEnrollmentsPage from './pages/AdminEnrollmentsPage'
-import AdminEventsPage from './pages/AdminEventsPage'
-import AdminLibraryPage from './pages/AdminLibraryPage'
-import AdminPage from './pages/AdminPage'
-import AdminQuizzesPage from './pages/AdminQuizzesPage'
-import AdminResourcesPage from './pages/AdminResourcesPage'
-import AdminSectionsPage from './pages/AdminSectionsPage'
-import AdminSettingsPage from './pages/AdminSettingsPage'
-import AdminUsersPage from './pages/AdminUsersPage'
-import AboutPage from './pages/AboutPage'
-import AkademiPage from './pages/AkademiPage'
-import AnnouncementsPage from './pages/AnnouncementsPage'
-import AssignmentPage from './pages/AssignmentPage'
-import { CertificatesPage, VerifyCertificatePage } from './pages/CertificatesPage'
-import CommunitiesPage from './pages/CommunitiesPage'
-import CommunityDetailPage from './pages/CommunityDetailPage'
-import CourseBuilderPage from './pages/CourseBuilderPage'
-import CourseDetailPage from './pages/CourseDetailPage'
-import CrewFinderPage from './pages/CrewFinderPage'
-import DeadlinesPage from './pages/DeadlinesPage'
-import EditProfilePage from './pages/EditProfilePage'
-import { EventDetailPage, EventsPage } from './pages/EventsPage'
-import { CompetitionDetailPage, CompetitionsPage } from './pages/CompetitionsPage'
-import { ExamPage, ExamsPage } from './pages/ExamsPage'
-import FilmDetailPage from './pages/FilmDetailPage'
-import FinalProjectDetailPage from './pages/FinalProjectDetailPage'
-import FinalProjectsPage from './pages/FinalProjectsPage'
-import GradebookPage from './pages/GradebookPage'
-import GradingQueuePage from './pages/GradingQueuePage'
-import GrowthPage from './pages/GrowthPage'
 import HomePage from './pages/HomePage'
-import IssueCourseCertificatePage from './pages/IssueCourseCertificatePage'
-import LessonDetailPage from './pages/LessonDetailPage'
-import { LibraryDetailPage, LibraryPage } from './pages/LibraryPage'
-import LoginPage from './pages/LoginPage'
-import MentorAnnouncementsPage from './pages/MentorAnnouncementsPage'
-import MentorMaterialsPage from './pages/MentorMaterialsPage'
-import MentorPage from './pages/MentorPage'
-import MentorQuizzesPage from './pages/MentorQuizzesPage'
-import MentorRubricsPage from './pages/MentorRubricsPage'
-import MentorVideosPage from './pages/MentorVideosPage'
-import MentorAnalyticsPage from './pages/MentorAnalyticsPage'
-import MentorCourseBuilderPage from './pages/MentorCourseBuilderPage'
-import MentorDiscussionsPage from './pages/MentorDiscussionsPage'
-import MentorStudentsPage from './pages/MentorStudentsPage'
-import MentorsPage from './pages/MentorsPage'
-import ModerationPage from './pages/ModerationPage'
-import NotificationPrefsPage from './pages/NotificationPrefsPage'
-import NotificationsPage from './pages/NotificationsPage'
-import OfficeHoursPage from './pages/OfficeHoursPage'
-import PortfolioPage from './pages/PortfolioPage'
-import ProfilePage from './pages/ProfilePage'
-import ProjectDetailPage from './pages/ProjectDetailPage'
-import ProjectsPage from './pages/ProjectsPage'
-import QuizPage from './pages/QuizPage'
-import RegisterPage from './pages/RegisterPage'
-import RpsEditorPage from './pages/RpsEditorPage'
-import RpsPage from './pages/RpsPage'
-import SchoolsPage from './pages/SchoolsPage'
-import ShowcasePage from './pages/ShowcasePage'
+
+// Code-splitting: halaman dimuat sesuai rute yang dibuka, bukan
+// semuanya di depan — bundle awal jadi kecil, muat ulang < 1 detik.
+const AdminAcademyAnalyticsPage = lazy(() => import('./pages/AdminAcademyAnalyticsPage'))
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const RegisterPage = lazy(() => import('./pages/RegisterPage'))
+const AdminAnalyticsPage = lazy(() => import('./pages/AdminAnalyticsPage'))
+const AdminAssignmentsPage = lazy(() => import('./pages/AdminAssignmentsPage'))
+const AdminCertificatesPage = lazy(() => import('./pages/AdminCertificatesPage'))
+const AdminDiscussionsPage = lazy(() => import('./pages/AdminDiscussionsPage'))
+const AdminEnrollmentsPage = lazy(() => import('./pages/AdminEnrollmentsPage'))
+const AdminEventsPage = lazy(() => import('./pages/AdminEventsPage'))
+const AdminLibraryPage = lazy(() => import('./pages/AdminLibraryPage'))
+const AdminPage = lazy(() => import('./pages/AdminPage'))
+const AdminQuizzesPage = lazy(() => import('./pages/AdminQuizzesPage'))
+const AdminResourcesPage = lazy(() => import('./pages/AdminResourcesPage'))
+const AdminSectionsPage = lazy(() => import('./pages/AdminSectionsPage'))
+const AdminSettingsPage = lazy(() => import('./pages/AdminSettingsPage'))
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'))
+const AboutPage = lazy(() => import('./pages/AboutPage'))
+const AkademiPage = lazy(() => import('./pages/AkademiPage'))
+const AnnouncementsPage = lazy(() => import('./pages/AnnouncementsPage'))
+const AssignmentPage = lazy(() => import('./pages/AssignmentPage'))
+const CertificatesPage = lazy(() => import('./pages/CertificatesPage').then((m) => ({ default: m.CertificatesPage })))
+const VerifyCertificatePage = lazy(() => import('./pages/CertificatesPage').then((m) => ({ default: m.VerifyCertificatePage })))
+const CommunitiesPage = lazy(() => import('./pages/CommunitiesPage'))
+const CommunityDetailPage = lazy(() => import('./pages/CommunityDetailPage'))
+const CourseBuilderPage = lazy(() => import('./pages/CourseBuilderPage'))
+const CourseDetailPage = lazy(() => import('./pages/CourseDetailPage'))
+const CrewFinderPage = lazy(() => import('./pages/CrewFinderPage'))
+const DeadlinesPage = lazy(() => import('./pages/DeadlinesPage'))
+const EditProfilePage = lazy(() => import('./pages/EditProfilePage'))
+const EventDetailPage = lazy(() => import('./pages/EventsPage').then((m) => ({ default: m.EventDetailPage })))
+const EventsPage = lazy(() => import('./pages/EventsPage').then((m) => ({ default: m.EventsPage })))
+const CompetitionDetailPage = lazy(() => import('./pages/CompetitionsPage').then((m) => ({ default: m.CompetitionDetailPage })))
+const CompetitionsPage = lazy(() => import('./pages/CompetitionsPage').then((m) => ({ default: m.CompetitionsPage })))
+const ExamPage = lazy(() => import('./pages/ExamsPage').then((m) => ({ default: m.ExamPage })))
+const ExamsPage = lazy(() => import('./pages/ExamsPage').then((m) => ({ default: m.ExamsPage })))
+const FilmDetailPage = lazy(() => import('./pages/FilmDetailPage'))
+const FinalProjectDetailPage = lazy(() => import('./pages/FinalProjectDetailPage'))
+const FinalProjectsPage = lazy(() => import('./pages/FinalProjectsPage'))
+const GradebookPage = lazy(() => import('./pages/GradebookPage'))
+const GradingQueuePage = lazy(() => import('./pages/GradingQueuePage'))
+const GrowthPage = lazy(() => import('./pages/GrowthPage'))
+const IssueCourseCertificatePage = lazy(() => import('./pages/IssueCourseCertificatePage'))
+const LessonDetailPage = lazy(() => import('./pages/LessonDetailPage'))
+const LibraryDetailPage = lazy(() => import('./pages/LibraryPage').then((m) => ({ default: m.LibraryDetailPage })))
+const LibraryPage = lazy(() => import('./pages/LibraryPage').then((m) => ({ default: m.LibraryPage })))
+const MentorAnnouncementsPage = lazy(() => import('./pages/MentorAnnouncementsPage'))
+const MentorMaterialsPage = lazy(() => import('./pages/MentorMaterialsPage'))
+const MentorPage = lazy(() => import('./pages/MentorPage'))
+const MentorQuizzesPage = lazy(() => import('./pages/MentorQuizzesPage'))
+const MentorRubricsPage = lazy(() => import('./pages/MentorRubricsPage'))
+const MentorVideosPage = lazy(() => import('./pages/MentorVideosPage'))
+const MentorAnalyticsPage = lazy(() => import('./pages/MentorAnalyticsPage'))
+const MentorCourseBuilderPage = lazy(() => import('./pages/MentorCourseBuilderPage'))
+const MentorDiscussionsPage = lazy(() => import('./pages/MentorDiscussionsPage'))
+const MentorStudentsPage = lazy(() => import('./pages/MentorStudentsPage'))
+const MentorsPage = lazy(() => import('./pages/MentorsPage'))
+const ModerationPage = lazy(() => import('./pages/ModerationPage'))
+const NotificationPrefsPage = lazy(() => import('./pages/NotificationPrefsPage'))
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
+const OfficeHoursPage = lazy(() => import('./pages/OfficeHoursPage'))
+const PortfolioPage = lazy(() => import('./pages/PortfolioPage'))
+const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
+const QuizPage = lazy(() => import('./pages/QuizPage'))
+const RpsEditorPage = lazy(() => import('./pages/RpsEditorPage'))
+const RpsPage = lazy(() => import('./pages/RpsPage'))
+const SchoolsPage = lazy(() => import('./pages/SchoolsPage'))
+const ShowcasePage = lazy(() => import('./pages/ShowcasePage'))
 
 function NotFoundPage() {
   return (
@@ -90,6 +99,7 @@ export default function App() {
   return (
     <AuthProvider>
       <HashRouter>
+        <Suspense fallback={<div className="page"><p className="muted">Memuat halaman…</p></div>}>
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
@@ -391,6 +401,7 @@ export default function App() {
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
+        </Suspense>
       </HashRouter>
     </AuthProvider>
   )
