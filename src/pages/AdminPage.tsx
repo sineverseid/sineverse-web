@@ -498,6 +498,7 @@ export default function AdminPage() {
                 {claimedCourse?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
                 {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — persetujuan tidak akan mengubah penetapan)</span>}{' '}
                 {!isMentorClaim && <span className="muted">(pengaju bukan mentor — persetujuan tidak akan menetapkan mentor)</span>}{' '}
+                {c.decision_note && <span className="muted">(sebelumnya ditolak: {c.decision_note})</span>}{' '}
                 <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, true)}>Setujui</button>{' '}
                 {rejectingClaimId === c.id ? (
                   <>
