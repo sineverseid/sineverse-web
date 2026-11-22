@@ -1,11 +1,15 @@
 // SINEVERSE — Pendaftaran Anggota (Siswa) & Mentor (Pengajar), sama dengan
 // formulir pendaftaran artefak (aksi registerstudent / applymentor):
-// foto profil WAJIB, nama, email, kata sandi (min. 8 karakter) + konfirmasi,
-// telepon/WA, tanggal lahir, jenis kelamin, kota, alamat (opsional), lalu
-// jalur Siswa: sekolah, kelas, minat; jalur Mentor: keahlian, pengalaman,
-// tautan portofolio. Akun dibuat sebagai siswa; lamaran mentor dikirim
-// setelah email terverifikasi dan admin yang menyetujui (peran TIDAK
-// langsung menjadi mentor).
+// foto profil OPSIONAL (tanpa batas ukuran; diperkecil di browser), nama,
+// username (unik, disarankan otomatis dari nama), email, kata sandi (min.
+// 8 karakter) + konfirmasi, telepon/WA, tanggal lahir, jenis kelamin,
+// kota, lalu jalur Siswa: provinsi, kabupaten/kota, sekolah (pilih dari
+// daftar terverifikasi atau ajukan manual untuk ditinjau admin), kelas
+// (X/XI/XII), minat; jalur Mentor: formulir lamaran 6 info bersama
+// (MentorApplicationForm). TIDAK ADA NIK/KTP/alamat rumah/dokumen sensitif.
+// Akun dibuat sebagai siswa; lamaran mentor dikirim setelah email
+// terverifikasi dan admin yang menyetujui (peran TIDAK langsung menjadi
+// mentor).
 //
 // Verifikasi email (Supabase "Confirm email" AKTIF): setelah daftar, email
 // konfirmasi dikirim oleh Supabase (lewat SMTP Gmail kustom). Ada dua cara
@@ -16,63 +20,47 @@
 //      tautan dan kode; panjang kode mengikuti setelan Supabase).
 // Foto file dititipkan di localStorage sampai pengguna masuk, baru diunggah
 // ke bucket profile-photos (kebijakan bucket menuntut sesi terautentikasi).
+// Setelah email terverifikasi, pengguna diarahkan otomatis ke Beranda.
 // Lihat src/lib/registration.ts.
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import MentorApplicationForm from '../components/MentorApplicationForm'
 import { useAuth } from '../context/AuthContext'
 import { BRAND } from '../lib/brand'
+import { photoExtFromFile, photoToDataUrl } from '../lib/photo'
 import {
   completePendingRegistration,
   savePendingRegistration,
 } from '../lib/registration'
 import type { CompletionResult, RegistrationPayload } from '../lib/registration'
-
-// Foto pendaftaran TIDAK ada batas ukuran file (Arif, 21 Nov 2026): foto
-// besar diperkecil di browser sebelum dititipkan, supaya data URL-nya tetap
-// muat di localStorage (kuota ~5 MB) tanpa menolak foto pengguna.
-const PHOTO_MAX_SIDE = 1024
+import {
+  checkUsernameAvailable,
+  fetchProvinces,
+  fetchRegencies,
+  searchSchools,
+} from '../lib/supabase'
+import type {
+  MentorApplicationInput,
+  RefProvince,
+  RefRegency,
+  School,
+} from '../lib/types'
 
 // Batas tanggal lahir (hari ini) — konstanta modul, bukan hasil render.
 const TODAY = new Date().toISOString().slice(0, 10)
 
-function extFromFile(file: File): string {
-  if (file.type === 'image/png') return 'png'
-  if (file.type === 'image/webp') return 'webp'
-  if (file.type === 'image/jpeg') return 'jpg'
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
-  return ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'jpg'
-}
+const USERNAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(new Error('Tidak dapat membaca file foto.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-// Perkecil foto di browser (canvas) bila sisinya melebihi batas, lalu
-// kembalikan data URL JPEG. Foto kecil dikembalikan apa adanya.
-async function photoToDataUrl(file: File): Promise<string> {
-  const dataUrl = await readFileAsDataUrl(file)
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image()
-    el.onload = () => resolve(el)
-    el.onerror = () => reject(new Error('Tidak dapat membaca file foto.'))
-    el.src = dataUrl
-  })
-  const longest = Math.max(img.naturalWidth, img.naturalHeight)
-  if (longest <= PHOTO_MAX_SIDE) return dataUrl
-  const scale = PHOTO_MAX_SIDE / longest
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(img.naturalWidth * scale)
-  canvas.height = Math.round(img.naturalHeight * scale)
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return dataUrl
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.85)
+/** Saran username dari nama: huruf kecil, spasi jadi '-', tanpa karakter lain. */
+function slugifyUsername(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30)
 }
 
 export default function RegisterPage() {
@@ -92,15 +80,30 @@ export default function RegisterPage() {
   const [birthDate, setBirthDate] = useState('')
   const [gender, setGender] = useState('')
   const [city, setCity] = useState('')
-  const [address, setAddress] = useState('')
-  const [school, setSchool] = useState('')
+  // Migrasi 027: username + wilayah + sekolah.
+  const [username, setUsername] = useState('')
+  const [usernameEdited, setUsernameEdited] = useState(false)
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'error'>('idle')
+  const usernameRef = useRef('')
+  usernameRef.current = username
+  const [provinces, setProvinces] = useState<RefProvince[]>([])
+  const [regencies, setRegencies] = useState<RefRegency[]>([])
+  const [province, setProvince] = useState('')
+  const [regency, setRegency] = useState('')
+  const [schoolQuery, setSchoolQuery] = useState('')
+  const [schoolResults, setSchoolResults] = useState<School[]>([])
+  const [schoolSearching, setSchoolSearching] = useState(false)
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null)
+  const [manualSchool, setManualSchool] = useState(false)
+  const [manualSchoolName, setManualSchoolName] = useState('')
+  const [manualSchoolNpsn, setManualSchoolNpsn] = useState('')
   const [kelas, setKelas] = useState('')
   const [interests, setInterests] = useState('')
-  const [expertise, setExpertise] = useState('')
-  const [experience, setExperience] = useState('')
-  const [portfolioLink, setPortfolioLink] = useState('')
+  const [termsAgreed, setTermsAgreed] = useState(false)
+  // Jalur mentor: nilai dari formulir bersama (mode tertanam).
+  const [mentorValues, setMentorValues] = useState<MentorApplicationInput | null>(null)
+  const [mentorValid, setMentorValid] = useState(false)
   const [photoFile, setPhotoFile] = useState<{ dataUrl: string; ext: string } | null>(null)
-  const [photoUrl, setPhotoUrl] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -126,10 +129,132 @@ export default function RegisterPage() {
     return () => window.clearTimeout(t)
   }, [resendCooldown])
 
+  // Daftar provinsi (sekali, untuk jalur siswa).
+  useEffect(() => {
+    let cancelled = false
+    fetchProvinces()
+      .then((rows) => {
+        if (!cancelled) setProvinces(rows)
+      })
+      .catch(() => {
+        // Gagal memuat: pilihan tetap kosong, validasi akan menahan submit.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Kabupaten/kota mengikuti provinsi yang dipilih.
+  useEffect(() => {
+    if (!province) {
+      setRegencies([])
+      return
+    }
+    let cancelled = false
+    fetchRegencies(province)
+      .then((rows) => {
+        if (!cancelled) setRegencies(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setRegencies([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [province])
+
+  // Cek keunikan username (debounce; RPC security definer, bisa tanpa login).
+  useEffect(() => {
+    const u = username.trim()
+    if (u.length < 3 || !USERNAME_PATTERN.test(u)) {
+      setUsernameStatus('idle')
+      return
+    }
+    setUsernameStatus('checking')
+    const t = window.setTimeout(async () => {
+      try {
+        const ok = await checkUsernameAvailable(u)
+        // Abaikan jawaban basi bila pengguna sudah mengetik username lain.
+        if (usernameRef.current.trim() !== u) return
+        setUsernameStatus(ok ? 'available' : 'taken')
+      } catch {
+        if (usernameRef.current.trim() !== u) return
+        setUsernameStatus('error')
+      }
+    }, 500)
+    return () => window.clearTimeout(t)
+  }, [username])
+
+  // Cari sekolah terverifikasi (debounce; nama atau NPSN).
+  useEffect(() => {
+    if (manualSchool || selectedSchool) {
+      setSchoolResults([])
+      return
+    }
+    const q = schoolQuery.trim()
+    if (q.length < 2) {
+      setSchoolResults([])
+      return
+    }
+    setSchoolSearching(true)
+    const t = window.setTimeout(async () => {
+      try {
+        setSchoolResults(await searchSchools(q))
+      } catch {
+        setSchoolResults([])
+      }
+      setSchoolSearching(false)
+    }, 400)
+    return () => window.clearTimeout(t)
+  }, [schoolQuery, manualSchool, selectedSchool])
+
+  // Selesaikan pendaftaran tertunda bila pengguna masuk lewat jalur yang
+  // tidak melewati handleVerifyCode (mis. konfirmasi email ternyata
+  // nonaktif, atau kembali lewat tautan email). Dijaga completionStarted
+  // supaya tidak berjalan dua kali.
+  useEffect(() => {
+    if (!verified || !user || !registeredEmail || completionStarted.current) return
+    completionStarted.current = true
+    completePendingRegistration(user.id, registeredEmail)
+      .then((done) => setCompletion(done))
+      .catch((err) =>
+        setCompletionError(err instanceof Error ? err.message : 'Penyelesaian pendaftaran gagal.'),
+      )
+  }, [verified, user, registeredEmail])
+
+  // Setelah email terverifikasi, arahkan otomatis ke Beranda (tombol
+  // "Masuk ke Beranda" tetap tersedia sebagai jalan manual).
+  useEffect(() => {
+    if (!verified) return
+    const t = window.setTimeout(() => navigate('/', { replace: true }), 3000)
+    return () => window.clearTimeout(t)
+  }, [verified, navigate])
+
   // Bila pengguna sudah masuk dan TIDAK sedang memverifikasi, ke Beranda.
   if (user && !registeredEmail) {
     navigate('/', { replace: true })
     return null
+  }
+
+  function handleNameChange(value: string) {
+    setName(value)
+    if (!usernameEdited) setUsername(slugifyUsername(value))
+  }
+
+  function handleUsernameChange(value: string) {
+    setUsernameEdited(true)
+    setUsername(value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+  }
+
+  function handleSchoolQueryChange(value: string) {
+    setSchoolQuery(value)
+    if (selectedSchool) setSelectedSchool(null)
+  }
+
+  function selectSchool(school: School) {
+    setSelectedSchool(school)
+    setSchoolQuery(school.name)
+    setSchoolResults([])
   }
 
   async function handlePhotoFile(e: ChangeEvent<HTMLInputElement>) {
@@ -143,20 +268,21 @@ export default function RegisterPage() {
     setError(null)
     try {
       const dataUrl = await photoToDataUrl(file)
-      setPhotoFile({ dataUrl, ext: extFromFile(file) })
+      setPhotoFile({ dataUrl, ext: photoExtFromFile(file) })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Tidak dapat membaca file foto.')
     }
   }
 
   function validate(): string | null {
-    if (!photoFile && !photoUrl.trim()) {
-      return 'Foto profil wajib diisi — pilih file foto atau tempel tautan foto.'
-    }
-    if (photoUrl.trim() && !/^https?:\/\/.{6,}$/.test(photoUrl.trim())) {
-      return 'Tautan foto tidak valid. Awali dengan http:// atau https://.'
-    }
     if (name.trim().length < 2) return 'Nama lengkap minimal 2 karakter.'
+    const u = username.trim()
+    if (u.length < 3) return 'Username minimal 3 karakter.'
+    if (!USERNAME_PATTERN.test(u)) {
+      return 'Username hanya boleh berisi huruf kecil, angka, tanda hubung (-), dan garis bawah (_).'
+    }
+    if (usernameStatus === 'taken') return 'Username sudah dipakai. Pilih username lain.'
+    if (usernameStatus === 'checking') return 'Tunggu sebentar — username sedang diperiksa.'
     if (!email.trim()) return 'Isi alamat email kamu.'
     if (password.length < 8) return 'Kata sandi minimal 8 karakter.'
     if (password !== confirm) return 'Konfirmasi kata sandi tidak cocok.'
@@ -167,13 +293,23 @@ export default function RegisterPage() {
     }
     if (!gender) return 'Pilih jenis kelamin.'
     if (city.trim().length < 2) return 'Nama kota minimal 2 karakter.'
+    if (!termsAgreed) return 'Centang persetujuan Syarat & Ketentuan dan Kebijakan Privasi.'
     if (isMentorPath) {
-      if (expertise.trim().length < 2) return 'Bidang keahlian minimal 2 karakter.'
-      if (experience.trim().length < 10) return 'Ceritakan pengalaman mengajar/kerja kamu (minimal 10 karakter).'
-      if (portfolioLink.trim().length < 5) return 'Isi tautan portofolio kamu.'
+      if (!mentorValid || !mentorValues) {
+        return 'Lengkapi lamaran mentor: profesi, minimal satu bidang keahlian, pengalaman, alasan, dan centang pernyataan sukarela.'
+      }
     } else {
-      if (school.trim().length < 2) return 'Nama sekolah minimal 2 karakter.'
-      if (kelas.trim().length < 1) return 'Isi kelas kamu.'
+      if (!province) return 'Pilih provinsi.'
+      if (!regency) return 'Pilih kabupaten/kota.'
+      if (manualSchool) {
+        if (manualSchoolName.trim().length < 2) return 'Nama sekolah minimal 2 karakter.'
+        if (manualSchoolNpsn.trim() && !/^\d{8}$/.test(manualSchoolNpsn.trim())) {
+          return 'NPSN terdiri dari 8 digit angka.'
+        }
+      } else if (!selectedSchool) {
+        return 'Pilih sekolah dari daftar pencarian, atau pilih "Sekolah saya belum terdaftar".'
+      }
+      if (!kelas) return 'Pilih kelas.'
       if (interests.trim().length < 2) return 'Isi minat kamu (mis. sinematografi, editing).'
     }
     return null
@@ -191,18 +327,21 @@ export default function RegisterPage() {
     const interestList = isMentorPath
       ? []
       : interests.split(',').map((s) => s.trim()).filter(Boolean)
+    const displaySchool = isMentorPath
+      ? ''
+      : (selectedSchool?.name ?? manualSchoolName.trim())
     // Data profil lengkap dikirim sebagai user_metadata — trigger database
     // (migrasi 010) mengisinya ke tabel profiles saat akun dibuat.
+    // Username TIDAK lewat metadata (duplikat akan menggagalkan signup);
+    // username ditulis lewat patch profil setelah pengguna masuk.
     const metadata: Record<string, unknown> = {
       phone: phone.trim(),
       city: city.trim(),
       birth_date: birthDate,
       gender,
-      address: address.trim(),
-      school: isMentorPath ? '' : school.trim(),
-      kelas: isMentorPath ? '' : kelas.trim(),
+      school: displaySchool,
+      kelas: isMentorPath ? '' : kelas,
       interests: interestList,
-      photo_url: photoFile ? '' : photoUrl.trim(),
     }
     const payload: RegistrationPayload = {
       name: name.trim(),
@@ -211,19 +350,23 @@ export default function RegisterPage() {
       birthDate,
       gender,
       city: city.trim(),
-      address: address.trim(),
       role: isMentorPath ? 'mentor' : 'siswa',
-      school: isMentorPath ? '' : school.trim(),
-      kelas: isMentorPath ? '' : kelas.trim(),
+      school: displaySchool,
+      kelas: isMentorPath ? '' : kelas,
       interests: interestList,
-      expertise: expertise.trim(),
-      experience: experience.trim(),
-      portfolioLink: portfolioLink.trim(),
+      mentor: isMentorPath ? mentorValues : null,
       photo: photoFile
         ? { kind: 'file', dataUrl: photoFile.dataUrl, ext: photoFile.ext }
-        : photoUrl.trim()
-          ? { kind: 'url', url: photoUrl.trim() }
+        : null,
+      username: username.trim(),
+      province: isMentorPath ? '' : province,
+      regency: isMentorPath ? '' : regency,
+      schoolId: selectedSchool?.id ?? null,
+      schoolManual:
+        !isMentorPath && manualSchool
+          ? { name: manualSchoolName.trim(), npsn: manualSchoolNpsn.trim() || null }
           : null,
+      termsAgreed,
     }
     setBusy(true)
     const { error: err, needsConfirmation } = await signUp({
@@ -238,7 +381,8 @@ export default function RegisterPage() {
       return
     }
     // Titipkan payload (tanpa kata sandi) untuk diselesaikan setelah masuk:
-    // foto file diunggah ke bucket, profil dilengkapi, lamaran mentor dikirim.
+    // foto file diunggah ke bucket, profil dilengkapi, pengajuan sekolah
+    // manual dikirim, lamaran mentor dikirim.
     savePendingRegistration(payload)
     setRegisteredRole(payload.role)
     if (needsConfirmation) {
@@ -269,8 +413,9 @@ export default function RegisterPage() {
     }
     setVerified(true)
     // Sesi sudah aktif — selesaikan pendaftaran tertunda (foto, profil,
-    // lamaran mentor). AuthProvider juga menjalankannya sebagai pengaman;
-    // pemanggil kedua menunggu janji yang sama, bukan mengulang.
+    // pengajuan sekolah, lamaran mentor). AuthProvider juga menjalankannya
+    // sebagai pengaman; pemanggil kedua menunggu janji yang sama, bukan
+    // mengulang.
     if (verifiedUser && !completionStarted.current) {
       completionStarted.current = true
       try {
@@ -376,12 +521,18 @@ export default function RegisterPage() {
                   {completion?.photoUploaded && (
                     <> Foto profil kamu sudah terunggah.</>
                   )}
+                  {completion?.schoolSubmitted && (
+                    <> Pengajuan sekolahmu sedang ditinjau admin.</>
+                  )}
                 </p>
                 {completionError && <p className="error-box">{completionError}</p>}
                 {registrationNotice && <p className="error-box">{registrationNotice}</p>}
                 <Link to="/" className="btn btn-primary btn-block">
                   Masuk ke Beranda
                 </Link>
+                <p className="muted">
+                  Kamu akan diarahkan ke Beranda secara otomatis dalam beberapa detik.
+                </p>
               </>
             )}
           </div>
@@ -436,12 +587,13 @@ export default function RegisterPage() {
             </p>
           ) : (
             <p className="muted">
-              Buat akun untuk mulai belajar filmmaking. Foto profil wajib diisi.
+              Buat akun untuk mulai belajar filmmaking. Foto profil opsional — bisa ditambahkan
+              nanti di Profil.
             </p>
           )}
 
           <label>
-            Foto Profil (wajib)
+            Foto Profil (opsional)
             <span className="photo-field">
               <span className="btn btn-secondary btn-small" style={{ cursor: 'pointer' }}>
                 {photoFile ? 'Ganti Foto' : 'Pilih Foto'}
@@ -457,14 +609,9 @@ export default function RegisterPage() {
               )}
             </span>
             <span className="muted" style={{ fontWeight: 400 }}>
-              JPG/PNG/WebP, tanpa batas ukuran (foto besar diperkecil otomatis). Atau tempel tautan foto di bawah ini.
+              JPG/PNG/WebP, tanpa batas ukuran (foto besar diperkecil otomatis). Boleh
+              dikosongkan.
             </span>
-            <input
-              type="url"
-              value={photoUrl}
-              onChange={(e) => setPhotoUrl(e.target.value)}
-              placeholder="https://… (tautan foto, bila tidak mengunggah file)"
-            />
           </label>
 
           <label>
@@ -472,13 +619,34 @@ export default function RegisterPage() {
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => handleNameChange(e.target.value)}
               autoComplete="name"
               required
               minLength={2}
               maxLength={80}
               placeholder="Nama kamu"
             />
+          </label>
+          <label>
+            Username
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => handleUsernameChange(e.target.value)}
+              autoComplete="username"
+              required
+              minLength={3}
+              maxLength={30}
+              placeholder="username-kamu"
+            />
+            <span className="muted" style={{ fontWeight: 400 }}>
+              {usernameStatus === 'checking' && 'Memeriksa ketersediaan username…'}
+              {usernameStatus === 'available' && 'Username tersedia.'}
+              {usernameStatus === 'taken' && 'Username sudah dipakai — pilih yang lain.'}
+              {usernameStatus === 'error' && 'Tidak dapat memeriksa username saat ini — tetap bisa lanjut, sistem akan memberi tahu bila sudah dipakai.'}
+              {usernameStatus === 'idle' &&
+                'Nama pengguna unik kamu: huruf kecil, angka, tanda hubung (-), dan garis bawah (_). Terisi otomatis dari nama — boleh diubah.'}
+            </span>
           </label>
           <label>
             Email
@@ -574,69 +742,138 @@ export default function RegisterPage() {
           </label>
 
           {isMentorPath ? (
-            <>
-              <label>
-                Bidang Keahlian
-                <input
-                  type="text"
-                  value={expertise}
-                  onChange={(e) => setExpertise(e.target.value)}
-                  required
-                  minLength={2}
-                  maxLength={200}
-                  placeholder="Mis. Sinematografi, penyutradaraan"
-                />
-              </label>
-              <label>
-                Pengalaman Mengajar / Kerja
-                <textarea
-                  value={experience}
-                  onChange={(e) => setExperience(e.target.value)}
-                  required
-                  minLength={10}
-                  maxLength={2000}
-                  rows={4}
-                  placeholder="Ceritakan pengalaman mengajar atau kerja kamu di bidang film."
-                />
-              </label>
-              <label>
-                Tautan Portofolio
-                <input
-                  type="url"
-                  value={portfolioLink}
-                  onChange={(e) => setPortfolioLink(e.target.value)}
-                  required
-                  minLength={5}
-                  maxLength={1000}
-                  placeholder="https://… (tautan karya atau profil kamu)"
-                />
-              </label>
-            </>
+            <MentorApplicationForm
+              embedded
+              onValuesChange={(values, valid) => {
+                setMentorValues(values)
+                setMentorValid(valid)
+              }}
+            />
           ) : (
             <>
               <label>
-                Sekolah
-                <input
-                  type="text"
-                  value={school}
-                  onChange={(e) => setSchool(e.target.value)}
-                  required
-                  minLength={2}
-                  maxLength={120}
-                  placeholder="Nama sekolah kamu"
-                />
+                Provinsi
+                <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency('') }} required>
+                  <option value="" disabled>
+                    Pilih provinsi
+                  </option>
+                  {provinces.map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
-                Kelas
-                <input
-                  type="text"
-                  value={kelas}
-                  onChange={(e) => setKelas(e.target.value)}
+                Kabupaten / Kota
+                <select
+                  value={regency}
+                  onChange={(e) => setRegency(e.target.value)}
                   required
-                  minLength={1}
-                  maxLength={20}
-                  placeholder="Mis. X-1 / 10 RPL 1"
-                />
+                  disabled={!province}
+                >
+                  <option value="" disabled>
+                    {province ? 'Pilih kabupaten/kota' : 'Pilih provinsi dulu'}
+                  </option>
+                  {regencies.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {manualSchool ? (
+                <>
+                  <label>
+                    Nama Sekolah
+                    <input
+                      type="text"
+                      value={manualSchoolName}
+                      onChange={(e) => setManualSchoolName(e.target.value)}
+                      required
+                      minLength={2}
+                      maxLength={120}
+                      placeholder="Nama sekolah kamu"
+                    />
+                  </label>
+                  <label>
+                    NPSN (opsional)
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={manualSchoolNpsn}
+                      onChange={(e) => setManualSchoolNpsn(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
+                      maxLength={8}
+                      placeholder="8 digit angka, bila tahu"
+                    />
+                  </label>
+                  <p className="muted">
+                    Sekolahmu akan diajukan ke admin untuk ditinjau — belum langsung masuk
+                    daftar resmi. Kamu tetap bisa belajar sambil menunggu.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => setManualSchool(false)}
+                  >
+                    Pilih dari daftar sekolah
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label>
+                    Sekolah
+                    <input
+                      type="text"
+                      value={schoolQuery}
+                      onChange={(e) => handleSchoolQueryChange(e.target.value)}
+                      maxLength={120}
+                      placeholder="Ketik nama sekolah atau NPSN…"
+                      autoComplete="off"
+                    />
+                    <span className="muted" style={{ fontWeight: 400 }}>
+                      {schoolSearching
+                        ? 'Mencari…'
+                        : selectedSchool
+                          ? `Terpilih: ${selectedSchool.name}`
+                          : 'Ketik minimal 2 huruf untuk mencari sekolah terverifikasi.'}
+                    </span>
+                  </label>
+                  {schoolResults.length > 0 && (
+                    <ul className="school-results">
+                      {schoolResults.map((s) => (
+                        <li key={s.id}>
+                          <button type="button" onClick={() => selectSchool(s)}>
+                            {s.name}
+                            {s.npsn ? ` — NPSN ${s.npsn}` : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => {
+                      setManualSchool(true)
+                      setSelectedSchool(null)
+                      setSchoolResults([])
+                    }}
+                  >
+                    Sekolah saya belum terdaftar
+                  </button>
+                </>
+              )}
+              <label>
+                Kelas
+                <select value={kelas} onChange={(e) => setKelas(e.target.value)} required>
+                  <option value="" disabled>
+                    Pilih kelas
+                  </option>
+                  <option value="X">X</option>
+                  <option value="XI">XI</option>
+                  <option value="XII">XII</option>
+                </select>
               </label>
               <label>
                 Minat
@@ -653,15 +890,25 @@ export default function RegisterPage() {
             </>
           )}
 
-          <label>
-            Alamat (opsional)
-            <textarea
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              maxLength={300}
-              rows={2}
-              placeholder="Alamat lengkap (boleh dikosongkan)"
+          <div className="notice-box">
+            <strong>Perlindungan data &amp; pengguna di bawah 18 tahun.</strong> SINEVERSE tidak
+            pernah meminta NIK, KTP, alamat rumah, atau dokumen sensitif apa pun. Data yang kamu
+            isi hanya dipakai untuk akun belajar dan ditampilkan seperlunya (nama, username,
+            sekolah, foto profil). Bila kamu di bawah 18 tahun, pastikan orang tua/wali
+            mengetahui pendaftaran ini — mereka dapat menghubungi pengelola lewat halaman{' '}
+            <Link to="/tentang">Tentang</Link> bila ada yang perlu ditanyakan.
+          </div>
+          <label className="checkbox-item">
+            <input
+              type="checkbox"
+              checked={termsAgreed}
+              onChange={(e) => setTermsAgreed(e.target.checked)}
+              required
             />
+            <span>
+              Saya menyetujui <Link to="/syarat">Syarat &amp; Ketentuan</Link> dan{' '}
+              <Link to="/privasi">Kebijakan Privasi</Link> SINEVERSE.
+            </span>
           </label>
 
           {error && <p className="error-box">{error}</p>}

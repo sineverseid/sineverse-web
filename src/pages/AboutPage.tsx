@@ -112,11 +112,22 @@ export default function AboutPage({ section }: { section: AboutSection }) {
           </p>
           <h2>Data yang Dikumpulkan</h2>
           <ul>
-            <li>Data akun: nama, email, kata sandi (disimpan dalam bentuk hash, bukan teks biasa), nomor telepon/WA, tanggal lahir, jenis kelamin, kota, dan alamat.</li>
+            <li>Data akun: nama, username, email, kata sandi (disimpan dalam bentuk hash, bukan teks biasa), nomor telepon/WA, tanggal lahir, jenis kelamin, kota, provinsi, dan kabupaten/kota.</li>
             <li>Data pelajar: sekolah, kelas, dan minat.</li>
-            <li>Data mentor: bidang keahlian, pengalaman, dan tautan portofolio.</li>
+            <li>Data mentor: profesi, bidang keahlian, pengalaman, tautan portofolio (opsional), dan alasan menjadi mentor.</li>
             <li>Foto profil yang diunggah anggota.</li>
             <li>Data aktivitas belajar: course yang diambil, progres lesson, nilai kuis, tugas, dan ujian, serta karya dan proyek yang dibuat di platform.</li>
+          </ul>
+          <h2>Pengguna di Bawah 18 Tahun</h2>
+          <p>
+            SINEVERSE dirancang untuk pelajar SMA/SMK, dan sebagian anggota berusia di bawah 18
+            tahun. Untuk mereka berlaku perlindungan tambahan:
+          </p>
+          <ul>
+            <li>SINEVERSE tidak pernah meminta NIK, KTP, alamat rumah, atau dokumen sensitif apa pun — dari anggota mana pun, termasuk yang di bawah 18 tahun.</li>
+            <li>Data yang dikumpulkan dari anggota di bawah 18 tahun sama dengan anggota lain (data akun, data pelajar, dan aktivitas belajar) dan hanya dipakai untuk keperluan platform.</li>
+            <li>Orang tua/wali dianjurkan mengetahui pendaftaran anaknya. Bila ada yang perlu ditanyakan atau diminta — termasuk permintaan melihat, memperbaiki, atau menghapus data anak — orang tua/wali dapat menghubungi pengelola platform melalui email sineverse.id@gmail.com.</li>
+            <li>Konten dan interaksi di platform dimoderasi; anggota dapat melaporkan konten atau perilaku yang tidak pantas kepada admin.</li>
           </ul>
           <h2>Penggunaan Data</h2>
           <p>
@@ -155,6 +166,7 @@ export default function AboutPage({ section }: { section: AboutSection }) {
             <li>Satu akun untuk satu orang; data yang diisi saat pendaftaran harus benar.</li>
             <li>Anggota bertanggung jawab menjaga kerahasiaan kata sandinya dan atas segala aktivitas di akunnya.</li>
             <li>Akun mentor aktif mengajar setelah diverifikasi oleh admin.</li>
+            <li>Anggota di bawah 18 tahun diharapkan mendaftar dengan sepengetahuan orang tua/wali.</li>
           </ul>
           <h2>Karya dan Konten</h2>
           <ul>

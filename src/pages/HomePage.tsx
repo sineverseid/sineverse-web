@@ -25,12 +25,17 @@ import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
 import {
+  decideMentorApplication,
+  decideSchoolSubmission,
   fetchAssignmentsForLessons,
   fetchCourseLessons,
   fetchCourses,
   fetchEnrollments,
   fetchLessonProgress,
+  fetchMentorApplications,
   fetchProfileNames,
+  fetchRefNameMap,
+  fetchSchoolSubmissions,
   fetchSubmissions,
   logAudit,
   supabase,
@@ -51,6 +56,7 @@ import type {
   OfficeHourBooking,
   Project,
   School,
+  SchoolSubmission,
   SineEvent,
   Submission,
 } from '../lib/types'
@@ -956,6 +962,23 @@ function claimStatusLabel(status: string): string {
   return status
 }
 
+// Status lamaran mentor dalam Bahasa Indonesia (bukan mentah "pending").
+function mentorStatusLabel(status: string): string {
+  if (status === 'pending') return 'Menunggu persetujuan'
+  if (status === 'approved') return 'Disetujui'
+  if (status === 'rejected') return 'Ditolak'
+  if (status === 'revision_required') return 'Diminta revisi'
+  return status
+}
+
+// Status pengajuan sekolah dalam Bahasa Indonesia.
+function schoolSubmissionStatusLabel(status: string): string {
+  if (status === 'pending') return 'Menunggu'
+  if (status === 'approved') return 'Disetujui'
+  if (status === 'rejected') return 'Ditolak'
+  return status
+}
+
 // Jenis target laporan moderasi dalam Bahasa Indonesia.
 function targetTypeLabel(t: string): string {
   if (t === 'community_post' || t === 'post') return 'Postingan community'
@@ -1498,6 +1521,16 @@ function AdminHome(props: {
   >(new Map())
   const [apps, setApps] = useState<MentorApplication[]>([])
   const [schools, setSchools] = useState<School[]>([])
+  // Pengajuan sekolah manual + nama wilayah untuk tampilannya (migrasi 027).
+  const [schoolSubs, setSchoolSubs] = useState<SchoolSubmission[]>([])
+  const [provinceNames, setProvinceNames] = useState<Map<string, string>>(new Map())
+  const [regencyNames, setRegencyNames] = useState<Map<string, string>>(new Map())
+  // Penolakan/revisi lamaran mentor meminta catatan (migrasi 027).
+  const [appAction, setAppAction] = useState<{ id: string; kind: 'reject' | 'revision' } | null>(null)
+  const [appNote, setAppNote] = useState('')
+  // Penolakan pengajuan sekolah meminta alasan (migrasi 027).
+  const [rejectingSubId, setRejectingSubId] = useState<string | null>(null)
+  const [subNote, setSubNote] = useState('')
   const [discReports, setDiscReports] = useState<DiscussionReport[]>([])
   const [modReports, setModReports] = useState<ModerationReport[]>([])
   const [activity, setActivity] = useState<AdminActivityRow[]>([])
@@ -1516,6 +1549,7 @@ function AdminHome(props: {
         { count: filmCount },
         { count: enrCount },
         appData,
+        subData,
         schoolData,
         dData,
         mData,
@@ -1531,17 +1565,8 @@ function AdminHome(props: {
             supabase.from('enrollments').select('id', { count: 'exact', head: true }),
           { count: 0 } as { count: number | null },
         ),
-        safe(
-          async () => {
-            const { data } = await supabase
-              .from('mentor_applications')
-              .select('*')
-              .eq('status', 'pending')
-              .order('created_at')
-            return (data ?? []) as MentorApplication[]
-          },
-          [] as MentorApplication[],
-        ),
+        safe(async () => fetchMentorApplications(), [] as MentorApplication[]),
+        safe(async () => fetchSchoolSubmissions(), [] as SchoolSubmission[]),
         safe(
           async () => {
             const { data } = await supabase.from('schools').select('*').order('name')
@@ -1580,6 +1605,12 @@ function AdminHome(props: {
       }
       const profs = (profiles ?? []) as { id: string; name: string | null; role: string }[]
       setNames(await fetchProfileNames(profs.map((p) => p.id)))
+      const [provMap, regMap] = await Promise.all([
+        fetchRefNameMap('ref_provinces'),
+        fetchRefNameMap('ref_regencies'),
+      ])
+      setProvinceNames(provMap)
+      setRegencyNames(regMap)
       setCounts({
         users: profs.length,
         siswa: profs.filter((p) => p.role === 'siswa').length,
@@ -1588,11 +1619,12 @@ function AdminHome(props: {
         schools: schoolData.length,
         films: filmCount ?? 0,
         enrollments: enrCount ?? 0,
-        pendingApps: appData.length,
+        pendingApps: appData.filter((a) => a.status === 'pending').length,
         openReports: dData.length + mData.length,
         unverifiedSchools: schoolData.filter((s) => !s.is_verified).length,
       })
       setApps(appData)
+      setSchoolSubs(subData)
       setSchools(schoolData)
       setDiscReports(dData)
       setModReports(mData)
@@ -1741,26 +1773,64 @@ function AdminHome(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function decideApp(app: MentorApplication, approve: boolean) {
-    const { error: updErr } = await supabase
-      .from('mentor_applications')
-      .update({ status: approve ? 'approved' : 'rejected', decided_by: userId })
-      .eq('id', app.id)
-    if (updErr) {
+  async function decideApp(
+    app: MentorApplication,
+    decision: 'approved' | 'rejected' | 'revision_required',
+    note = '',
+  ) {
+    // Hanya status + catatan yang diubah dari client. Trigger
+    // promote_mentor_on_approval di database yang mengubah profiles.role
+    // menjadi 'mentor' saat lamaran disetujui.
+    try {
+      await decideMentorApplication(app, decision, note, userId)
+    } catch {
       setNotice('Gagal menyimpan keputusan. Coba lagi.')
       return
     }
     await logAudit(
-      approve ? 'mentor_application.approved' : 'mentor_application.rejected',
+      decision === 'approved'
+        ? 'mentor_application.approved'
+        : decision === 'rejected'
+          ? 'mentor_application.rejected'
+          : 'mentor_application.revision_required',
       'mentor_applications',
       app.id,
       { user_id: app.user_id },
     )
     setNotice(
-      approve
+      decision === 'approved'
         ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
-        : 'Lamaran mentor ditolak.',
+        : decision === 'rejected'
+          ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
+          : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
     )
+    setAppAction(null)
+    setAppNote('')
+    await load()
+  }
+
+  async function decideSub(sub: SchoolSubmission, decision: 'approved' | 'rejected', note = '') {
+    // Setujui: sekolah dibuat (bila belum ada yang cocok) lalu ditautkan
+    // ke pengajuan + profil pengaju. Tolak: alasan tersimpan.
+    try {
+      await decideSchoolSubmission(sub, decision, note, userId)
+    } catch {
+      setNotice('Gagal menyimpan keputusan. Coba lagi.')
+      return
+    }
+    await logAudit(
+      decision === 'approved' ? 'school_submission.approved' : 'school_submission.rejected',
+      'school_submissions',
+      sub.id,
+      { user_id: sub.user_id },
+    )
+    setNotice(
+      decision === 'approved'
+        ? 'Pengajuan sekolah disetujui — sekolah ditambahkan dan ditautkan ke pengaju.'
+        : 'Pengajuan sekolah ditolak. Alasan tersimpan dan terlihat oleh pengaju.',
+    )
+    setRejectingSubId(null)
+    setSubNote('')
     await load()
   }
 
@@ -1871,19 +1941,20 @@ function AdminHome(props: {
 
       <section className="section">
         <div className="section-head">
-          <h2>Lamaran Mentor ({apps.length} menunggu)</h2>
+          <h2>Lamaran Mentor ({apps.filter((a) => a.status === 'pending').length} menunggu)</h2>
           <Link to="/admin#lamaran-mentor">Admin Panel →</Link>
         </div>
         {apps.length === 0 ? (
-          <p className="empty">Tidak ada lamaran mentor yang menunggu.</p>
+          <p className="empty">Tidak ada lamaran mentor.</p>
         ) : (
           <ul className="discussion-list">
             {apps.map((a) => (
               <li key={a.id} className="discussion-item">
                 <p>
-                  <strong>{names.get(a.user_id) ?? 'Pelamar'}</strong>
+                  <strong>{names.get(a.user_id) ?? 'Pelamar'}</strong> — {mentorStatusLabel(a.status)}
                 </p>
-                <p>Keahlian: {a.expertise ?? '—'}</p>
+                <p>Profesi: {a.profession ?? '—'}</p>
+                <p>Keahlian: {(a.expertise ?? []).join(', ') || '—'}</p>
                 <p>Pengalaman: {a.experience ?? '—'}</p>
                 {a.portfolio_link && (
                   <p>
@@ -1892,22 +1963,125 @@ function AdminHome(props: {
                     </a>
                   </p>
                 )}
-                <div className="form-actions">
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-small"
-                    onClick={() => void decideApp(a, true)}
-                  >
-                    Setujui
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-small"
-                    onClick={() => void decideApp(a, false)}
-                  >
-                    Tolak
-                  </button>
-                </div>
+                <p>Alasan: {a.reason ?? '—'}</p>
+                <p>Sukarela: {a.volunteer_agreed ? 'Ya — menyetujui pernyataan sukarela' : 'Belum menyetujui'}</p>
+                {a.decided_at && (
+                  <p className="muted">
+                    Diputuskan {fmtDate(a.decided_at)}
+                    {a.decided_by ? ` oleh ${names.get(a.decided_by) ?? 'admin'}` : ''}
+                    {a.decision_note ? ` — ${a.decision_note}` : ''}
+                  </p>
+                )}
+                {a.status === 'pending' && (
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void decideApp(a, 'approved')}
+                    >
+                      Setujui
+                    </button>{' '}
+                    {appAction?.id === a.id && appAction.kind === 'reject' ? (
+                      <>
+                        <label>
+                          Alasan penolakan (wajib)
+                          <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pelamar." />
+                        </label>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'rejected', appNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => { setAppAction({ id: a.id, kind: 'reject' }); setAppNote('') }}
+                      >
+                        Tolak
+                      </button>
+                    )}{' '}
+                    {appAction?.id === a.id && appAction.kind === 'revision' ? (
+                      <>
+                        <label>
+                          Catatan revisi (wajib)
+                          <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis yang perlu diperbaiki pelamar — terlihat oleh pelamar." />
+                        </label>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'revision_required', appNote)}>Konfirmasi Minta Revisi</button>{' '}
+                        <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => { setAppAction({ id: a.id, kind: 'revision' }); setAppNote('') }}
+                      >
+                        Minta Revisi
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Pengajuan Sekolah ({schoolSubs.filter((s) => s.status === 'pending').length} menunggu)</h2>
+          <Link to="/admin#pengajuan-sekolah">Admin Panel →</Link>
+        </div>
+        {schoolSubs.length === 0 ? (
+          <p className="empty">Tidak ada pengajuan sekolah.</p>
+        ) : (
+          <ul className="discussion-list">
+            {schoolSubs.map((s) => (
+              <li key={s.id} className="discussion-item">
+                <p>
+                  <strong>{s.name}</strong>
+                  {s.npsn ? ` — NPSN ${s.npsn}` : ''}
+                </p>
+                <p>
+                  Wilayah: {s.province ? provinceNames.get(s.province) ?? s.province : '—'}
+                  {' / '}
+                  {s.regency ? regencyNames.get(s.regency) ?? s.regency : '—'}
+                </p>
+                <p>Pengaju: {names.get(s.user_id) ?? '—'}</p>
+                <p>Status: {schoolSubmissionStatusLabel(s.status)}{s.decision_note ? ` — ${s.decision_note}` : ''}</p>
+                {s.decided_at && (
+                  <p className="muted">
+                    Diputuskan {fmtDate(s.decided_at)}
+                    {s.decided_by ? ` oleh ${names.get(s.decided_by) ?? 'admin'}` : ''}
+                  </p>
+                )}
+                {s.status === 'pending' && (
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-small"
+                      onClick={() => void decideSub(s, 'approved')}
+                    >
+                      Setujui &amp; Tambah Sekolah
+                    </button>{' '}
+                    {rejectingSubId === s.id ? (
+                      <>
+                        <label>
+                          Alasan penolakan (wajib)
+                          <textarea value={subNote} onChange={(e) => setSubNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pengaju." />
+                        </label>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!subNote.trim()} onClick={() => void decideSub(s, 'rejected', subNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingSubId(null); setSubNote('') }}>Batal</button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => { setRejectingSubId(s.id); setSubNote('') }}
+                      >
+                        Tolak
+                      </button>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

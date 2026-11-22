@@ -29,7 +29,7 @@ export default function AdminUsersPage() {
       try {
         const { data, error: qErr } = await supabase
           .from('profiles')
-          .select('id,email,name,role,photo_url,phone,city,school,kelas,created_at')
+          .select('id,email,name,username,role,photo_url,phone,city,school,kelas,created_at')
           .order('created_at', { ascending: false })
         if (qErr) throw qErr
         if (!cancelled) setProfiles((data ?? []) as Profile[])
@@ -53,6 +53,7 @@ export default function AdminUsersPage() {
       if (!q) return true
       return (
         (p.name ?? '').toLowerCase().includes(q) ||
+        (p.username ?? '').toLowerCase().includes(q) ||
         (p.email ?? '').toLowerCase().includes(q) ||
         (p.city ?? '').toLowerCase().includes(q)
       )
@@ -87,11 +88,11 @@ export default function AdminUsersPage() {
           </p>
           <div className="form" style={{ marginBottom: '1rem' }}>
             <label>
-              Cari nama / email / kota
+              Cari nama / username / email / kota
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Mis. Nadia, sineverse.id@gmail.com, Tangerang"
+                placeholder="Mis. Nadia, nadia-01, sineverse.id@gmail.com, Tangerang"
               />
             </label>
             <label>
@@ -116,6 +117,7 @@ export default function AdminUsersPage() {
                 <thead>
                   <tr>
                     <th>Nama</th>
+                    <th>Username</th>
                     <th>Email</th>
                     <th>Peran</th>
                     <th>Kota</th>
@@ -127,6 +129,7 @@ export default function AdminUsersPage() {
                   {filtered.map((p) => (
                     <tr key={p.id}>
                       <td>{p.name ?? '—'}</td>
+                      <td>{p.username ?? '—'}</td>
                       <td>{p.email ?? '—'}</td>
                       <td>{ROLE_LABEL[p.role]}</td>
                       <td>{p.city ?? '—'}</td>
