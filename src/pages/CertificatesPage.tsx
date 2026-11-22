@@ -7,7 +7,9 @@
 // (verify_certificate_by_token / verify_certificate_by_serial): VALID,
 // REVOKED, NOT FOUND, INACTIVE. Tautan verifikasi mentah TIDAK pernah
 // ditampilkan sebagai teks (hanya tombol salin + QR).
-// Setiap sertifikat bisa diunduh sebagai PNG (lib/certificateDownload.ts).
+// Setiap sertifikat yang masih valid bisa diunduh sebagai PNG
+// (lib/certificateDownload.ts); yang dicabut/tidak aktif tidak bisa
+// diunduh lagi (B6) dan pratinjaunya menampilkan pita DICABUT.
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -268,16 +270,22 @@ export function CertificatesPage() {
                 </button>
                 <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
                 <QrCode value={verificationLinkForCert(c)} />
-                <p style={{ marginTop: '0.5rem' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-small"
-                    onClick={() => void handleDownload(c, programTitle, mentorName ?? null)}
-                    disabled={downloadingSerial === c.serial}
-                  >
-                    {downloadingSerial === c.serial ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
-                  </button>
-                </p>
+                {c.status !== 'valid' ? (
+                  <p className="muted" style={{ marginTop: '0.5rem' }}>
+                    Sertifikat ini {c.status === 'revoked' ? 'sudah dicabut' : 'tidak aktif'} — unduhan PNG dinonaktifkan.
+                  </p>
+                ) : (
+                  <p style={{ marginTop: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => void handleDownload(c, programTitle, mentorName ?? null)}
+                      disabled={downloadingSerial === c.serial}
+                    >
+                      {downloadingSerial === c.serial ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
+                    </button>
+                  </p>
+                )}
               </li>
             )
           })}
@@ -482,11 +490,17 @@ export function VerifyCertificatePage() {
           </button>
           <p className="muted" style={{ marginTop: '0.5rem' }}>Pindai kode QR untuk verifikasi:</p>
           <QrCode value={verificationLinkForCert(certificateFromVerification(result))} />
-          <p style={{ marginTop: '0.5rem' }}>
-            <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleDownloadVerified()} disabled={downloading}>
-              {downloading ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
-            </button>
-          </p>
+          {result.status !== 'valid' ? (
+            <p className="muted" style={{ marginTop: '0.5rem' }}>
+              Sertifikat ini {result.status === 'revoked' ? 'sudah dicabut' : 'tidak aktif'} — unduhan PNG dinonaktifkan.
+            </p>
+          ) : (
+            <p style={{ marginTop: '0.5rem' }}>
+              <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleDownloadVerified()} disabled={downloading}>
+                {downloading ? 'Mengunduh…' : 'Unduh Sertifikat (PNG)'}
+              </button>
+            </p>
+          )}
           {copyError && <p className="error-box">{copyError}</p>}
           {downloadError && <p className="error-box">{downloadError}</p>}
         </div>

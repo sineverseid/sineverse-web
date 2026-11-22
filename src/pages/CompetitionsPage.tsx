@@ -10,8 +10,9 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
-import { fmtDate, isMissingTableError, nextSerial } from '../lib/guarded'
+import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchEnrollments, fetchProfileNames, supabase } from '../lib/supabase'
+import { issueWorkCertificate } from '../lib/certificates'
 import type { Competition, CompetitionScore, CompetitionStatus, CompetitionSubmission, CompetitionWinner } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -327,13 +328,10 @@ export function CompetitionDetailPage() {
 
   async function handleIssueWinnerCerts() {
     if (!isAdmin || winners.length === 0) return
-    const { data: existing } = await supabase.from('certificates').select('id').eq('type', 'work')
-    let seq = (existing ?? []).length
     const issued: string[] = []
     const failed: string[] = []
-    // Enrollment tiap pemenang independen — diambil paralel dulu; insert
-    // sertifikat tetap berurutan supaya nomor serial (seq) sesuai urutan
-    // pemenang seperti sebelumnya.
+    // Enrollment tiap pemenang independen — diambil paralel dulu; RPC
+    // penerbitan tetap berurutan supaya pesan hasil sesuai urutan pemenang.
     const winnerSubs = winners
       .map((w) => ({ w, sub: subs.find((s) => s.id === w.submission_id) }))
       .filter((x): x is { w: CompetitionWinner; sub: CompetitionSubmission } => !!x.sub)
@@ -341,24 +339,25 @@ export function CompetitionDetailPage() {
     for (let i = 0; i < winnerSubs.length; i++) {
       const { sub } = winnerSubs[i]
       const enr = enrollments[i]
+      const name = names.get(sub.user_id) ?? 'Pemenang'
       // certificates.course_id wajib terisi (001): pakai course terbaru
       // yang sedang/diambil pemenang, jujur dicatat di pesan hasil.
       if (enr.length === 0) {
-        failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: belum mengambil course apa pun, sertifikat karya tidak bisa diterbitkan (course_id wajib terisi).`)
+        failed.push(`${name}: belum mengambil course apa pun, sertifikat karya tidak bisa diterbitkan (course_id wajib terisi).`)
         continue
       }
-      const serial = nextSerial('SVS-KRY', seq)
-      const { error: insErr } = await supabase.from('certificates').insert({
-        user_id: sub.user_id,
-        course_id: enr[0].course_id,
-        type: 'work',
-        serial,
-        score: null,
-      })
-      if (insErr) failed.push(`${names.get(sub.user_id) ?? 'Pemenang'}: gagal diterbitkan, coba lagi.`)
-      else {
-        seq += 1
-        issued.push(`${names.get(sub.user_id) ?? 'Pemenang'}, ${serial}`)
+      // B3 (migrasi 025): penerbitan lewat RPC SECURITY DEFINER
+      // issue_work_certificate — bukan insert langsung (policy insert
+      // langsung sudah dihapus). RPC idempotent per (kompetisi, pemenang).
+      try {
+        const result = await issueWorkCertificate(currentComp.id, sub.user_id, null)
+        issued.push(
+          result.alreadyIssued
+            ? `${name}, ${result.serial} (sudah diterbitkan sebelumnya)`
+            : `${name}, ${result.serial}`,
+        )
+      } catch (err) {
+        failed.push(`${name}: gagal diterbitkan (${err instanceof Error ? err.message : 'coba lagi'}).`)
       }
     }
     setNotice(

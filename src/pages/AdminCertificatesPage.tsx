@@ -161,6 +161,10 @@ export default function AdminCertificatesPage() {
   const [mgmtBusy, setMgmtBusy] = useState(false)
   const [mgmtError, setMgmtError] = useState<string | null>(null)
   const [mgmtNotice, setMgmtNotice] = useState<string | null>(null)
+  // B11: paginasi nyata daftar manajemen — 100 baris per halaman.
+  const [mgmtPage, setMgmtPage] = useState(1)
+  const [mgmtHasMore, setMgmtHasMore] = useState(false)
+  const [mgmtLoadingMore, setMgmtLoadingMore] = useState(false)
   // Sertifikat Kelulusan Academy (migrasi 024).
   const [studentIds, setStudentIds] = useState<string[]>([])
   const [academyStudentId, setAcademyStudentId] = useState('')
@@ -183,10 +187,13 @@ export default function AdminCertificatesPage() {
     async function load() {
       try {
         const courseList = await fetchCourses()
+        // B11: halaman pertama manajemen = 100 baris terbaru (.range);
+        // halaman berikutnya dimuat tombol "Tampilkan lebih banyak".
         const { data: certData } = await supabase
           .from('certificates')
           .select('*')
           .order('issued_at', { ascending: false })
+          .range(0, 99)
         const certRows = (certData ?? []) as Certificate[]
         const { data: enrData } = await supabase.from('enrollments').select('user_id')
         // BUGFIX 22 Nov 2026: daftar penerima JANGAN diturunkan dari sertifikat
@@ -216,6 +223,8 @@ export default function AdminCertificatesPage() {
         if (cancelled) return
         setCourses(courseList)
         setCertificates(certRows)
+        setMgmtPage(1)
+        setMgmtHasMore(certRows.length === 100)
         setNames(namesMap)
         setStudentIds(userIds)
         setEventOptions(evtRows)
@@ -266,12 +275,15 @@ export default function AdminCertificatesPage() {
   }, [mentorCourseId, courses])
 
   async function refreshCertificates() {
+    // Muat ulang jendela yang sudah dimuat (halaman 1..mgmtPage).
     const { data: certData } = await supabase
       .from('certificates')
       .select('*')
       .order('issued_at', { ascending: false })
+      .range(0, mgmtPage * 100 - 1)
     const certRows = (certData ?? []) as Certificate[]
     setCertificates(certRows)
+    setMgmtHasMore(certRows.length === mgmtPage * 100)
     // Sama seperti load(): penerima diambil dari profiles, bukan dari sertifikat.
     const { data: memberData } = await supabase
       .from('profiles')
@@ -313,6 +325,33 @@ export default function AdminCertificatesPage() {
   }
 
   // --- Manajemen Sertifikat (024) ------------------------------------------
+  // B11: muat 100 baris berikutnya dari server (.range) dan tambahkan ke
+  // daftar yang sudah dimuat; filter/search tetap bekerja atas semua
+  // baris yang sudah dimuat.
+  async function handleLoadMore() {
+    setMgmtLoadingMore(true)
+    try {
+      const from = mgmtPage * 100
+      const { data } = await supabase
+        .from('certificates')
+        .select('*')
+        .order('issued_at', { ascending: false })
+        .range(from, from + 99)
+      const rows = (data ?? []) as Certificate[]
+      setCertificates((prev) => [...prev, ...rows])
+      setMgmtPage((p) => p + 1)
+      setMgmtHasMore(rows.length === 100)
+      if (rows.length > 0) {
+        const m = await fetchProfileNames(rows.map((r) => r.user_id))
+        setNames((prev) => new Map([...prev, ...m]))
+      }
+    } catch {
+      setMgmtError('Gagal memuat sertifikat berikutnya.')
+    } finally {
+      setMgmtLoadingMore(false)
+    }
+  }
+
   async function handleShowAudit(certId: string) {
     setMgmtSelectedId(certId)
     setAuditLog(null)
@@ -374,11 +413,14 @@ export default function AdminCertificatesPage() {
     async function check() {
       setAcademyChecking(true)
       try {
+        // B7: hitung HANYA sertifikat course yang masih VALID — yang
+        // dicabut tidak boleh menggenapi syarat kelulusan Academy.
         const { data } = await supabase
           .from('certificates')
           .select('course_id')
           .eq('user_id', academyStudentId)
           .eq('type', 'course')
+          .eq('status', 'valid')
         const distinct = new Set(((data ?? []) as { course_id: string }[]).map((r) => r.course_id))
         if (!cancelled) setAcademyCount(distinct.size)
       } catch {
@@ -447,12 +489,17 @@ export default function AdminCertificatesPage() {
           passing_grade?: number
         } | null
         if (rpsRow?.weights) {
+          // B8: fallback per kunci (bukan hanya per baris) — pola yang
+          // sama dengan fetchCourseEligibility di lib/certificates.ts:
+          // bila satu kunci hilang dari JSONB, bobot itu memakai default
+          // master prompt; tanpa ini bobot undefined membuat nilai akhir
+          // NaN.
           weights = {
-            pretest: rpsRow.weights.pretest,
-            posttest: rpsRow.weights.posttest,
-            tugasMingguan: rpsRow.weights.tugas_mingguan,
-            tugasAkhir: rpsRow.weights.tugas_akhir,
-            diskusi: rpsRow.weights.diskusi,
+            pretest: rpsRow.weights.pretest ?? FALLBACK_WEIGHTS.pretest,
+            posttest: rpsRow.weights.posttest ?? FALLBACK_WEIGHTS.posttest,
+            tugasMingguan: rpsRow.weights.tugas_mingguan ?? FALLBACK_WEIGHTS.tugasMingguan,
+            tugasAkhir: rpsRow.weights.tugas_akhir ?? FALLBACK_WEIGHTS.tugasAkhir,
+            diskusi: rpsRow.weights.diskusi ?? FALLBACK_WEIGHTS.diskusi,
           }
           passingGrade = rpsRow.passing_grade ?? FALLBACK_PASSING
           weightsSource = `RPS SVS-SEM1 (Pretest ${weights.pretest}% · Posttest ${weights.posttest}% · Tugas mingguan ${weights.tugasMingguan}% · Tugas praktik akhir ${weights.tugasAkhir}% · Diskusi ${weights.diskusi}% · Lulus ${passingGrade})`
@@ -576,7 +623,9 @@ export default function AdminCertificatesPage() {
   const courseById = new Map(courses.map((c) => [c.id, c.title]))
 
   // Manajemen Sertifikat: filter klien atas daftar sertifikat yang sudah
-  // dimuat (terbaru dulu, tampil 100 pertama).
+  // dimuat (terbaru dulu). Paginasi nyata (B11): 100 baris per halaman
+  // dari server + tombol "Tampilkan lebih banyak"; filter bekerja atas
+  // semua baris yang sudah dimuat (bukan lagi .slice(0, 100)).
   const mgmtFiltered = certificates
     .filter((c) => {
       if (mgmtType !== 'all' && c.type !== mgmtType) return false
@@ -590,7 +639,6 @@ export default function AdminCertificatesPage() {
       }
       return true
     })
-    .slice(0, 100)
   const mgmtSelected = mgmtSelectedId ? certificates.find((c) => c.id === mgmtSelectedId) ?? null : null
 
   return (
@@ -742,6 +790,13 @@ export default function AdminCertificatesPage() {
             </table>
           </div>
         )}
+        {mgmtHasMore && (
+          <p style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => void handleLoadMore()} disabled={mgmtLoadingMore}>
+              {mgmtLoadingMore ? 'Memuat…' : 'Tampilkan lebih banyak'}
+            </button>
+          </p>
+        )}
         {revokeConfirmId && (
           <div className="discussion-item" style={{ marginTop: '0.75rem', borderLeft: '4px solid #c0392b' }}>
             <p><strong>Konfirmasi pencabutan</strong></p>
@@ -830,7 +885,8 @@ export default function AdminCertificatesPage() {
             value={mentorNote}
             onChange={(e) => setMentorNote(e.target.value)}
             rows={3}
-            placeholder="Mis. membimbing 10 siswa sampai lulus"
+            maxLength={140}
+            placeholder="Mis. membimbing 10 siswa sampai lulus (maks. 140 karakter)"
             style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)', width: '100%', boxSizing: 'border-box' }}
           />
         </label>
