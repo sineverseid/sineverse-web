@@ -26,6 +26,9 @@ export const MENTOR_EXPERTISE_OPTIONS = [
   'Visual Effects (VFX)',
 ] as const
 
+/** Pilihan "Lainnya" di bidang keahlian — isian bebas (perintah Founder 22 Nov 18:23). */
+export const OTHER_EXPERTISE_LABEL = 'Lainnya'
+
 /** Pilihan pengalaman (master prompt §2). */
 export const MENTOR_EXPERIENCE_OPTIONS = [
   'Pemula / masih belajar',
@@ -64,16 +67,38 @@ export default function MentorApplicationForm({
   onValuesChange,
 }: MentorApplicationFormProps) {
   const [profession, setProfession] = useState(initial?.profession ?? '')
-  const [expertise, setExpertise] = useState<string[]>(initial?.expertise ?? [])
+  // Bidang keahlian di luar 12 pilihan tetap (mis. dari lamaran lama)
+  // masuk ke isian bebas "Lainnya", dipisah koma bila lebih dari satu.
+  const initialKnown = (initial?.expertise ?? []).filter((x) =>
+    (MENTOR_EXPERTISE_OPTIONS as readonly string[]).includes(x),
+  )
+  const initialOther = (initial?.expertise ?? []).filter(
+    (x) => !(MENTOR_EXPERTISE_OPTIONS as readonly string[]).includes(x),
+  )
+  const [expertise, setExpertise] = useState<string[]>([
+    ...initialKnown,
+    ...(initialOther.length > 0 ? [OTHER_EXPERTISE_LABEL] : []),
+  ])
+  const [otherExpertise, setOtherExpertise] = useState(initialOther.join(', '))
   const [experience, setExperience] = useState(initial?.experience ?? '')
   const [portfolioLink, setPortfolioLink] = useState(initial?.portfolio_link ?? '')
   const [reason, setReason] = useState(initial?.reason ?? '')
   const [volunteerAgreed, setVolunteerAgreed] = useState(initial?.volunteer_agreed ?? false)
   const [error, setError] = useState('')
 
+  // "Lainnya" yang dicentang diganti teks isiannya (boleh beberapa,
+  // dipisah koma); kalau tidak dicentang, teks isian diabaikan.
+  const otherChecked = expertise.includes(OTHER_EXPERTISE_LABEL)
+  const otherSkills = otherChecked
+    ? otherExpertise.split(',').map((s) => s.trim()).filter(Boolean)
+    : []
+  const resolvedExpertise = [
+    ...expertise.filter((x) => x !== OTHER_EXPERTISE_LABEL),
+    ...otherSkills,
+  ]
   const values: MentorApplicationInput = {
     profession: profession.trim(),
-    expertise,
+    expertise: resolvedExpertise,
     experience,
     portfolio_link: portfolioLink.trim() || null,
     reason: reason.trim(),
@@ -82,6 +107,7 @@ export default function MentorApplicationForm({
   const valid =
     values.profession.length > 0 &&
     values.expertise.length > 0 &&
+    (!otherChecked || otherExpertise.trim().length > 0) &&
     values.experience.length > 0 &&
     values.reason.length > 0 &&
     values.volunteer_agreed
@@ -94,9 +120,12 @@ export default function MentorApplicationForm({
     onValuesChangeRef.current?.(values, valid)
     // Sengaja: hanya nilai yang berubah yang memicu laporan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, profession, expertise, experience, portfolioLink, reason, volunteerAgreed])
+  }, [embedded, profession, expertise, otherExpertise, experience, portfolioLink, reason, volunteerAgreed])
 
   function toggleExpertise(item: string) {
+    if (item === OTHER_EXPERTISE_LABEL && expertise.includes(item)) {
+      setOtherExpertise('')
+    }
     setExpertise((prev) =>
       prev.includes(item) ? prev.filter((x) => x !== item) : [...prev, item],
     )
@@ -104,8 +133,12 @@ export default function MentorApplicationForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (expertise.length === 0) {
+    if (values.expertise.length === 0) {
       setError('Pilih minimal satu bidang keahlian.')
+      return
+    }
+    if (otherChecked && otherExpertise.trim().length === 0) {
+      setError('Tulis bidang keahlian lainnya.')
       return
     }
     if (!volunteerAgreed) {
@@ -140,7 +173,26 @@ export default function MentorApplicationForm({
               {item}
             </label>
           ))}
+          <label className="checkbox-item">
+            <input
+              type="checkbox"
+              checked={otherChecked}
+              onChange={() => toggleExpertise(OTHER_EXPERTISE_LABEL)}
+            />
+            {OTHER_EXPERTISE_LABEL}
+          </label>
         </div>
+        {otherChecked && (
+          <label>
+            Tulis bidang keahlian lainnya
+            <input
+              value={otherExpertise}
+              onChange={(e) => setOtherExpertise(e.target.value)}
+              required
+              placeholder="Mis. Color grading, sound design"
+            />
+          </label>
+        )}
       </fieldset>
       <label>
         Pengalaman
