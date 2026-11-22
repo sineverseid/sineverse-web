@@ -1563,20 +1563,20 @@ function MentorHome(props: {
             ))}
           </div>
         )}
-        <p>
+        <div className="action-grid">
           <Link to="/mentor/siswa" className="btn btn-secondary">
             Siswa
-          </Link>{' '}
+          </Link>
           <Link to="/mentor/diskusi" className="btn btn-secondary">
             Diskusi
-          </Link>{' '}
+          </Link>
           <Link to="/mentor/analitik" className="btn btn-secondary">
             Analitik
-          </Link>{' '}
+          </Link>
           <Link to="/rps" className="btn btn-ghost">
             Lihat RPS (read-only)
           </Link>
-        </p>
+        </div>
       </section>
 
       <div className="grade-motivation" style={{ marginBottom: '1.25rem' }}>
@@ -2744,17 +2744,17 @@ function AdminHome(props: {
             ))}
           </ul>
         )}
-        <p>
+        <div className="action-grid">
           <Link to="/admin#pengumuman" className="btn btn-secondary">
             Buat Pengumuman
-          </Link>{' '}
+          </Link>
           <Link to="/admin#buat-course" className="btn btn-secondary">
             Buat Course
-          </Link>{' '}
+          </Link>
           <Link to="/admin#verifikasi-sekolah" className="btn btn-secondary">
             Verifikasi Sekolah
           </Link>
-        </p>
+        </div>
       </section>
 
       <section className="section">

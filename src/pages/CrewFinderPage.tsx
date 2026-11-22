@@ -1,13 +1,15 @@
 // SINEVERSE, Crew Finder: cari kru berdasarkan nama / peran / skill /
-// minat / ketersediaan. Hanya field aman-publik yang ditampilkan —
-// TIDAK PERNAH email (aturan 005). Hanya profil yang membuka diri
-// (is_open_to_crew) yang muncul.
+// minat / ketersediaan / lokasi (provinsi → kab/kota, supaya siswa
+// atau mentor yang satu lokasi bisa bertemu offline). Hanya field
+// aman-publik yang ditampilkan — TIDAK PERNAH email (aturan 005).
+// Hanya profil yang membuka diri (is_open_to_crew) yang muncul.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { fetchCrewProfiles, supabase } from '../lib/supabase'
+import { fetchCrewProfiles, fetchProvinces, fetchRefNameMap, fetchRegencies, supabase } from '../lib/supabase'
+import type { RefProvince, RefRegency } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
 type CrewRow = Awaited<ReturnType<typeof fetchCrewProfiles>>[number]
@@ -34,6 +36,19 @@ const AVAILABILITY_LABEL: Record<string, string> = {
   flexible: 'Fleksibel',
 }
 
+/** Cocokkan kabupaten/kota kru dengan kode yang dipilih. Profil lama
+ * bisa belum punya kode regency — kota (nama kab/kota, diisi otomatis
+ * dari pilihan pendaftaran) dipakai sebagai cadangan. */
+function matchesRegency(
+  r: { regency?: string | null; city?: string | null },
+  regencyCode: string,
+  regencyName: string,
+): boolean {
+  if (r.regency) return r.regency === regencyCode
+  if (!regencyName) return false
+  return (r.city ?? '').trim().toLowerCase() === regencyName.trim().toLowerCase()
+}
+
 function initials(name: string | null | undefined): string {
   const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return '?'
@@ -50,6 +65,12 @@ export default function CrewFinderPage() {
   const [q, setQ] = useState('')
   const [skill, setSkill] = useState('')
   const [availability, setAvailability] = useState('')
+  const [province, setProvince] = useState('')
+  const [regency, setRegency] = useState('')
+  const [provinces, setProvinces] = useState<RefProvince[]>([])
+  const [regencies, setRegencies] = useState<RefRegency[]>([])
+  const [provinceNames, setProvinceNames] = useState<Map<string, string>>(new Map())
+  const [regencyNames, setRegencyNames] = useState<Map<string, string>>(new Map())
   const [roles, setRoles] = useState<Map<string, string>>(new Map())
   const [myProjects, setMyProjects] = useState<{ id: string; title: string }[]>([])
   const [inviteProjectId, setInviteProjectId] = useState('')
@@ -60,14 +81,24 @@ export default function CrewFinderPage() {
     async function load() {
       try {
         // Profil kru, peran, dan proyek saya independen — dimuat paralel.
-        const [data, roleData, projData] = await Promise.all([
+        // Daftar provinsi + peta kode → nama wilayah ikut dimuat untuk
+        // filter lokasi dan tampilan lokasi di kartu kru.
+        const [data, roleData, projData, provData, provNames, regNames] = await Promise.all([
           fetchCrewProfiles(),
           supabase.from('profiles').select('id,role').eq('is_open_to_crew', true).then((r) => r.data),
           user
             ? supabase.from('projects').select('id,title').eq('owner_id', user.id).order('created_at', { ascending: false }).then((r) => r.data)
             : Promise.resolve(null),
+          fetchProvinces(),
+          fetchRefNameMap('ref_provinces'),
+          fetchRefNameMap('ref_regencies'),
         ])
         if (!cancelled) setRows(data)
+        if (!cancelled && provData) setProvinces(provData)
+        if (!cancelled) {
+          setProvinceNames(provNames)
+          setRegencyNames(regNames)
+        }
         // Peran tidak ikut di fetchCrewProfiles, jadi ambil langsung dari profiles.
         if (!cancelled && roleData) {
           const map = new Map<string, string>()
@@ -97,11 +128,29 @@ export default function CrewFinderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Kabupaten/kota mengikuti provinsi yang dipilih (pola yang sama
+  // seperti formulir pendaftaran + filter sekolah admin). Ganti
+  // provinsi selalu mengosongkan pilihan kab/kota.
+  useEffect(() => {
+    if (!province) {
+      setRegencies([])
+      return
+    }
+    let cancelled = false
+    void fetchRegencies(province).then((rows) => {
+      if (!cancelled) setRegencies(rows)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [province])
+
   if (loading) return <div className="page"><p className="muted">Memuat Crew Finder…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (missing) return <div className="page"><h1>Crew Finder</h1><MigrationNotice migration="005" /></div>
 
   const needle = q.trim().toLowerCase()
+  const selectedRegencyName = regencies.find((g) => g.code === regency)?.name ?? ''
   const filtered = (rows ?? []).filter((r) => {
     if (r.id === user?.id) return false
     if (needle) {
@@ -112,11 +161,13 @@ export default function CrewFinderPage() {
     }
     if (skill && !(r.skills ?? []).some((s) => s.toLowerCase().includes(skill.toLowerCase()))) return false
     if (availability && normalizeAvailability(r.availability) !== availability) return false
+    if (province && r.province !== province) return false
+    if (regency && !matchesRegency(r, regency, selectedRegencyName)) return false
     return true
   })
   const allSkills = [...new Set((rows ?? []).flatMap((r) => r.skills ?? []))].sort()
   const totalCrew = (rows ?? []).filter((r) => r.id !== user?.id).length
-  const hasActiveFilter = Boolean(needle || skill || availability)
+  const hasActiveFilter = Boolean(needle || skill || availability || province || regency)
 
   return (
     <div className="page">
@@ -146,6 +197,18 @@ export default function CrewFinderPage() {
             <option value="weekday">Hari kerja</option>
             <option value="flexible">Fleksibel</option>
           </select>
+          <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency('') }} aria-label="Filter provinsi" style={{ fontFamily: 'inherit', padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+            <option value="">Semua provinsi</option>
+            {provinces.map((p) => (
+              <option key={p.code} value={p.code}>{p.name}</option>
+            ))}
+          </select>
+          <select value={regency} onChange={(e) => setRegency(e.target.value)} disabled={!province} aria-label="Filter kabupaten/kota" style={{ fontFamily: 'inherit', padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+            <option value="">{province ? 'Semua kab/kota' : 'Pilih provinsi dulu'}</option>
+            {regencies.map((g) => (
+              <option key={g.code} value={g.code}>{g.name}</option>
+            ))}
+          </select>
         </div>
       </div>
       <p className="muted">{filtered.length} kru ditemukan</p>
@@ -164,6 +227,9 @@ export default function CrewFinderPage() {
             const roleLabel = ROLE_LABEL[role] ?? role
             const showPhoto = r.photo_url && !photoBroken.has(r.id)
             const availKey = normalizeAvailability(r.availability)
+            const regencyLabel = (r.regency ? regencyNames.get(r.regency) : undefined) ?? r.city ?? ''
+            const provinceLabel = r.province ? provinceNames.get(r.province) ?? '' : ''
+            const locationLabel = [regencyLabel, provinceLabel].filter(Boolean).join(', ')
             return (
               <li key={r.id} className="course-card">
                 <div style={{ padding: '1.1rem 1.25rem' }}>
@@ -184,7 +250,7 @@ export default function CrewFinderPage() {
                   {roleLabel && <p className="muted">Peran: {roleLabel}</p>}
                   <p>{r.bio ?? ''}</p>
                   <p className="muted">
-                    {r.city ?? ''}
+                    {locationLabel}
                     {r.availability ? ` · Ketersediaan: ${AVAILABILITY_LABEL[availKey] ?? r.availability}` : ''}
                   </p>
                   {(r.skills ?? []).length > 0 && (

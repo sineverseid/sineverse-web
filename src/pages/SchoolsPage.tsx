@@ -3,19 +3,21 @@
 // oleh anggota sekolah itu, RLS membatasi school_members, dan UI hanya
 // memuat roster bila pengguna sudah menjadi anggota. Klub film: buat,
 // gabung/keluar, aktivitas klub.
+// Siswa & mentor hanya melihat sekolahnya sendiri (+ pencarian sekolah
+// untuk mentor); hanya admin yang melihat direktori lengkap.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, supabase } from '../lib/supabase'
-import type { ClubActivity, FilmClub, School } from '../lib/types'
+import { fetchProfileNames, fetchProvinces, fetchRegencies, searchSchools, supabase, updateProfile } from '../lib/supabase'
+import type { ClubActivity, FilmClub, RefProvince, RefRegency, School } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 export default function SchoolsPage() {
-  const { user, profile } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
   const [schools, setSchools] = useState<School[] | null>(null)
   const [clubs, setClubs] = useState<FilmClub[] | null>(null)
   const [clubMembers, setClubMembers] = useState<Set<string>>(new Set())
@@ -33,17 +35,36 @@ export default function SchoolsPage() {
   const [actTitle, setActTitle] = useState('')
   const [actClub, setActClub] = useState('')
   const [actDate, setActDate] = useState('')
+  // Pencarian sekolah (mentor saja): cari berdasarkan nama/NPSN dan
+  // wilayah (provinsi → kabupaten/kota), bukan menjelajah direktori.
+  // Hasil hanya muncul bila ada kata kunci atau wilayah dipilih.
+  const [schoolQuery, setSchoolQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<School[] | null>(null)
+  const [schoolSearching, setSchoolSearching] = useState(false)
+  // Filter wilayah pencarian mentor: provinsi → kabupaten/kota (pola yang
+  // sama seperti pendaftaran + filter direktori admin).
+  const [provinces, setProvinces] = useState<RefProvince[]>([])
+  const [regencies, setRegencies] = useState<RefRegency[]>([])
+  const [searchProvince, setSearchProvince] = useState('')
+  const [searchRegency, setSearchRegency] = useState('')
+  // Tombol "Jadikan sekolah saya" yang sedang menyimpan (id sekolah).
+  const [settingSchool, setSettingSchool] = useState<string | null>(null)
 
-  // Siswa hanya melihat sekolahnya sendiri (+ klub film di sekolah itu).
-  // Mentor/admin tetap melihat direktori lengkap seperti sebelumnya.
+  // Siswa & mentor hanya melihat sekolahnya sendiri (+ klub film di
+  // sekolah itu). Hanya admin yang melihat direktori lengkap.
   const isSiswa = profile?.role === 'siswa'
-  const ownSchool: School | null = isSiswa && schools ? schools[0] ?? null : null
+  const isMentor = profile?.role === 'mentor'
+  const scopedToOwnSchool = isSiswa || isMentor
+  const ownSchool: School | null = scopedToOwnSchool && schools ? schools[0] ?? null : null
 
   async function load() {
     try {
-      if (isSiswa) {
-        // Cabang siswa: satu sekolah (dari profile.school_id) + klub
-        // film di sekolah itu saja — bukan 1.000 baris direktori.
+      if (scopedToOwnSchool) {
+        // Cabang siswa/mentor: satu sekolah (dari profile.school_id) +
+        // klub film di sekolah itu saja — bukan 1.000 baris direktori.
+        // Bila school_id belum terisi, coba cocokkan nama sekolah /
+        // afiliasi bebas di profil dengan baris schools (mis. mentor
+        // yang mendaftar sebelum school_id disimpan).
         let own: School | null = null
         if (profile?.school_id) {
           const { data: sData, error: sErr } = await supabase.from('schools').select('*').eq('id', profile.school_id).maybeSingle()
@@ -56,6 +77,10 @@ export default function SchoolsPage() {
             throw sErr
           }
           own = (sData ?? null) as School | null
+        }
+        if (!own && profile?.school?.trim()) {
+          const { data: byName } = await supabase.from('schools').select('*').ilike('name', profile.school.trim()).limit(1)
+          own = ((byName ?? [])[0] ?? null) as School | null
         }
         setSchools(own ? [own] : [])
         const { data: cData, error: cErr } = own
@@ -122,6 +147,48 @@ export default function SchoolsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.role, profile?.school_id])
 
+  // Provinsi untuk filter pencarian mentor.
+  useEffect(() => {
+    if (!isMentor) return
+    void fetchProvinces().then(setProvinces).catch(() => setProvinces([]))
+  }, [isMentor])
+
+  // Kabupaten/kota mengikuti provinsi yang dipilih.
+  useEffect(() => {
+    if (!isMentor || !searchProvince) {
+      setRegencies([])
+      return
+    }
+    void fetchRegencies(searchProvince).then(setRegencies).catch(() => setRegencies([]))
+  }, [isMentor, searchProvince])
+
+  // Nama kabupaten/kota yang dipilih (schools.regency menyimpan nama
+  // referensi, bukan kode) — ini yang diteruskan ke searchSchools.
+  const regencyName = regencies.find((r) => r.code === searchRegency)?.name ?? ''
+
+  // Pencarian sekolah mentor: berjalan bila ada kata kunci (≥2 karakter)
+  // ATAU bila kabupaten/kota dipilih; tanpa keduanya tidak ada hasil —
+  // direktori tidak pernah dimuat utuh di akun mentor. Semua filter
+  // digabung (AND): kata kunci + kabupaten/kota.
+  useEffect(() => {
+    if (!isMentor) return
+    const q = schoolQuery.trim()
+    if (q.length < 2 && !regencyName) {
+      setSearchResults(null)
+      setSchoolSearching(false)
+      return
+    }
+    setSchoolSearching(true)
+    const t = window.setTimeout(() => {
+      void searchSchools(q, regencyName || undefined)
+        .then((rows) => setSearchResults(rows.filter((r) => r.id !== ownSchool?.id)))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSchoolSearching(false))
+    }, 300)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schoolQuery, isMentor, ownSchool?.id, regencyName])
+
   async function toggleSchool(id: string, joined: boolean) {
     if (!user) return
     if (joined) {
@@ -132,6 +199,25 @@ export default function SchoolsPage() {
       const { error } = await supabase.from('school_members').insert({ school_id: id, user_id: user.id })
       if (error) setNotice(error.message)
       else setMySchools((m) => new Set(m).add(id))
+    }
+  }
+
+  // Jadikan sekolah hasil pencarian sebagai sekolah mentor: mengisi
+  // profiles.school_id + school lewat jalur update profil yang sama
+  // seperti Edit Profile (RLS berlaku, tanpa SQL mentah), lalu muat ulang
+  // profil sehingga bagian "Sekolahmu" langsung menampilkan sekolah itu
+  // (load() berjalan ulang karena profile.school_id berubah).
+  async function handleSetMySchool(s: School) {
+    if (!user || settingSchool) return
+    setSettingSchool(s.id)
+    try {
+      await updateProfile(user.id, { school_id: s.id, school: s.name })
+      await refreshProfile()
+      setNotice(`Sekolahmu diatur ke ${s.name}.`)
+    } catch {
+      setNotice('Gagal mengatur sekolahmu. Coba lagi.')
+    } finally {
+      setSettingSchool(null)
     }
   }
 
@@ -176,9 +262,9 @@ export default function SchoolsPage() {
     e.preventDefault()
     if (!user || !clubName.trim()) return
     const { error } = await supabase.from('film_clubs').insert({
-      // Siswa membuat klub di sekolahnya sendiri (tanpa pilih sekolah);
-      // mentor/admin tetap memilih lewat select di form.
-      school_id: isSiswa ? (ownSchool?.id ?? null) : (clubSchool || null),
+      // Siswa/mentor membuat klub di sekolahnya sendiri (tanpa pilih
+      // sekolah); admin tetap memilih lewat select di form.
+      school_id: scopedToOwnSchool ? (ownSchool?.id ?? null) : (clubSchool || null),
       name: clubName.trim(),
       description: clubDesc.trim() || null,
       created_by: user.id,
@@ -225,8 +311,8 @@ export default function SchoolsPage() {
       {notice && <p className="notice-box">{notice}</p>}
 
       <section className="section">
-        <h2>{isSiswa ? 'Sekolahmu' : 'Sekolah'}</h2>
-        {isSiswa && schools.length === 0 ? (
+        <h2>{scopedToOwnSchool ? 'Sekolahmu' : 'Sekolah'}</h2>
+        {scopedToOwnSchool && schools.length === 0 ? (
           profile?.school ? (
             <ul className="course-list">
               <li className="course-card">
@@ -255,7 +341,7 @@ export default function SchoolsPage() {
                 <li key={s.id} className="course-card">
                   <div style={{ padding: '1.1rem 1.25rem' }}>
                     <h3>{s.name}</h3>
-                    {isSiswa ? (
+                    {scopedToOwnSchool ? (
                       <>
                         <p className="muted">NPSN {s.npsn ?? '—'} · {s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
                         {s.address?.trim() ? <p>{s.address}</p> : <p className="muted">Alamat belum tersedia</p>}
@@ -295,7 +381,7 @@ export default function SchoolsPage() {
                     )}
                     {joined && roster[s.id] && (
                       <>
-                        {isSiswa && <p className="muted">{roster[s.id].length} anggota</p>}
+                        {scopedToOwnSchool && <p className="muted">{roster[s.id].length} anggota</p>}
                         <ul>
                           {roster[s.id].map((n, i) => (
                             <li key={i}>{n}</li>
@@ -314,10 +400,82 @@ export default function SchoolsPage() {
         )}
       </section>
 
+      {isMentor && (
+        <section className="section">
+          <h2>Cari Sekolah Lain</h2>
+          <div className="filter-bar">
+            <select
+              value={searchProvince}
+              onChange={(e) => { setSearchProvince(e.target.value); setSearchRegency('') }}
+              aria-label="Filter provinsi"
+            >
+              <option value="">Semua Provinsi</option>
+              {provinces.map((p) => (
+                <option key={p.code} value={p.code}>{p.name}</option>
+              ))}
+            </select>
+            <select
+              value={searchRegency}
+              onChange={(e) => setSearchRegency(e.target.value)}
+              disabled={!searchProvince}
+              aria-label="Filter kabupaten atau kota"
+            >
+              <option value="">{searchProvince ? 'Semua Kab/Kota' : 'Pilih provinsi dulu'}</option>
+              {regencies.map((r) => (
+                <option key={r.code} value={r.code}>{r.name}</option>
+              ))}
+            </select>
+            <input
+              className="search-input"
+              value={schoolQuery}
+              onChange={(e) => setSchoolQuery(e.target.value)}
+              placeholder="Cari nama atau NPSN sekolah…"
+              aria-label="Cari sekolah berdasarkan nama atau NPSN"
+            />
+          </div>
+          {schoolSearching && <p className="muted">Mencari sekolah…</p>}
+          {!schoolSearching && (schoolQuery.trim().length >= 2 || regencyName) && (searchResults ?? []).length === 0 && (
+            <p className="empty">Tidak ada sekolah terverifikasi yang cocok dengan filter.</p>
+          )}
+          {(searchResults ?? []).length > 0 && (
+            <ul className="course-list">
+              {searchResults!.map((s) => {
+                const joined = mySchools.has(s.id)
+                const wilayah = [s.city && s.city !== s.regency ? s.city : null, s.regency, s.province].filter(Boolean).join(', ')
+                return (
+                  <li key={s.id} className="course-card">
+                    <div style={{ padding: '1.1rem 1.25rem' }}>
+                      <h3>{s.name}</h3>
+                      <p className="muted">NPSN {s.npsn ?? '—'} · {s.is_verified ? 'Terverifikasi oleh admin' : 'Belum terverifikasi'}</p>
+                      {wilayah && <p className="muted">{wilayah}</p>}
+                      {user && (
+                        <>
+                          <button type="button" className="btn btn-secondary btn-small" onClick={() => void toggleSchool(s.id, joined)}>
+                            {joined ? 'Keluar' : 'Gabung'}
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-small"
+                            disabled={settingSchool === s.id}
+                            onClick={() => void handleSetMySchool(s)}
+                          >
+                            {settingSchool === s.id ? 'Mengatur…' : 'Jadikan sekolah saya'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+
       <section className="section">
-        <h2>{isSiswa ? 'Klub Film di Sekolahmu' : 'Klub Film'}</h2>
+        <h2>{scopedToOwnSchool ? 'Klub Film di Sekolahmu' : 'Klub Film'}</h2>
         {(clubs ?? []).length === 0 ? (
-          <EmptyState message={isSiswa ? 'Belum ada klub film di sekolahmu.' : 'Belum ada klub film.'} />
+          <EmptyState message={scopedToOwnSchool ? 'Belum ada klub film di sekolahmu.' : 'Belum ada klub film.'} />
         ) : (
           <ul className="discussion-list">
             {(clubs ?? []).map((c) => (
@@ -350,7 +508,7 @@ export default function SchoolsPage() {
                 Nama klub
                 <input value={clubName} onChange={(e) => setClubName(e.target.value)} required placeholder="Mis. Klub Film SMA 1" />
               </label>
-              {isSiswa ? (
+              {scopedToOwnSchool ? (
                 <p className="muted">Sekolah: {ownSchool?.name ?? profile?.school ?? '—'}</p>
               ) : (
                 <label>

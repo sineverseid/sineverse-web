@@ -393,11 +393,11 @@ export default function GrowthPage() {
                 Sekolah.
               </p>
             )}
-            <p>
-              <Link to="/sekolah" className="btn btn-secondary">Lihat Daftar Sekolah →</Link>{' '}
-              <Link to="/kru" className="btn btn-primary">Cari Kru untuk Kolaborasi →</Link>{' '}
+            <div className="action-grid">
+              <Link to="/sekolah" className="btn btn-secondary">Lihat Daftar Sekolah →</Link>
+              <Link to="/kru" className="btn btn-primary">Cari Kru untuk Kolaborasi →</Link>
               <Link to="/proyek" className="btn btn-secondary">Lihat Semua Proyek</Link>
-            </p>
+            </div>
           </section>
         </div>
       )}
