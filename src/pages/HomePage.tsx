@@ -1214,19 +1214,36 @@ function MentorHome(props: {
     if (claimingId) return
     setClaimingId(courseId)
     setNotice(null)
-    const { error: insErr } = await supabase.from('course_claims').insert({
-      course_id: courseId,
-      mentor_id: userId,
-      status: 'pending',
-    })
-    setClaimingId(null)
-    if (insErr) {
-      setNotice('Pengajuan gagal terkirim. Coba lagi.')
-      return
+    // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
+    // sama dikembalikan ke 'pending', bukan insert duplikat.
+    const existing = claims.find((cl) => cl.course_id === courseId)
+    if (existing?.status === 'rejected') {
+      const { error: updErr } = await supabase.from('course_claims')
+        .update({ status: 'pending', decision_note: null, decided_by: null })
+        .eq('id', existing.id)
+      setClaimingId(null)
+      if (updErr) {
+        setNotice('Pengajuan gagal dikirim ulang. Coba lagi.')
+        return
+      }
+      setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
+    } else {
+      const { error: insErr } = await supabase.from('course_claims').insert({
+        course_id: courseId,
+        mentor_id: userId,
+        status: 'pending',
+      })
+      setClaimingId(null)
+      if (insErr) {
+        setNotice(/duplicate|unique|23505/i.test(insErr.message)
+          ? 'Pengajuan kamu masih menunggu persetujuan.'
+          : 'Pengajuan gagal terkirim. Coba lagi.')
+        return
+      }
+      setNotice(
+        'Pengajuan mengampu terkirim. Setelah disetujui admin, kamu otomatis menjadi mentor kursus itu.',
+      )
     }
-    setNotice(
-      'Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor kursus itu (lihat Admin Panel).',
-    )
     const { data } = await supabase
       .from('course_claims')
       .select('*')
@@ -1348,7 +1365,21 @@ function MentorHome(props: {
                 <li key={c.id} style={{ marginBottom: '0.75rem' }}>
                   {c.title}{' '}
                   {claim ? (
-                    <span className="muted">— pengajuan: {claimStatusLabel(claim.status)}</span>
+                    claim.status === 'rejected' ? (
+                      <>
+                        <span className="muted">— pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          disabled={claimingId === c.id}
+                          onClick={() => void handleClaim(c.id)}
+                        >
+                          {claimingId === c.id ? 'Mengajukan…' : 'Ajukan Lagi'}
+                        </button>
+                      </>
+                    ) : (
+                      <span className="muted">— pengajuan: {claimStatusLabel(claim.status)}</span>
+                    )
                   ) : (
                     <button
                       type="button"

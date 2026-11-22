@@ -88,6 +88,10 @@ export default function LessonDetailPage() {
   const [reportReason, setReportReason] = useState('')
 
   const canModerate = profile?.role === 'mentor' || profile?.role === 'admin'
+  // Mode pantau (migrasi 022): admin boleh MEMBUKA lesson untuk memantau,
+  // tetapi tidak boleh menandai selesai, mengerjakan kuis/tugas, atau
+  // ikut berdiskusi sebagai peserta.
+  const isAdmin = profile?.role === 'admin'
 
   // Reaksi "bermanfaat" (tabel discussion_reactions, migrasi 003).
   // Bila tabel belum ada, diskusi tetap jalan tanpa hitungan reaksi.
@@ -485,6 +489,11 @@ export default function LessonDetailPage() {
 
   async function handleComplete() {
     if (!user || !lesson) return
+    // Admin hanya memantau (migrasi 022): RLS juga menolak, ini pesan jelasnya.
+    if (isAdmin) {
+      setNotice('Kamu masuk sebagai admin (mode pantau). Admin tidak menandai lesson selesai.')
+      return
+    }
     const l = lesson
     setSaving(true)
     try {
@@ -836,14 +845,20 @@ export default function LessonDetailPage() {
       {user && (
         <>
           {notice && <p className="notice-box">{notice}</p>}
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleComplete}
-            disabled={status === 'completed' || saving}
-          >
-            {saving ? 'Menyimpan…' : status === 'completed' ? 'Lesson Selesai' : 'Tandai Selesai'}
-          </button>
+          {isAdmin ? (
+            <p className="muted">
+              Kamu masuk sebagai admin (mode pantau): progres lesson hanya bisa dibaca, tidak bisa ditandai selesai.
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleComplete}
+              disabled={status === 'completed' || saving}
+            >
+              {saving ? 'Menyimpan…' : status === 'completed' ? 'Lesson Selesai' : 'Tandai Selesai'}
+            </button>
+          )}
         </>
       )}
 
@@ -984,12 +999,12 @@ export default function LessonDetailPage() {
                     </li>
                   ))}
                 </ul>
-                {user && replyTo !== d.id && (
+                {user && !isAdmin && replyTo !== d.id && (
                   <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(d.id)}>
                     Balas
                   </button>
                 )}
-                {user && replyTo === d.id && (
+                {user && !isAdmin && replyTo === d.id && (
                   <form className="form" onSubmit={(e) => handleReply(e, d.id)}>
                     <label>
                       Balasan
@@ -1022,6 +1037,11 @@ export default function LessonDetailPage() {
           </>
         )}
         {user ? (
+          isAdmin ? (
+            <p className="muted">
+              Kamu masuk sebagai admin (mode pantau): diskusi hanya bisa dibaca dan dimoderasi, tidak bisa ikut menulis.
+            </p>
+          ) : (
           <form className="form" onSubmit={handlePost}>
             {notice && <p className="notice-box">{notice}</p>}
             <label>
@@ -1038,6 +1058,7 @@ export default function LessonDetailPage() {
               {posting ? 'Mengirim…' : 'Kirim Diskusi'}
             </button>
           </form>
+          )
         ) : (
           <p className="muted">
             <Link to="/login">Masuk</Link> untuk ikut berdiskusi.

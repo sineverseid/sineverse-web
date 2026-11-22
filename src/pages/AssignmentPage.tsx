@@ -22,7 +22,10 @@ function fmtSize(bytes: number): string {
 
 export default function AssignmentPage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  // Mode pantau (migrasi 022): admin boleh MEMBUKA tugas untuk memantau,
+  // tetapi tidak boleh mengumpulkannya sebagai peserta.
+  const isAdmin = profile?.role === 'admin'
   const [assignment, setAssignment] = useState<AssignmentRow | null>(null)
   const [subs, setSubs] = useState<SubmissionRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -186,6 +189,11 @@ export default function AssignmentPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const currentAssignment = assignment
+    // Admin hanya memantau (migrasi 022): RLS juga menolak, ini pesan jelasnya.
+    if (isAdmin) {
+      setNotice('Kamu masuk sebagai admin (mode pantau). Admin tidak mengumpulkan tugas.')
+      return
+    }
     if (!user || !currentAssignment || (!content.trim() && files.length === 0)) {
       setNotice('Isi jawaban teks atau pilih file untuk dikirim.')
       return
@@ -307,6 +315,11 @@ export default function AssignmentPage() {
 
       {notice && <p className="notice-box">{notice}</p>}
 
+      {isAdmin ? (
+        <p className="muted">
+          Kamu masuk sebagai admin (mode pantau): tugas hanya bisa dibaca, tidak bisa dikumpulkan. Pantau pengiriman lewat Monitoring Tugas.
+        </p>
+      ) : (
       <form className="form" onSubmit={handleSubmit}>
         <label>
           Jawaban (teks)
@@ -332,6 +345,7 @@ export default function AssignmentPage() {
           </button>
         </div>
       </form>
+      )}
 
       <section className="section">
         <h2>Riwayat Versi</h2>

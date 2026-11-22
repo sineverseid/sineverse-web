@@ -20,7 +20,10 @@ function quizKindLabel(kind?: QuizKind): string {
 
 export default function QuizPage() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
+  // Mode pantau (migrasi 022): admin boleh MEMBUKA kuis untuk memantau,
+  // tetapi tidak boleh mengerjakannya sebagai peserta.
+  const isAdmin = profile?.role === 'admin'
   const [quiz, setQuiz] = useState<Quiz | null>(null)
   const [questions, setQuestions] = useState<QuizQuestion[] | null>(null)
   const [missing, setMissing] = useState(false)
@@ -91,6 +94,11 @@ export default function QuizPage() {
     e.preventDefault()
     const currentQuiz = quiz
     if (!user || !questions || !currentQuiz) return
+    // Admin hanya memantau (migrasi 022): RPC juga menolak, ini pesan jelasnya.
+    if (isAdmin) {
+      setResult({ score: null, note: 'Kamu masuk sebagai admin (mode pantau). Admin tidak mengerjakan kuis.' })
+      return
+    }
     setSubmitting(true)
     setResult(null)
     try {
@@ -146,6 +154,27 @@ export default function QuizPage() {
 
       {(questions ?? []).length === 0 ? (
         <p className="empty">Belum ada soal untuk kuis ini. Mentor menambahkan soal lewat Course Builder.</p>
+      ) : isAdmin ? (
+        <>
+          <p className="muted">
+            Kamu masuk sebagai admin (mode pantau): soal hanya bisa dibaca, tidak bisa dijawab.
+          </p>
+          <ol>
+            {(questions ?? []).map((q) => (
+              <li key={q.id}>
+                <strong>{q.question}</strong>
+                {q.kind !== 'short' && Array.isArray(q.options) && q.options.length > 0 && (
+                  <ul>
+                    {q.options.map((opt) => (
+                      <li key={String(opt)}>{String(opt)}</li>
+                    ))}
+                  </ul>
+                )}
+                {q.explanation && <p className="muted">Penjelasan: {q.explanation}</p>}
+              </li>
+            ))}
+          </ol>
+        </>
       ) : (
         <form className="form" onSubmit={handleSubmit}>
           {(questions ?? []).map((q, i) => (

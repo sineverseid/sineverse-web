@@ -135,17 +135,34 @@ export default function MentorPage() {
 
   async function handleClaim(courseId: string) {
     if (!user) return
-    const { error: insErr } = await supabase.from('course_claims').insert({
-      course_id: courseId,
-      mentor_id: user.id,
-      status: 'pending',
-    })
-    if (insErr) setNotice(friendlyError(insErr))
-    else {
-      setNotice('Pengajuan mengampu terkirim. Admin akan meninjau, setelah disetujui, admin menetapkan kamu sebagai mentor course itu (lihat Admin Panel).')
-      const { data } = await supabase.from('course_claims').select('*').eq('mentor_id', user.id).order('created_at', { ascending: false })
-      setClaims((data ?? []) as CourseClaim[])
+    // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
+    // sama dikembalikan ke 'pending', bukan insert duplikat.
+    const existing = claims.find((cl) => cl.course_id === courseId)
+    if (existing?.status === 'rejected') {
+      const { error: updErr } = await supabase.from('course_claims')
+        .update({ status: 'pending', decision_note: null, decided_by: null })
+        .eq('id', existing.id)
+      if (updErr) {
+        setNotice('Gagal mengirim ulang pengajuan. Coba lagi sebentar lagi.')
+        return
+      }
+      setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
+    } else {
+      const { error: insErr } = await supabase.from('course_claims').insert({
+        course_id: courseId,
+        mentor_id: user.id,
+        status: 'pending',
+      })
+      if (insErr) {
+        setNotice(/duplicate|unique|23505/i.test(insErr.message)
+          ? 'Pengajuan kamu masih menunggu persetujuan.'
+          : 'Gagal mengirim pengajuan. Coba lagi sebentar lagi.')
+        return
+      }
+      setNotice('Pengajuan mengampu terkirim. Setelah disetujui admin, kamu otomatis menjadi mentor course itu.')
     }
+    const { data } = await supabase.from('course_claims').select('*').eq('mentor_id', user.id).order('created_at', { ascending: false })
+    setClaims((data ?? []) as CourseClaim[])
   }
 
   async function handleApply(e: FormEvent) {
@@ -262,7 +279,16 @@ export default function MentorPage() {
                     <li key={c.id}>
                       {c.title}{' '}
                       {claim ? (
-                        <span className="muted">— pengajuan: {claim.status}</span>
+                        claim.status === 'rejected' ? (
+                          <>
+                            <span className="muted">— pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
+                            <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>
+                              Ajukan Lagi
+                            </button>
+                          </>
+                        ) : (
+                          <span className="muted">— pengajuan: {claim.status === 'approved' ? 'Disetujui' : 'Menunggu persetujuan'}</span>
+                        )
                       ) : (
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>
                           Ajukan

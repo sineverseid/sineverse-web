@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCourses, fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
+import { fetchCourses, fetchProfileNames, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
 import type { CommunityProposal, Course, CourseClaim, MentorApplication, School } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -82,6 +82,9 @@ export default function AdminPage() {
   const [counts, setCounts] = useState({ users: 0, siswa: 0, mentor: 0, courses: 0, enrollments: 0, pendingApps: 0, openReports: 0 })
   const [apps, setApps] = useState<MentorApplication[]>([])
   const [claims, setClaims] = useState<CourseClaim[]>([])
+  // Penolakan klaim meminta alasan (migrasi 022: decision_note).
+  const [rejectingClaimId, setRejectingClaimId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
   const [courses, setCourses] = useState<Course[]>([])
   const [schools, setSchools] = useState<School[]>([])
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
@@ -127,7 +130,7 @@ export default function AdminPage() {
         supabase.from('enrollments').select('id', { count: 'exact', head: true }),
         fetchCourses(),
         supabase.from('mentor_applications').select('*').eq('status', 'pending').order('created_at'),
-        supabase.from('course_claims').select('*').eq('status', 'pending').order('created_at'),
+        supabase.from('course_claims').select('*').order('created_at', { ascending: false }),
         supabase.from('schools').select('*').order('name'),
         supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at'),
         supabase.from('communities').select('id,name').order('name'),
@@ -222,21 +225,85 @@ export default function AdminPage() {
     await load()
   }
 
-  async function decideClaim(claim: CourseClaim, approve: boolean) {
+  /**
+   * Beri tahu pendaftar waitlist bahwa course sudah memiliki mentor dan
+   * bisa mulai dikerjakan (best-effort; gagal kirim tidak membatalkan
+   * penetapan mentor).
+   */
+  async function notifyWaitlist(courseId: string, courseTitle: string) {
+    try {
+      const { data } = await supabase.from('waitlist').select('user_id').eq('course_id', courseId)
+      const rows = (data ?? []) as { user_id: string }[]
+      await Promise.all(rows.map((w) =>
+        sendNotification(
+          w.user_id,
+          'mentor_assigned',
+          `Mentor ditugaskan: ${courseTitle}`,
+          `Course "${courseTitle}" sudah memiliki mentor dan bisa mulai dikerjakan.`,
+          { course_id: courseId },
+        ).catch(() => undefined),
+      ))
+    } catch {
+      // Best-effort saja.
+    }
+  }
+
+  async function decideClaim(claim: CourseClaim, approve: boolean, note?: string) {
+    const reason = (note ?? '').trim()
     const { error: updErr } = await supabase
       .from('course_claims')
-      .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
+      .update({
+        status: approve ? 'approved' : 'rejected',
+        decided_by: user?.id ?? null,
+        // Alasan penolakan tersimpan (migrasi 022) dan terlihat oleh mentor.
+        decision_note: approve ? null : (reason || null),
+      })
       .eq('id', claim.id)
     if (updErr) {
       setNotice(updErr.message)
       return
     }
     await logAudit(approve ? 'course_claim.approved' : 'course_claim.rejected', 'course_claims', claim.id, { course_id: claim.course_id, mentor_id: claim.mentor_id })
-    setNotice(
-      approve
-        ? 'Klaim mengampu disetujui. Tetapkan mentornya di "Pembagian Mentor Kurikulum" di bawah (persetujuan klaim tidak otomatis mengubah courses.mentor_id).'
-        : 'Klaim mengampu ditolak.',
-    )
+    if (approve) {
+      // Belt-and-braces di samping trigger migrasi 022: tetapkan mentor
+      // langsung dari client juga — tapi dengan dua syarat yang sama
+      // seperti trigger: pengaju harus ber-peran mentor, dan course
+      // masih tanpa mentor (update bersyarat .is('mentor_id', null)).
+      // Notifikasi persetujuan + notifikasi waitlist dikirim oleh
+      // trigger database, jadi client TIDAK mengirimnya lagi
+      // (menghindari notifikasi ganda).
+      const course = courses.find((x) => x.id === claim.course_id)
+      const isMentorClaim = mentors.some((m) => m.id === claim.mentor_id)
+      if (course && isMentorClaim && !course.mentor_id) {
+        const { error: assignErr } = await supabase
+          .from('courses')
+          .update({ mentor_id: claim.mentor_id })
+          .eq('id', claim.course_id)
+          .is('mentor_id', null)
+        if (assignErr) {
+          setNotice(`Klaim disetujui, tetapi penetapan mentor gagal: ${assignErr.message}. Tetapkan manual di "Pembagian Mentor Kurikulum" di bawah.`)
+        } else {
+          invalidateCatalogCache()
+          setNotice('Klaim mengampu disetujui. Mentor otomatis ditetapkan untuk course ini.')
+        }
+      } else if (course?.mentor_id) {
+        setNotice('Klaim disetujui, tetapi course ini sudah memiliki mentor — penetapan tidak diubah.')
+      } else {
+        setNotice('Klaim disetujui, tetapi pengaju bukan mentor — course tetap tanpa mentor.')
+      }
+    } else {
+      // Penolakan tidak disentuh trigger: client yang memberi tahu mentor.
+      await sendNotification(
+        claim.mentor_id,
+        'claim_rejected',
+        'Pengajuan mengampu ditolak',
+        reason ? `Alasan: ${reason}` : 'Pengajuan mengampu kamu ditolak admin.',
+        { course_id: claim.course_id, claim_id: claim.id },
+      ).catch(() => undefined)
+      setNotice('Klaim mengampu ditolak.' + (reason ? ' Alasan tersimpan dan terlihat oleh mentor.' : ''))
+    }
+    setRejectingClaimId(null)
+    setRejectReason('')
     await load()
   }
 
@@ -251,6 +318,10 @@ export default function AdminPage() {
     else {
       await logAudit('course.mentor_assigned', 'courses', assignCourse, { mentor_id: assignMentor || null })
       invalidateCatalogCache()
+      if (assignMentor) {
+        const assignedCourse = courses.find((x) => x.id === assignCourse)
+        if (assignedCourse) await notifyWaitlist(assignCourse, assignedCourse.title)
+      }
       setNotice(assignMentor ? 'Mentor ditetapkan untuk course ini.' : 'Mentor dilepas — course kembali tanpa mentor.')
       setAssignCourse('')
       setAssignMentor('')
@@ -416,17 +487,49 @@ export default function AdminPage() {
       </section>
 
       <section className="section">
-        <h2>Klaim Mengampu ({claims.length} pending)</h2>
-        {claims.length === 0 ? <p className="empty">Tidak ada klaim mengampu yang menunggu.</p> : (
+        <h2>Klaim Mengampu ({claims.filter((c) => c.status === 'pending').length} pending)</h2>
+        {claims.filter((c) => c.status === 'pending').length === 0 ? <p className="empty">Tidak ada klaim mengampu yang menunggu.</p> : (
           <ul>
-            {claims.map((c) => (
+            {claims.filter((c) => c.status === 'pending').map((c) => {
+              const claimedCourse = courses.find((x) => x.id === c.course_id)
+              const isMentorClaim = mentors.some((m) => m.id === c.mentor_id)
+              return (
               <li key={c.id}>
-                {courses.find((x) => x.id === c.course_id)?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
+                {claimedCourse?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
+                {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — persetujuan tidak akan mengubah penetapan)</span>}{' '}
+                {!isMentorClaim && <span className="muted">(pengaju bukan mentor — persetujuan tidak akan menetapkan mentor)</span>}{' '}
                 <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, true)}>Setujui</button>{' '}
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => void decideClaim(c, false)}>Tolak</button>
+                {rejectingClaimId === c.id ? (
+                  <>
+                    <label>
+                      Alasan penolakan
+                      <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh mentor." />
+                    </label>{' '}
+                    <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, false, rejectReason)}>Konfirmasi Tolak</button>{' '}
+                    <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(null); setRejectReason('') }}>Batal</button>
+                  </>
+                ) : (
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(c.id); setRejectReason('') }}>Tolak</button>
+                )}
               </li>
-            ))}
+              )
+            })}
           </ul>
+        )}
+        {claims.filter((c) => c.status !== 'pending').length > 0 && (
+          <>
+            <h3>Riwayat Keputusan Klaim</h3>
+            <ul>
+              {claims.filter((c) => c.status !== 'pending').map((c) => (
+                <li key={c.id}>
+                  {courses.find((x) => x.id === c.course_id)?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}: {' '}
+                  <strong>{c.status === 'approved' ? 'Disetujui' : 'Ditolak'}</strong>
+                  {c.decision_note ? ` — ${c.decision_note}` : ''}
+                  {c.decided_by ? ` (oleh ${names.get(c.decided_by) ?? 'admin'})` : ''}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 

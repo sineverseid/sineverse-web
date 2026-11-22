@@ -149,6 +149,9 @@ export default function CourseDetailPage() {
   const [busy, setBusy] = useState(false)
   const [claimBusy, setClaimBusy] = useState(false)
   const [claimed, setClaimed] = useState(false)
+  // Klaim saya untuk course ini (bila ada) — status + alasan penolakan
+  // dibutuhkan untuk menampilkan alasan dan tombol ajukan ulang (022).
+  const [myClaim, setMyClaim] = useState<{ id: string; status: string; decision_note: string | null } | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -304,11 +307,15 @@ export default function CourseDetailPage() {
                       try {
                         const { data } = await supabase
                           .from('course_claims')
-                          .select('id')
+                          .select('id,status,decision_note')
                           .eq('mentor_id', user.id)
                           .eq('course_id', c.id)
                           .maybeSingle()
-                        if (!cancelled && data) setClaimed(true)
+                        if (!cancelled && data) {
+                          const row = data as { id: string; status: string; decision_note: string | null }
+                          setMyClaim(row)
+                          if (row.status === 'pending' || row.status === 'approved') setClaimed(true)
+                        }
                       } catch {
                         // Pengajuan lama gagal dibaca: tombol tetap bisa dikirim.
                       }
@@ -384,6 +391,13 @@ export default function CourseDetailPage() {
 
   async function doEnroll() {
     if (!user || !course) return
+    // Defense in depth (migrasi 022): admin tidak mengambil course.
+    // (Tombolnya sendiri sudah disembunyikan untuk admin; RLS yang
+    // menegakkan bila ada yang memanggil langsung.)
+    if (profile?.role === 'admin') {
+      setNotice('Admin hanya memantau course dan tidak dapat mengambil course sebagai peserta.')
+      return
+    }
     const c = course
     setBusy(true)
     setCodeError(null)
@@ -444,18 +458,31 @@ export default function CourseDetailPage() {
     const c = course
     setClaimBusy(true)
     try {
-      const { error: insErr } = await supabase.from('course_claims').insert({
-        course_id: c.id,
-        mentor_id: user.id,
-        status: 'pending',
-      })
-      if (insErr) throw insErr
-      await logAudit('course_claim.created', 'course_claims', null, {
-        course_id: c.id,
-        mentor_id: user.id,
-      })
-      setClaimed(true)
-      setNotice('Pengajuan mengampu terkirim. Admin akan meninjau pengajuan kamu.')
+      // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
+      // sama dikembalikan ke 'pending', bukan insert duplikat.
+      if (myClaim?.status === 'rejected') {
+        const { error: updErr } = await supabase.from('course_claims')
+          .update({ status: 'pending', decision_note: null, decided_by: null })
+          .eq('id', myClaim.id)
+        if (updErr) throw updErr
+        setMyClaim({ ...myClaim, status: 'pending', decision_note: null })
+        setClaimed(true)
+        setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
+      } else {
+        const { data: inserted, error: insErr } = await supabase.from('course_claims').insert({
+          course_id: c.id,
+          mentor_id: user.id,
+          status: 'pending',
+        }).select('id').single()
+        if (insErr) throw insErr
+        await logAudit('course_claim.created', 'course_claims', null, {
+          course_id: c.id,
+          mentor_id: user.id,
+        })
+        setClaimed(true)
+        setMyClaim({ id: (inserted as { id: string } | null)?.id ?? '', status: 'pending', decision_note: null })
+        setNotice('Pengajuan mengampu terkirim. Setelah disetujui admin, kamu otomatis menjadi mentor course ini.')
+      }
     } catch {
       setNotice('Gagal mengirim pengajuan mengampu. Periksa koneksi lalu coba lagi.')
     } finally {
@@ -603,18 +630,34 @@ export default function CourseDetailPage() {
                   {onWaitlist ? 'Sudah di Daftar Tunggu' : 'Ikuti untuk Bergabung'}
                 </button>
                 {profile?.role === 'mentor' && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={handleClaim}
-                    disabled={claimBusy || claimed}
-                  >
-                    {claimed
-                      ? 'Pengajuan Mengampu Terkirim'
-                      : claimBusy
-                        ? 'Mengirim…'
-                        : 'Ajukan untuk Mengampu'}
-                  </button>
+                  myClaim?.status === 'rejected' ? (
+                    <>
+                      <p className="error-box">
+                        Pengajuan mengampu kamu ditolak{myClaim.decision_note ? `: ${myClaim.decision_note}` : '.'}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={handleClaim}
+                        disabled={claimBusy}
+                      >
+                        {claimBusy ? 'Mengirim…' : 'Ajukan Lagi'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleClaim}
+                      disabled={claimBusy || claimed}
+                    >
+                      {claimed
+                        ? 'Pengajuan Mengampu Terkirim'
+                        : claimBusy
+                          ? 'Mengirim…'
+                          : 'Ajukan untuk Mengampu'}
+                    </button>
+                  )
                 )}
               </div>
             </>
