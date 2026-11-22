@@ -19,10 +19,18 @@ import {
   discussionParticipationScore,
 } from '../lib/grading'
 import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
-import { issueMentorCertificate } from '../lib/certificates'
+import {
+  fetchCertificateAuditLog,
+  issueAcademyCertificate,
+  issueEventCertificate,
+  issueMentorCertificate,
+  reactivateCertificate,
+  revokeCertificate,
+} from '../lib/certificates'
 import type {
   Assignment,
   Certificate,
+  CertificateAuditLog,
   Course,
   Discussion,
   Enrollment,
@@ -57,7 +65,21 @@ function typeLabel(type: Certificate['type']): string {
   if (type === 'exam') return 'Ujian'
   if (type === 'work') return 'Karya'
   if (type === 'mentor') return 'Mentor'
+  if (type === 'academy') return 'Academy'
+  if (type === 'event') return 'Event'
   return 'Course'
+}
+
+function statusLabel(status: Certificate['status']): string {
+  if (status === 'revoked') return 'Dicabut'
+  if (status === 'inactive') return 'Tidak aktif'
+  return 'Valid'
+}
+
+interface EventOption {
+  id: string
+  title: string
+  starts_at: string | null
 }
 
 function formatDate(value: string | null): string {
@@ -125,6 +147,36 @@ export default function AdminCertificatesPage() {
   const [issuingMentor, setIssuingMentor] = useState(false)
   const [mentorResult, setMentorResult] = useState<{ serial: string; alreadyIssued: boolean } | null>(null)
   const [mentorError, setMentorError] = useState<string | null>(null)
+  // Manajemen Sertifikat (migrasi 024): cari/filter + cabut/aktifkan + riwayat.
+  const [mgmtSearch, setMgmtSearch] = useState('')
+  const [mgmtType, setMgmtType] = useState<'all' | Certificate['type']>('all')
+  const [mgmtStatus, setMgmtStatus] = useState<'all' | Certificate['status']>('all')
+  const [mgmtDateFrom, setMgmtDateFrom] = useState('')
+  const [mgmtDateTo, setMgmtDateTo] = useState('')
+  const [mgmtSelectedId, setMgmtSelectedId] = useState<string | null>(null)
+  const [auditLog, setAuditLog] = useState<CertificateAuditLog[] | null>(null)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null)
+  const [revokeReason, setRevokeReason] = useState('')
+  const [mgmtBusy, setMgmtBusy] = useState(false)
+  const [mgmtError, setMgmtError] = useState<string | null>(null)
+  const [mgmtNotice, setMgmtNotice] = useState<string | null>(null)
+  // Sertifikat Kelulusan Academy (migrasi 024).
+  const [studentIds, setStudentIds] = useState<string[]>([])
+  const [academyStudentId, setAcademyStudentId] = useState('')
+  const [academyCount, setAcademyCount] = useState<number | null>(null)
+  const [academyChecking, setAcademyChecking] = useState(false)
+  const [academyIssuing, setAcademyIssuing] = useState(false)
+  const [academyResult, setAcademyResult] = useState<{ serial: string; alreadyIssued: boolean } | null>(null)
+  const [academyError, setAcademyError] = useState<string | null>(null)
+  // Sertifikat Event (migrasi 024).
+  const [eventOptions, setEventOptions] = useState<EventOption[]>([])
+  const [eventId, setEventId] = useState('')
+  const [eventStudentId, setEventStudentId] = useState('')
+  const [eventNote, setEventNote] = useState('')
+  const [eventIssuing, setEventIssuing] = useState(false)
+  const [eventResult, setEventResult] = useState<{ serial: string; alreadyIssued: boolean } | null>(null)
+  const [eventError, setEventError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -144,10 +196,24 @@ export default function AdminCertificatesPage() {
           ]),
         ]
         const namesMap = await fetchProfileNames(userIds)
+        const { data: evtData } = await supabase
+          .from('events')
+          .select('id,title,starts_at')
+          .order('starts_at', { ascending: false })
+        const evtRows = ((evtData ?? []) as EventOption[]).sort((a, b) =>
+          (b.starts_at ?? '').localeCompare(a.starts_at ?? ''),
+        )
         if (cancelled) return
         setCourses(courseList)
         setCertificates(certRows)
         setNames(namesMap)
+        setStudentIds(userIds)
+        setEventOptions(evtRows)
+        if (userIds.length > 0) {
+          setAcademyStudentId(userIds[0])
+          setEventStudentId(userIds[0])
+        }
+        if (evtRows.length > 0) setEventId(evtRows[0].id)
         if (courseList.length > 0) {
           setSelectedCourseId(courseList[0].id)
           setMentorCourseId(courseList[0].id)
@@ -221,6 +287,120 @@ export default function AdminCertificatesPage() {
       setMentorError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat mentor.')
     } finally {
       setIssuingMentor(false)
+    }
+  }
+
+  // --- Manajemen Sertifikat (024) ------------------------------------------
+  async function handleShowAudit(certId: string) {
+    setMgmtSelectedId(certId)
+    setAuditLog(null)
+    setAuditLoading(true)
+    try {
+      const rows = await fetchCertificateAuditLog(certId)
+      setAuditLog(rows)
+      const actorIds = rows.map((r) => r.performed_by).filter((id): id is string => Boolean(id))
+      if (actorIds.length > 0) {
+        const m = await fetchProfileNames(actorIds)
+        setNames((prev) => new Map([...prev, ...m]))
+      }
+    } catch (err) {
+      setMgmtError(err instanceof Error ? err.message : 'Gagal memuat riwayat sertifikat.')
+    } finally {
+      setAuditLoading(false)
+    }
+  }
+
+  async function handleConfirmRevoke(certId: string) {
+    setMgmtError(null)
+    setMgmtNotice(null)
+    setMgmtBusy(true)
+    try {
+      await revokeCertificate(certId, revokeReason.trim() || null)
+      setRevokeConfirmId(null)
+      setRevokeReason('')
+      setMgmtNotice('Sertifikat dicabut. QR lama tetap mengarah ke halaman verifikasi yang kini menampilkan status REVOKED.')
+      await refreshCertificates()
+    } catch (err) {
+      setMgmtError(err instanceof Error ? err.message : 'Gagal mencabut sertifikat.')
+    } finally {
+      setMgmtBusy(false)
+    }
+  }
+
+  async function handleReactivate(certId: string) {
+    setMgmtError(null)
+    setMgmtNotice(null)
+    setMgmtBusy(true)
+    try {
+      await reactivateCertificate(certId)
+      setMgmtNotice('Sertifikat diaktifkan kembali (status VALID).')
+      await refreshCertificates()
+    } catch (err) {
+      setMgmtError(err instanceof Error ? err.message : 'Gagal mengaktifkan kembali sertifikat.')
+    } finally {
+      setMgmtBusy(false)
+    }
+  }
+
+  // --- Sertifikat Kelulusan Academy (024) ----------------------------------
+  useEffect(() => {
+    if (!academyStudentId) {
+      setAcademyCount(null)
+      return
+    }
+    let cancelled = false
+    async function check() {
+      setAcademyChecking(true)
+      try {
+        const { data } = await supabase
+          .from('certificates')
+          .select('course_id')
+          .eq('user_id', academyStudentId)
+          .eq('type', 'course')
+        const distinct = new Set(((data ?? []) as { course_id: string }[]).map((r) => r.course_id))
+        if (!cancelled) setAcademyCount(distinct.size)
+      } catch {
+        if (!cancelled) setAcademyCount(null)
+      } finally {
+        if (!cancelled) setAcademyChecking(false)
+      }
+    }
+    void check()
+    return () => {
+      cancelled = true
+    }
+  }, [academyStudentId, certificates])
+
+  async function handleIssueAcademy() {
+    if (!academyStudentId) return
+    setAcademyError(null)
+    setAcademyResult(null)
+    setAcademyIssuing(true)
+    try {
+      const result = await issueAcademyCertificate(academyStudentId)
+      setAcademyResult(result)
+      await refreshCertificates()
+    } catch (err) {
+      setAcademyError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat Academy.')
+    } finally {
+      setAcademyIssuing(false)
+    }
+  }
+
+  // --- Sertifikat Event (024) ----------------------------------------------
+  async function handleIssueEvent() {
+    if (!eventStudentId || !eventId) return
+    setEventError(null)
+    setEventResult(null)
+    setEventIssuing(true)
+    try {
+      const result = await issueEventCertificate(eventStudentId, eventId, eventNote.trim() || null)
+      setEventResult(result)
+      await refreshCertificates()
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat event.')
+    } finally {
+      setEventIssuing(false)
     }
   }
 
@@ -373,12 +553,30 @@ export default function AdminCertificatesPage() {
 
   const courseById = new Map(courses.map((c) => [c.id, c.title]))
 
+  // Manajemen Sertifikat: filter klien atas daftar sertifikat yang sudah
+  // dimuat (terbaru dulu, tampil 100 pertama).
+  const mgmtFiltered = certificates
+    .filter((c) => {
+      if (mgmtType !== 'all' && c.type !== mgmtType) return false
+      if (mgmtStatus !== 'all' && c.status !== mgmtStatus) return false
+      if (mgmtDateFrom && c.issued_at.slice(0, 10) < mgmtDateFrom) return false
+      if (mgmtDateTo && c.issued_at.slice(0, 10) > mgmtDateTo) return false
+      if (mgmtSearch.trim()) {
+        const q = mgmtSearch.trim().toLowerCase()
+        const name = (names.get(c.user_id) ?? '').toLowerCase()
+        if (!name.includes(q) && !c.serial.toLowerCase().includes(q)) return false
+      }
+      return true
+    })
+    .slice(0, 100)
+  const mgmtSelected = mgmtSelectedId ? certificates.find((c) => c.id === mgmtSelectedId) ?? null : null
+
   return (
     <div className="page">
       <PageHeader
         icon="certificate"
         title="Kelola Sertifikat"
-        subtitle="Daftar sertifikat yang sudah terbit, kelayakan sertifikat course, dan penerbitan sertifikat apresiasi mentor. Sertifikat course diterbitkan di Tahap 5."
+        subtitle="Daftar sertifikat yang sudah terbit, manajemen sertifikat (cari, filter, cabut, aktifkan, riwayat), kelayakan sertifikat course, dan penerbitan sertifikat apresiasi mentor, kelulusan Academy, dan event. Sertifikat course diterbitkan di Tahap 5."
       />
       <section className="section">
         <h2>Sertifikat Terbit ({certificates.length})</h2>
@@ -394,7 +592,7 @@ export default function AdminCertificatesPage() {
                 {certificates.map((c) => (
                   <tr key={c.id}>
                     <td>{names.get(c.user_id) ?? 'Siswa'}</td>
-                    <td>{courseById.get(c.course_id) ?? 'Course'}</td>
+                    <td>{c.course_id ? courseById.get(c.course_id) ?? 'Course' : c.program_name ?? '—'}</td>
                     <td>{typeLabel(c.type)}</td>
                     <td>{c.serial}</td>
                     <td>{c.score === null ? '—' : c.score}</td>
@@ -403,6 +601,179 @@ export default function AdminCertificatesPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="section">
+        <h2>Manajemen Sertifikat</h2>
+        <p className="muted">
+          Cari berdasarkan nama penerima atau nomor serial, filter berdasarkan jenis, status, dan
+          tanggal terbit. Pencabutan membutuhkan konfirmasi + alasan, dan setiap perubahan status
+          tercatat di riwayat (audit log). QR sertifikat yang dicabut tetap mengarah ke halaman
+          verifikasi yang menampilkan status REVOKED.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
+          <label>
+            Cari (nama / serial)
+            <input
+              value={mgmtSearch}
+              onChange={(e) => setMgmtSearch(e.target.value)}
+              placeholder="Nama penerima atau SVS-…"
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            />
+          </label>
+          <label>
+            Jenis
+            <select
+              value={mgmtType}
+              onChange={(e) => setMgmtType(e.target.value as 'all' | Certificate['type'])}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            >
+              <option value="all">Semua jenis</option>
+              <option value="course">Course</option>
+              <option value="exam">Ujian</option>
+              <option value="work">Karya</option>
+              <option value="mentor">Mentor</option>
+              <option value="academy">Academy</option>
+              <option value="event">Event</option>
+            </select>
+          </label>
+          <label>
+            Status
+            <select
+              value={mgmtStatus}
+              onChange={(e) => setMgmtStatus(e.target.value as 'all' | Certificate['status'])}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            >
+              <option value="all">Semua status</option>
+              <option value="valid">Valid</option>
+              <option value="revoked">Dicabut</option>
+              <option value="inactive">Tidak aktif</option>
+            </select>
+          </label>
+          <label>
+            Terbit dari
+            <input
+              type="date"
+              value={mgmtDateFrom}
+              onChange={(e) => setMgmtDateFrom(e.target.value)}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            />
+          </label>
+          <label>
+            Terbit sampai
+            <input
+              type="date"
+              value={mgmtDateTo}
+              onChange={(e) => setMgmtDateTo(e.target.value)}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            />
+          </label>
+        </div>
+        {mgmtNotice && <p className="notice-box">{mgmtNotice}</p>}
+        {mgmtError && <p className="error-box">{mgmtError}</p>}
+        {mgmtFiltered.length === 0 ? (
+          <p className="empty">Tidak ada sertifikat yang cocok dengan filter.</p>
+        ) : (
+          <div className="grade-table-wrap">
+            <table className="grade-table">
+              <thead>
+                <tr><th>Penerima</th><th>Jenis</th><th>Course / Program</th><th>Serial</th><th>Status</th><th>Tanggal Terbit</th><th>Diterbitkan oleh</th><th>Aksi</th></tr>
+              </thead>
+              <tbody>
+                {mgmtFiltered.map((c) => (
+                  <tr key={c.id}>
+                    <td>{names.get(c.user_id) ?? c.recipient_name_snapshot ?? '—'}</td>
+                    <td>{typeLabel(c.type)}</td>
+                    <td>{c.course_id ? courseById.get(c.course_id) ?? 'Course' : c.program_name ?? '—'}</td>
+                    <td>{c.serial}</td>
+                    <td>{statusLabel(c.status)}</td>
+                    <td>{formatDate(c.issued_at)}</td>
+                    <td>{c.issued_by ? names.get(c.issued_by) ?? 'Admin' : '—'}</td>
+                    <td>
+                      <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleShowAudit(c.id)}>
+                        Riwayat
+                      </button>{' '}
+                      {c.status === 'revoked' ? (
+                        <button type="button" className="btn btn-secondary btn-small" onClick={() => void handleReactivate(c.id)} disabled={mgmtBusy}>
+                          Aktifkan lagi
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          onClick={() => {
+                            setRevokeConfirmId(c.id)
+                            setRevokeReason('')
+                            setMgmtError(null)
+                          }}
+                          disabled={mgmtBusy}
+                        >
+                          Cabut
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {revokeConfirmId && (
+          <div className="discussion-item" style={{ marginTop: '0.75rem', borderLeft: '4px solid #c0392b' }}>
+            <p><strong>Konfirmasi pencabutan</strong></p>
+            <p className="muted">
+              Sertifikat {certificates.find((c) => c.id === revokeConfirmId)?.serial ?? ''} akan
+              dicabut. Tindakan ini tercatat di audit log dan statusnya berubah menjadi REVOKED
+              di halaman verifikasi publik.
+            </p>
+            <label>
+              Alasan pencabutan
+              <input
+                value={revokeReason}
+                onChange={(e) => setRevokeReason(e.target.value)}
+                placeholder="Mis. data nilai salah input"
+                style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)', width: '100%', boxSizing: 'border-box' }}
+              />
+            </label>
+            <p style={{ marginTop: '0.5rem' }}>
+              <button type="button" className="btn btn-primary" onClick={() => void handleConfirmRevoke(revokeConfirmId)} disabled={mgmtBusy}>
+                {mgmtBusy ? 'Mencabut…' : 'Ya, cabut sertifikat'}
+              </button>{' '}
+              <button type="button" className="btn btn-secondary" onClick={() => setRevokeConfirmId(null)}>
+                Batal
+              </button>
+            </p>
+          </div>
+        )}
+        {mgmtSelected && (
+          <div style={{ marginTop: '0.75rem' }}>
+            <h3>Riwayat — {mgmtSelected.serial}</h3>
+            {auditLoading && <p className="muted">Memuat riwayat…</p>}
+            {!auditLoading && auditLog !== null && auditLog.length === 0 && (
+              <p className="empty">Belum ada riwayat perubahan status untuk sertifikat ini.</p>
+            )}
+            {!auditLoading && auditLog !== null && auditLog.length > 0 && (
+              <div className="grade-table-wrap">
+                <table className="grade-table">
+                  <thead>
+                    <tr><th>Tanggal</th><th>Aksi</th><th>Status</th><th>Oleh</th><th>Catatan</th></tr>
+                  </thead>
+                  <tbody>
+                    {auditLog.map((row) => (
+                      <tr key={row.id}>
+                        <td>{formatDate(row.created_at)}</td>
+                        <td>{row.action}</td>
+                        <td>{row.previous_status ?? '—'} → {row.new_status ?? '—'}</td>
+                        <td>{row.performed_by ? names.get(row.performed_by) ?? 'Admin' : 'Sistem'}</td>
+                        <td>{row.notes ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -458,6 +829,117 @@ export default function AdminCertificatesPage() {
           </p>
         )}
         {mentorError && <p className="error-box">{mentorError}</p>}
+      </section>
+
+      <section className="section">
+        <h2>Sertifikat Kelulusan Academy</h2>
+        <p className="muted">
+          Terbitkan sertifikat kelulusan Academy (SVS-ACD) untuk siswa yang sudah memegang
+          sertifikat course untuk ke-10 course. Satu siswa hanya punya satu sertifikat Academy;
+          bila sudah pernah diterbitkan, nomor serial yang sudah ada akan ditampilkan.
+        </p>
+        <label>
+          Siswa
+          <select
+            value={academyStudentId}
+            onChange={(e) => {
+              setAcademyStudentId(e.target.value)
+              setAcademyResult(null)
+              setAcademyError(null)
+            }}
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+          >
+            {studentIds.map((id) => <option key={id} value={id}>{names.get(id) ?? id}</option>)}
+          </select>
+        </label>
+        <p className="muted">
+          Sertifikat course yang dipegang:{' '}
+          {academyChecking ? 'memeriksa…' : academyCount === null ? '—' : <strong>{academyCount} dari 10 course</strong>}
+        </p>
+        <p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void handleIssueAcademy()}
+            disabled={academyIssuing || !academyStudentId || academyCount === null || academyCount < 10}
+          >
+            {academyIssuing ? 'Menerbitkan…' : 'Terbitkan Sertifikat Academy'}
+          </button>
+        </p>
+        {academyCount !== null && academyCount < 10 && (
+          <p className="muted">Siswa belum memenuhi syarat: baru {academyCount} dari 10 sertifikat course.</p>
+        )}
+        {academyResult && (
+          <p className="notice-box">
+            Sertifikat Academy terbit: {academyResult.serial}
+            {academyResult.alreadyIssued ? ' (sudah pernah diterbitkan sebelumnya).' : '.'}
+          </p>
+        )}
+        {academyError && <p className="error-box">{academyError}</p>}
+      </section>
+
+      <section className="section">
+        <h2>Sertifikat Event</h2>
+        <p className="muted">
+          Terbitkan sertifikat partisipasi event (SVS-EVT). Satu penerima hanya punya satu
+          sertifikat per event; bila sudah pernah diterbitkan, nomor serial yang sudah ada
+          akan ditampilkan.
+        </p>
+        <label>
+          Event
+          <select
+            value={eventId}
+            onChange={(e) => {
+              setEventId(e.target.value)
+              setEventResult(null)
+              setEventError(null)
+            }}
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+          >
+            {eventOptions.map((ev) => <option key={ev.id} value={ev.id}>{ev.title}</option>)}
+          </select>
+        </label>
+        <label>
+          Penerima
+          <select
+            value={eventStudentId}
+            onChange={(e) => {
+              setEventStudentId(e.target.value)
+              setEventResult(null)
+              setEventError(null)
+            }}
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+          >
+            {studentIds.map((id) => <option key={id} value={id}>{names.get(id) ?? id}</option>)}
+          </select>
+        </label>
+        <label>
+          Catatan
+          <textarea
+            value={eventNote}
+            onChange={(e) => setEventNote(e.target.value)}
+            rows={2}
+            placeholder="Mis. peserta Lomba Film Pendek 2026"
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)', width: '100%', boxSizing: 'border-box' }}
+          />
+        </label>
+        <p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void handleIssueEvent()}
+            disabled={eventIssuing || !eventId || !eventStudentId}
+          >
+            {eventIssuing ? 'Menerbitkan…' : 'Terbitkan Sertifikat Event'}
+          </button>
+        </p>
+        {eventResult && (
+          <p className="notice-box">
+            Sertifikat event terbit: {eventResult.serial}
+            {eventResult.alreadyIssued ? ' (sudah pernah diterbitkan sebelumnya untuk event ini).' : '.'}
+          </p>
+        )}
+        {eventError && <p className="error-box">{eventError}</p>}
       </section>
 
       <section className="section">
