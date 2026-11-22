@@ -128,7 +128,7 @@ export default function RegisterPage() {
     return () => window.clearTimeout(t)
   }, [resendCooldown])
 
-  // Daftar provinsi (sekali, untuk jalur siswa).
+  // Daftar provinsi (sekali, untuk kedua jalur pendaftaran).
   useEffect(() => {
     let cancelled = false
     fetchProvinces()
@@ -291,14 +291,15 @@ export default function RegisterPage() {
       return 'Tanggal lahir tidak boleh di masa depan.'
     }
     if (!gender) return 'Pilih jenis kelamin.'
+    // Wilayah berlaku untuk kedua jalur (siswa dan mentor).
+    if (!province) return 'Pilih provinsi.'
+    if (!regency) return 'Pilih kabupaten/kota.'
     if (!termsAgreed) return 'Centang persetujuan Syarat & Ketentuan dan Kebijakan Privasi.'
     if (isMentorPath) {
       if (!mentorValid || !mentorValues) {
         return 'Lengkapi lamaran mentor: profesi, minimal satu bidang keahlian, pengalaman, alasan, dan centang pernyataan sukarela.'
       }
     } else {
-      if (!province) return 'Pilih provinsi.'
-      if (!regency) return 'Pilih kabupaten/kota.'
       if (manualSchool) {
         if (manualSchoolName.trim().length < 2) return 'Nama sekolah minimal 2 karakter.'
         if (manualSchoolNpsn.trim() && !/^\d{8}$/.test(manualSchoolNpsn.trim())) {
@@ -330,10 +331,8 @@ export default function RegisterPage() {
       : (selectedSchool?.name ?? manualSchoolName.trim())
     // Kota tempat tinggal tidak lagi ditanya terpisah (perintah Founder
     // 22 Nov 18:19): kota profil diisi dari nama kabupaten/kota yang
-    // dipilih; jalur mentor tidak punya wilayah sehingga kota kosong.
-    const cityValue = isMentorPath
-      ? ''
-      : (regencies.find((r) => r.code === regency)?.name ?? '')
+    // dipilih, berlaku untuk jalur siswa maupun mentor.
+    const cityValue = regencies.find((r) => r.code === regency)?.name ?? ''
     // Data profil lengkap dikirim sebagai user_metadata — trigger database
     // (migrasi 010) mengisinya ke tabel profiles saat akun dibuat.
     // Username TIDAK lewat metadata (duplikat akan menggagalkan signup);
@@ -363,8 +362,8 @@ export default function RegisterPage() {
         ? { kind: 'file', dataUrl: photoFile.dataUrl, ext: photoFile.ext }
         : null,
       username: username.trim(),
-      province: isMentorPath ? '' : province,
-      regency: isMentorPath ? '' : regency,
+      province,
+      regency,
       schoolId: selectedSchool?.id ?? null,
       schoolManual:
         !isMentorPath && manualSchool
@@ -731,6 +730,37 @@ export default function RegisterPage() {
               <option value="Perempuan">Perempuan</option>
             </select>
           </label>
+          <label>
+            Provinsi
+            <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency('') }} required>
+              <option value="" disabled>
+                Pilih provinsi
+              </option>
+              {provinces.map((p) => (
+                <option key={p.code} value={p.code}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Kabupaten / Kota
+            <select
+              value={regency}
+              onChange={(e) => setRegency(e.target.value)}
+              required
+              disabled={!province}
+            >
+              <option value="" disabled>
+                {province ? 'Pilih kabupaten/kota' : 'Pilih provinsi dulu'}
+              </option>
+              {regencies.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {isMentorPath ? (
             <MentorApplicationForm
@@ -742,37 +772,6 @@ export default function RegisterPage() {
             />
           ) : (
             <>
-              <label>
-                Provinsi
-                <select value={province} onChange={(e) => { setProvince(e.target.value); setRegency('') }} required>
-                  <option value="" disabled>
-                    Pilih provinsi
-                  </option>
-                  {provinces.map((p) => (
-                    <option key={p.code} value={p.code}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Kabupaten / Kota
-                <select
-                  value={regency}
-                  onChange={(e) => setRegency(e.target.value)}
-                  required
-                  disabled={!province}
-                >
-                  <option value="" disabled>
-                    {province ? 'Pilih kabupaten/kota' : 'Pilih provinsi dulu'}
-                  </option>
-                  {regencies.map((r) => (
-                    <option key={r.code} value={r.code}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
               {manualSchool ? (
                 <>
                   <label>
