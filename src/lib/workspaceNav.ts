@@ -43,5 +43,6 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/admin/materi', label: 'Materi', icon: 'book' },
   { to: '/admin/analitik', label: 'Analytics', icon: 'chart' },
+  { to: '/admin/analitik-akademi', label: 'Analitik Akademi', icon: 'chart' },
   { to: '/admin/pengaturan', label: 'Pengaturan', icon: 'settings' },
 ]
