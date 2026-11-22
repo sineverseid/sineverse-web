@@ -272,7 +272,7 @@ p {
 /* --- Sub-navigasi workspace (Mentor Workspace & Admin Panel) --- */
 .workspace-nav {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.75rem;
   overflow-x: auto;
   padding: 0.35rem 0.1rem 0.75rem;
   margin-bottom: 0.25rem;
@@ -290,7 +290,7 @@ p {
   align-items: center;
   gap: 0.35rem;
   white-space: nowrap;
-  padding: 0.5rem 0.8rem;
+  padding: 0.6rem 1rem;
   min-height: 44px;
   border-radius: 999px;
   border: 1px solid var(--light-grey);
@@ -416,7 +416,7 @@ p {
 .more-sheet-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
+  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
@@ -428,7 +428,8 @@ p {
   background: var(--soft-white);
   border: 1px solid var(--light-grey);
   border-radius: 10px;
-  padding: 0.75rem 0.25rem;
+  padding: 0.9rem 0.5rem;
+  min-height: 76px;
   color: var(--navy);
   font-weight: 700;
   font-size: 0.8rem;
@@ -901,6 +902,58 @@ p {
   flex-wrap: wrap;
 }
 
+/* --- Grid aksi Kelola Academy (Admin Panel) ---
+   Tombol dibuat grid rata 2 kolom (HP) / 3 kolom (≥640px) dengan gap
+   lega, bukan flex-wrap yang menghasilkan baris 2+2+3 tidak rata dan
+   terlihat mepet. Tiap tombol selebar sel, tinggi sama, teks rata tengah. */
+.admin-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.admin-action-grid .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.6rem 0.75rem;
+  text-align: center;
+}
+
+@media (min-width: 640px) {
+  .admin-action-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* --- Grid aksi generik (dipakai kelompok tombol navigasi/aksi lain) ---
+   Pola yang sama dengan .admin-action-grid: grid rata 2 kolom (HP) /
+   3 kolom (≥640px), gap lega, tombol selebar sel, tinggi sama, teks
+   rata tengah. Dipakai mis. tab workspace Proyek Akhir dan baris
+   keputusan penilaian mentor — bukan flex-wrap yang menghasilkan
+   baris tidak rata dan terlihat mepet. */
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.action-grid .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.6rem 0.75rem;
+  text-align: center;
+}
+
+@media (min-width: 640px) {
+  .action-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 /* --- Pendaftaran (sama dengan artefak) --- */
 .photo-field {
   display: flex;
@@ -938,7 +991,7 @@ p {
 
 .chip-row {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
@@ -2153,7 +2206,7 @@ p {
 /* Halaman About (Tentang / Privasi / Syarat). */
 .about-tabs {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
   margin: 0.5rem 0 1.25rem;
 }
@@ -2435,7 +2488,7 @@ p {
 .quick-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.6rem;
+  gap: 0.75rem;
   margin-bottom: 1.25rem;
 }
 
@@ -2718,7 +2771,7 @@ a.reco-card:hover {
 /* --- Tab pil (Aktif / Selesai, Aktif / Riwayat, Diskusi / Pengumuman) --- */
 .pill-tabs {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
   margin-bottom: 1rem;
 }
