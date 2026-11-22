@@ -14,7 +14,7 @@ export const BRAND = {
   // Versi web publik — mengikuti rilis artefak yang dicerminkan (v1.3,
   // real-logo PWA, 21 Nov 2026). Satu rilis, dua penyaluran (artefak + web).
   version: 'v1.3',
-  versionUpdated: '21 Nov 2026',
+  versionUpdated: '22 Nov 2026',
   description:
     'Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.',
   gradebook: {
