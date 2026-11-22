@@ -366,7 +366,14 @@ export function VerifyCertificatePage() {
     const queryToken = searchParams.get('token')?.trim() ?? ''
     const querySerial = searchParams.get('serial')?.trim().toUpperCase() ?? ''
     const key = queryToken ? `token:${queryToken}` : querySerial ? `serial:${querySerial}` : ''
-    if (!key || autoVerifiedRef.current === key) return
+    if (!key) {
+      // BUGFIX 22 Nov 2026: pindah ke halaman verifikasi tanpa parameter harus
+      // membersihkan hasil lama — sebelumnya hasil VALID sebelumnya tetap tampil.
+      autoVerifiedRef.current = ''
+      setResult(null)
+      return
+    }
+    if (autoVerifiedRef.current === key) return
     autoVerifiedRef.current = key
     if (queryToken) {
       void verifyByTokenValue(queryToken)

@@ -189,10 +189,20 @@ export default function AdminCertificatesPage() {
           .order('issued_at', { ascending: false })
         const certRows = (certData ?? []) as Certificate[]
         const { data: enrData } = await supabase.from('enrollments').select('user_id')
+        // BUGFIX 22 Nov 2026: daftar penerima JANGAN diturunkan dari sertifikat
+        // yang sudah ada — dengan 0 sertifikat di DB, dropdown Penerima/Siswa
+        // kosong selamanya dan admin tidak bisa menerbitkan sertifikat pertama.
+        // Ambil langsung semua profil peserta (siswa + mentor) dari tabel profiles.
+        const { data: memberData } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('role', ['siswa', 'mentor'])
+          .order('name')
         const userIds = [
           ...new Set([
             ...certRows.map((c) => c.user_id),
             ...((enrData ?? []) as { user_id: string }[]).map((e) => e.user_id),
+            ...((memberData ?? []) as { id: string }[]).map((m) => m.id),
           ]),
         ]
         const namesMap = await fetchProfileNames(userIds)
@@ -262,7 +272,19 @@ export default function AdminCertificatesPage() {
       .order('issued_at', { ascending: false })
     const certRows = (certData ?? []) as Certificate[]
     setCertificates(certRows)
-    const userIds = [...new Set(certRows.map((c) => c.user_id))]
+    // Sama seperti load(): penerima diambil dari profiles, bukan dari sertifikat.
+    const { data: memberData } = await supabase
+      .from('profiles')
+      .select('id')
+      .in('role', ['siswa', 'mentor'])
+      .order('name')
+    const userIds = [
+      ...new Set([
+        ...certRows.map((c) => c.user_id),
+        ...((memberData ?? []) as { id: string }[]).map((m) => m.id),
+      ]),
+    ]
+    setStudentIds(userIds)
     if (userIds.length > 0) {
       const m = await fetchProfileNames(userIds)
       setNames((prev) => new Map([...prev, ...m]))
