@@ -1,10 +1,13 @@
 // SINEVERSE — Upload foto profil (bucket profile-photos, replace-only).
 // Foto hanya bisa DIGANTI, tidak pernah dihapus — tidak ada tombol hapus
-// di mana pun. Bila bucket belum ada, tampilkan pesan jujur, bukan gagal
-// diam-diam.
+// di mana pun. TIDAK ADA batas ukuran foto (Arif, 21 Nov 2026): foto besar
+// diperkecil otomatis di browser (sisi terpanjang 1024px, JPEG 0.85)
+// sebelum diunggah. Bila bucket belum ada, tampilkan pesan jujur, bukan
+// gagal diam-diam.
 import { useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { dataUrlToBlob, photoToDataUrl } from '../lib/photo'
 import { updatePhotoUrl, uploadToBucket } from '../lib/supabase'
 
 export default function ProfilePhotoUpload() {
@@ -19,14 +22,29 @@ export default function ProfilePhotoUpload() {
       setNotice('Pilih file gambar (JPG/PNG/WebP).')
       return
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setNotice('Ukuran foto maksimal 5 MB.')
-      return
-    }
+    // Tidak ada batas ukuran: foto besar diperkecil otomatis di browser.
     setBusy(true)
     setNotice(null)
-    const ext = file.name.split('.').pop() ?? 'jpg'
-    const url = await uploadToBucket('profile-photos', `${user.id}/photo.${ext}`, file)
+    let dataUrl: string
+    try {
+      dataUrl = await photoToDataUrl(file)
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Tidak dapat membaca file foto.')
+      setBusy(false)
+      return
+    }
+    // photoToDataUrl mengubah foto besar menjadi JPEG; samakan ekstensi
+    // nama file dengan isi sebenarnya.
+    const ext = dataUrl.startsWith('data:image/jpeg')
+      ? 'jpg'
+      : dataUrl.startsWith('data:image/png')
+        ? 'png'
+        : dataUrl.startsWith('data:image/webp')
+          ? 'webp'
+          : (file.name.split('.').pop() ?? 'jpg')
+    const blob = await dataUrlToBlob(dataUrl)
+    const uploadFile = new File([blob], `photo.${ext}`, { type: blob.type })
+    const url = await uploadToBucket('profile-photos', `${user.id}/photo.${ext}`, uploadFile)
     if (!url) {
       setNotice('Bucket profile-photos belum tersedia — foto tidak bisa diunggah. Minta admin membuat bucket-nya di Dashboard Supabase (lihat supabase/README.md). Foto lama tetap dipakai.')
       setBusy(false)
@@ -54,7 +72,8 @@ export default function ProfilePhotoUpload() {
         <input type="file" accept="image/*" onChange={handleFile} disabled={busy} style={{ display: 'none' }} />
       </label>
       <p className="muted" style={{ marginTop: '0.5rem' }}>
-        Foto profil hanya bisa diganti dengan foto baru — tidak bisa dihapus.
+        Foto profil hanya bisa diganti dengan foto baru — tidak bisa dihapus. Tanpa batas
+        ukuran (foto besar diperkecil otomatis).
       </p>
       {notice && <p className="notice-box">{notice}</p>}
     </div>
