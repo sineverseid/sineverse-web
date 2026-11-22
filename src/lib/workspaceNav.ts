@@ -14,8 +14,8 @@ export interface WorkspaceNavEntry {
 // bukan tab workspace; RPS dibaca dari tautan di halaman Overview, dan
 // Siswa/Diskusi/Analitik/Office Hours dijangkau dari kartu di Overview.
 export const MENTOR_NAV: WorkspaceNavEntry[] = [
-  { to: '/mentor', label: 'Overview', icon: 'mentor', end: true },
-  { to: '/mentor/course-builder', label: 'Course Builder', icon: 'academy' },
+  { to: '/mentor', label: 'Ringkasan', icon: 'mentor', end: true },
+  { to: '/mentor/course-builder', label: 'Pembuat Course', icon: 'academy' },
   { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/mentor/materi', label: 'Materi', icon: 'book' },
   { to: '/mentor/video', label: 'Video', icon: 'film' },
@@ -27,7 +27,7 @@ export const MENTOR_NAV: WorkspaceNavEntry[] = [
 // Menu Admin Panel (master prompt §04): Dashboard, Pengguna, Acara &
 // Festival, Pustaka, Moderasi, Diskusi Mentor, Editor RPS, Pengaturan.
 export const ADMIN_NAV: WorkspaceNavEntry[] = [
-  { to: '/admin', label: 'Dashboard', icon: 'admin', end: true },
+  { to: '/admin', label: 'Dasbor', icon: 'admin', end: true },
   { to: '/admin/pengguna', label: 'Pengguna', icon: 'community' },
   { to: '/admin/acara', label: 'Acara & Festival', icon: 'event' },
   { to: '/admin/pustaka', label: 'Pustaka', icon: 'library' },
@@ -35,14 +35,14 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin/diskusi-mentor', label: 'Diskusi Mentor', icon: 'message' },
   { to: '/admin/rps', label: 'Editor RPS', icon: 'rps' },
   { to: '/admin/sections', label: 'Section & Lesson', icon: 'academy' },
-  { to: '/admin/enrollment', label: 'Enrollment', icon: 'user' },
+  { to: '/admin/enrollment', label: 'Pendaftaran', icon: 'user' },
   { to: '/admin/tugas', label: 'Monitoring Tugas', icon: 'fileText' },
   { to: '/admin/kuis', label: 'Kelola Kuis', icon: 'exam' },
   { to: '/admin/sertifikat', label: 'Sertifikat', icon: 'certificate' },
   { to: '/admin/sertifikat/terbitkan', label: 'Terbitkan Sertifikat', icon: 'certificate' },
   { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/admin/materi', label: 'Materi', icon: 'book' },
-  { to: '/admin/analitik', label: 'Analytics', icon: 'chart' },
+  { to: '/admin/analitik', label: 'Analitik', icon: 'chart' },
   { to: '/admin/analitik-akademi', label: 'Analitik Akademi', icon: 'chart' },
   { to: '/admin/pengaturan', label: 'Pengaturan', icon: 'settings' },
 ]
