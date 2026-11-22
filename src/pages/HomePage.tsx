@@ -1219,7 +1219,7 @@ function MentorHome(props: {
     const existing = claims.find((cl) => cl.course_id === courseId)
     if (existing?.status === 'rejected') {
       const { error: updErr } = await supabase.from('course_claims')
-        .update({ status: 'pending', decision_note: null, decided_by: null })
+        .update({ status: 'pending' })
         .eq('id', existing.id)
       setClaimingId(null)
       if (updErr) {

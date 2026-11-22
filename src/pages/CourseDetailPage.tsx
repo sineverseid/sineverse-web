@@ -462,10 +462,10 @@ export default function CourseDetailPage() {
       // sama dikembalikan ke 'pending', bukan insert duplikat.
       if (myClaim?.status === 'rejected') {
         const { error: updErr } = await supabase.from('course_claims')
-          .update({ status: 'pending', decision_note: null, decided_by: null })
+          .update({ status: 'pending' })
           .eq('id', myClaim.id)
         if (updErr) throw updErr
-        setMyClaim({ ...myClaim, status: 'pending', decision_note: null })
+        setMyClaim({ ...myClaim, status: 'pending' })
         setClaimed(true)
         setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
       } else {
