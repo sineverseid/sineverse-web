@@ -694,6 +694,8 @@ export interface CourseClaim {
   mentor_id: string
   status: 'pending' | 'approved' | 'rejected'
   decided_by: string | null
+  // Alasan penolakan (migrasi 022) — terlihat oleh mentor yang ditolak.
+  decision_note: string | null
   created_at: string
 }
 

@@ -301,7 +301,29 @@ export async function fetchEnrollment(
   return data as Enrollment | null
 }
 
+/**
+ * Defense in depth (migrasi 022): admin memantau, bukan peserta — tidak
+ * boleh mendaftar course atau mencatat progres belajar. Penegakan
+ * sebenarnya ada di RLS; helper ini hanya gagal cepat dengan pesan yang
+ * jelas. Bila peran gagal dibaca, biarkan lanjut (fail-open): RLS yang
+ * memutuskan, bukan helper ini.
+ */
+async function assertNotAdmin(userId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+  if (error) return
+  if ((data as { role?: string } | null)?.role === 'admin') {
+    throw new Error('Admin tidak dapat mengikuti course sebagai peserta.')
+  }
+}
+
 export async function enrollInCourse(userId: string, courseId: string): Promise<void> {
+  // Defense in depth (migrasi 022): admin tidak boleh mengambil course.
+  // Penegakan sebenarnya ada di RLS; ini hanya gagal cepat dengan pesan jelas.
+  await assertNotAdmin(userId)
   const { error } = await supabase
     .from('enrollments')
     .insert({ user_id: userId, course_id: courseId })
@@ -361,6 +383,8 @@ export async function markLessonStarted(userId: string, lessonId: string): Promi
 
 /** Mark a lesson completed (upsert). */
 export async function markLessonCompleted(userId: string, lessonId: string): Promise<void> {
+  // Defense in depth (migrasi 022): admin tidak boleh mencatat progres.
+  await assertNotAdmin(userId)
   const { error } = await supabase.from('lesson_progress').upsert(
     {
       user_id: userId,
