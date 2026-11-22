@@ -31,6 +31,14 @@ returns table (serial text, score int, already_issued boolean)
 language plpgsql
 security definer
 as $$
+-- BUGFIX 2 (22 Nov 2026): nama parameter output "serial" bertabrakan dengan
+-- kolom certificates.serial. Setelah query count diperbaiki (kualifikasi
+-- public.certificates.serial), ambiguitas BERIKUTNYA muncul di
+-- "on conflict (serial)" — PL/pgSQL menganggapnya bisa variabel atau kolom
+-- (error 42702 yang sama). Dua lapis perbaikan: (a) direktif di bawah
+-- memaksa semua referensi ambigu di fungsi ini dibaca sebagai KOLOM;
+-- (b) on conflict memakai nama constraint, bukan nama kolom.
+#variable_conflict use_column
 declare
   v_caller uuid := auth.uid();
   v_is_admin boolean := public.is_admin();
@@ -184,7 +192,7 @@ begin
     v_serial := 'SVS-CRS-' || v_year || '-' || lpad((v_seq + i)::text, 4, '0');
     insert into public.certificates (user_id, course_id, type, serial, score)
     values (p_user_id, p_course_id, 'course', v_serial, round(v_final)::int)
-    on conflict (serial) do nothing;
+    on conflict on constraint certificates_serial_key do nothing;
     exit when found;
     v_serial := null;
   end loop;
