@@ -79,7 +79,6 @@ export default function RegisterPage() {
   const [phone, setPhone] = useState('')
   const [birthDate, setBirthDate] = useState('')
   const [gender, setGender] = useState('')
-  const [city, setCity] = useState('')
   // Migrasi 027: username + wilayah + sekolah.
   const [username, setUsername] = useState('')
   const [usernameEdited, setUsernameEdited] = useState(false)
@@ -292,7 +291,6 @@ export default function RegisterPage() {
       return 'Tanggal lahir tidak boleh di masa depan.'
     }
     if (!gender) return 'Pilih jenis kelamin.'
-    if (city.trim().length < 2) return 'Nama kota minimal 2 karakter.'
     if (!termsAgreed) return 'Centang persetujuan Syarat & Ketentuan dan Kebijakan Privasi.'
     if (isMentorPath) {
       if (!mentorValid || !mentorValues) {
@@ -330,13 +328,19 @@ export default function RegisterPage() {
     const displaySchool = isMentorPath
       ? ''
       : (selectedSchool?.name ?? manualSchoolName.trim())
+    // Kota tempat tinggal tidak lagi ditanya terpisah (perintah Founder
+    // 22 Nov 18:19): kota profil diisi dari nama kabupaten/kota yang
+    // dipilih; jalur mentor tidak punya wilayah sehingga kota kosong.
+    const cityValue = isMentorPath
+      ? ''
+      : (regencies.find((r) => r.code === regency)?.name ?? '')
     // Data profil lengkap dikirim sebagai user_metadata — trigger database
     // (migrasi 010) mengisinya ke tabel profiles saat akun dibuat.
     // Username TIDAK lewat metadata (duplikat akan menggagalkan signup);
     // username ditulis lewat patch profil setelah pengguna masuk.
     const metadata: Record<string, unknown> = {
       phone: phone.trim(),
-      city: city.trim(),
+      city: cityValue,
       birth_date: birthDate,
       gender,
       school: displaySchool,
@@ -349,7 +353,7 @@ export default function RegisterPage() {
       phone: phone.trim(),
       birthDate,
       gender,
-      city: city.trim(),
+      city: cityValue,
       role: isMentorPath ? 'mentor' : 'siswa',
       school: displaySchool,
       kelas: isMentorPath ? '' : kelas,
@@ -726,19 +730,6 @@ export default function RegisterPage() {
               <option value="Laki-laki">Laki-laki</option>
               <option value="Perempuan">Perempuan</option>
             </select>
-          </label>
-          <label>
-            Kota
-            <input
-              type="text"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              autoComplete="address-level2"
-              required
-              minLength={2}
-              maxLength={80}
-              placeholder="Kota tempat tinggal"
-            />
           </label>
 
           {isMentorPath ? (
