@@ -154,6 +154,29 @@ export async function fetchMyFinalProjects(userId: string): Promise<FinalProject
   return [...merged.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
+/** Proyek yang dibimbing mentor ini — untuk tampilan review mentor (K14).
+ *  RLS select mengizinkan mentor membaca proyek yang mentor_id-nya dirinya. */
+export async function fetchMentoredFinalProjects(mentorId: string): Promise<FinalProject[]> {
+  const { data, error } = await supabase
+    .from('final_projects')
+    .select('*')
+    .eq('mentor_id', mentorId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as FinalProject[]
+}
+
+/** Proyek yang sudah dikirim untuk dinilai — untuk tampilan review admin (K14). */
+export async function fetchSubmittedFinalProjects(): Promise<FinalProject[]> {
+  const { data, error } = await supabase
+    .from('final_projects')
+    .select('*')
+    .in('status', ['submitted', 'under_review', 'revision', 'approved'])
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as FinalProject[]
+}
+
 /** Proyek yang sudah dipublikasikan (untuk semua anggota). */
 export async function fetchPublishedFinalProjects(): Promise<FinalProject[]> {
   const { data, error } = await supabase

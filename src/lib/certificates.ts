@@ -101,11 +101,15 @@ export async function fetchCourseEligibility(courseId: string): Promise<Eligibil
   let weights: CertWeights = DEFAULT_CERT_WEIGHTS
   let passingGrade = DEFAULT_CERT_PASSING
   let weightsNote = 'fallback (baris RPS SVS-SEM1 tidak ditemukan)'
-  const { data: rpsData } = await supabase
+  // B7 (K13): setiap query di bawah memeriksa error dan melempar — bila
+  // satu query gagal (RLS/jaringan), halaman menampilkan error, bukan
+  // kelayakan yang salah dari dataset kosong.
+  const { data: rpsData, error: rpsErr } = await supabase
     .from('rps')
     .select('weights,passing_grade')
     .eq('code', 'SVS-SEM1')
     .maybeSingle()
+  if (rpsErr) throw rpsErr
   const rpsRow = rpsData as unknown as {
     weights?: { pretest: number; posttest: number; tugas_mingguan: number; tugas_akhir: number; diskusi: number }
     passing_grade?: number
@@ -125,25 +129,32 @@ export async function fetchCourseEligibility(courseId: string): Promise<Eligibil
     weightsNote = `RPS SVS-SEM1 (Pretest ${weights.pretest}% · Posttest ${weights.posttest}% · Tugas mingguan ${weights.tugasMingguan}% · Tugas praktik akhir ${weights.tugasAkhir}% · Diskusi ${weights.diskusi}% · Lulus ${passingGrade})`
   }
 
-  const { data: enrData } = await supabase.from('enrollments').select('*').eq('course_id', courseId)
+  const { data: enrData, error: enrErr } = await supabase.from('enrollments').select('*').eq('course_id', courseId)
+  if (enrErr) throw enrErr
   const enrRows = (enrData ?? []) as Enrollment[]
-  const { data: certData } = await supabase
+  // K12: hanya sertifikat yang masih VALID yang mengecualikan siswa dari
+  // kelayakan — sertifikat yang dicabut boleh diterbitkan ulang.
+  const { data: certData, error: certErr } = await supabase
     .from('certificates')
     .select('user_id')
     .eq('course_id', courseId)
     .eq('type', 'course')
+    .eq('status', 'valid')
+  if (certErr) throw certErr
   const certified = new Set(((certData ?? []) as { user_id: string }[]).map((c) => c.user_id))
   const pending = enrRows.filter((e) => !certified.has(e.user_id))
   if (pending.length === 0) return { rows: [], weights, passingGrade, weightsNote }
 
-  const { data: mods } = await supabase.from('modules').select('id').eq('course_id', courseId)
+  const { data: mods, error: modsErr } = await supabase.from('modules').select('id').eq('course_id', courseId)
+  if (modsErr) throw modsErr
   const modRows = (mods ?? []) as Module[]
   let lessonRows: Lesson[] = []
   if (modRows.length > 0) {
-    const { data: lessons } = await supabase
+    const { data: lessons, error: lessonsErr } = await supabase
       .from('lessons')
       .select('id')
       .in('module_id', modRows.map((m) => m.id))
+    if (lessonsErr) throw lessonsErr
     lessonRows = (lessons ?? []) as Lesson[]
   }
   const lessonIds = lessonRows.map((l) => l.id)
@@ -151,19 +162,22 @@ export async function fetchCourseEligibility(courseId: string): Promise<Eligibil
   const [quizzes, assignments, discussions] = await Promise.all([
     (async () => {
       if (lessonIds.length === 0) return [] as Quiz[]
-      const { data } = await supabase.from('quizzes').select('*').in('lesson_id', lessonIds)
+      const { data, error } = await supabase.from('quizzes').select('*').in('lesson_id', lessonIds)
+      if (error) throw error
       return (data ?? []) as Quiz[]
     })(),
     (async () => {
       if (lessonIds.length === 0) return [] as Assignment[]
-      const { data } = await supabase.from('assignments').select('*').in('lesson_id', lessonIds)
+      const { data, error } = await supabase.from('assignments').select('*').in('lesson_id', lessonIds)
+      if (error) throw error
       return (data ?? []) as Assignment[]
     })(),
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('discussions')
         .select('id,lesson_id,user_id')
         .in('lesson_id', lessonIds.length > 0 ? lessonIds : [empty])
+      if (error) throw error
       return (data ?? []) as Discussion[]
     })(),
   ])
@@ -171,17 +185,19 @@ export async function fetchCourseEligibility(courseId: string): Promise<Eligibil
   const assignmentIds = assignments.map((a) => a.id)
   const [attempts, submissions] = await Promise.all([
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('quiz_attempts')
         .select('id,quiz_id,user_id,score')
         .in('quiz_id', quizIds.length > 0 ? quizIds : [empty])
+      if (error) throw error
       return (data ?? []) as QuizAttempt[]
     })(),
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('submissions')
         .select('id,assignment_id,user_id,score')
         .in('assignment_id', assignmentIds.length > 0 ? assignmentIds : [empty])
+      if (error) throw error
       return (data ?? []) as Submission[]
     })(),
   ])

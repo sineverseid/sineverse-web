@@ -120,6 +120,8 @@ export async function updateProfile(
       | 'address'
       | 'school'
       | 'school_id'
+      | 'province'
+      | 'regency'
       | 'kelas'
       | 'interests'
       | 'photo_url'
@@ -608,17 +610,24 @@ export async function addSubmissionFiles(
   if (error) throw error
 }
 
-/** exam_attempts is a planned migration-003 table; empty when absent. */
+/** exam_attempts is a planned migration-003 table; empty when absent.
+ *  B8 (K13): HANYA error tabel hilang yang menjadi [] — error lain
+ *  (RLS/jaringan) dilempar supaya gradebook/kelayakan tidak menghitung
+ *  siswa seolah tidak pernah ujian. */
 export async function fetchExamAttempts(userId: string): Promise<ExamAttempt[]> {
   try {
     const { data, error } = await supabase
       .from('exam_attempts')
       .select('*')
       .eq('user_id', userId)
-    if (error) return []
+    if (error) {
+      if (isMissingTableError(error)) return []
+      throw error
+    }
     return (data ?? []) as ExamAttempt[]
-  } catch {
-    return []
+  } catch (err) {
+    if (isMissingTableError(err)) return []
+    throw err
   }
 }
 
@@ -795,6 +804,21 @@ export async function fetchNotificationPrefs(userId: string): Promise<Notificati
   if (error) {
     if (isMissingTableError(error)) return null
     throw error
+  }
+  // K9: baris belum ada BUKAN tabel hilang. Pengguna baru memakai default
+  // (semua aktif) dan halaman menampilkan form — sebelumnya null di sini
+  // disalahartikan sebagai "migrasi belum ada" sehingga form tidak pernah
+  // tampil. null sekarang hanya berarti tabelnya memang belum ada.
+  // (lib/reminders.ts sudah memperlakukan "belum ada preferensi" sebagai
+  // default aktif, jadi perilaku pengingat tidak berubah.)
+  if (!data) {
+    return {
+      id: '',
+      user_id: userId,
+      in_app: true,
+      categories: { pengumuman: true, nilai: true, diskusi: true, acara: true, komunitas: true },
+      created_at: '',
+    } as NotificationPrefs
   }
   return data as NotificationPrefs | null
 }
@@ -1035,7 +1059,59 @@ export async function searchSchools(query: string, regencyName?: string): Promis
   return (data ?? []) as School[]
 }
 
+/** Total sekolah di direktori via hitung server (count exact).
+ *  K13: JANGAN hitung dari select('*') — PostgREST membatasi select tanpa
+ *  limit ke 1000 baris, sehingga panjang array memotong total (dulu hero
+ *  admin menampilkan "1000 sekolah" padahal ada 26.662, sementara
+ *  direktori yang memakai count exact menampilkan 26.662). */
+export async function fetchSchoolTotals(): Promise<{ total: number; verified: number; unverified: number }> {
+  const [{ count: total, error: totalErr }, { count: unverified, error: unErr }] = await Promise.all([
+    supabase.from('schools').select('id', { count: 'exact', head: true }),
+    supabase.from('schools').select('id', { count: 'exact', head: true }).eq('is_verified', false),
+  ])
+  if (totalErr) throw totalErr
+  if (unErr) throw unErr
+  const t = total ?? 0
+  const u = unverified ?? 0
+  return { total: t, verified: t - u, unverified: u }
+}
+
 /** Ajukan sekolah manual (siswa; status awal pending, ditinjau admin). */
+/**
+ * Kunci antar-pemanggil (pola yang sama seperti registration.ts): dua
+ * pemanggilan untuk pengguna + nama sekolah yang sama yang berjalan
+ * bersamaan (klik ganda / dua tab) berbagi satu janji, bukan dua insert.
+ * Pengaman antar-tab tetap indeks unik parsial migrasi 035.
+ */
+const schoolSubmissionInFlight = new Map<string, Promise<SchoolSubmission>>()
+
+/** Pengajuan pending milik pengguna dengan nama sekolah yang sama (persis). */
+async function fetchPendingSchoolSubmission(
+  userId: string,
+  name: string,
+): Promise<SchoolSubmission | null> {
+  const clean = name.trim().replace(/[%_\\]/g, (c) => `\\${c}`)
+  const { data, error } = await supabase
+    .from('school_submissions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .ilike('name', clean)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return (data ?? null) as SchoolSubmission | null
+}
+
+/**
+ * Ajukan sekolah baru untuk ditinjau admin. Nama kosong ditolak; bila
+ * pengguna sudah punya pengajuan 'pending' dengan nama yang sama,
+ * kembalikan pengajuan itu tanpa duplikat (cek di sini, bukan hanya di
+ * pemanggil — registration.ts:221 hanya memeriksa di satu jalur).
+ * Bila insert berlomba dengan tab lain, indeks unik migrasi 035 menolak
+ * insert kedua; tangkap dan kembalikan baris yang sudah ada.
+ */
 export async function submitSchoolSubmission(input: {
   userId: string
   name: string
@@ -1043,20 +1119,42 @@ export async function submitSchoolSubmission(input: {
   province: string | null
   regency: string | null
 }): Promise<SchoolSubmission> {
-  const { data, error } = await supabase
-    .from('school_submissions')
-    .insert({
-      user_id: input.userId,
-      name: input.name.trim(),
-      npsn: input.npsn?.trim() || null,
-      province: input.province || null,
-      regency: input.regency || null,
-      status: 'pending',
-    })
-    .select('*')
-    .single()
-  if (error) throw error
-  return data as SchoolSubmission
+  const cleanName = input.name.trim()
+  if (!cleanName) throw new Error('Nama sekolah tidak boleh kosong.')
+  const key = `${input.userId}:${cleanName.toLowerCase()}`
+  const running = schoolSubmissionInFlight.get(key)
+  if (running) return running
+  const job = (async (): Promise<SchoolSubmission> => {
+    const existing = await fetchPendingSchoolSubmission(input.userId, cleanName)
+    if (existing) return existing
+    const { data, error } = await supabase
+      .from('school_submissions')
+      .insert({
+        user_id: input.userId,
+        name: cleanName,
+        npsn: input.npsn?.trim() || null,
+        province: input.province || null,
+        regency: input.regency || null,
+        status: 'pending',
+      })
+      .select('*')
+      .single()
+    if (error) {
+      // Balapan antar-tab: baris pending yang sama sudah masuk duluan.
+      if (String(error.message ?? '').toLowerCase().includes('duplicate')) {
+        const raced = await fetchPendingSchoolSubmission(input.userId, cleanName)
+        if (raced) return raced
+      }
+      throw error
+    }
+    return data as SchoolSubmission
+  })()
+  schoolSubmissionInFlight.set(key, job)
+  try {
+    return await job
+  } finally {
+    schoolSubmissionInFlight.delete(key)
+  }
 }
 
 /** Semua pengajuan sekolah (admin; pending dulu, lalu terbaru). */
@@ -1240,12 +1338,37 @@ export async function fetchMyMentorApplication(
 }
 
 /**
+ * Kunci antar-pemanggil (pola yang sama seperti registration.ts): dua
+ * pemanggilan untuk pengguna yang sama yang berjalan bersamaan (klik
+ * ganda / dua tab / dua jalur penyelesaian pendaftaran) berbagi satu
+ * janji, bukan dua insert. Pengaman antar-tab tetap indeks unik parsial
+ * migrasi 035; insert yang kalah balapan ditangkap dan mengembalikan
+ * lamaran yang sudah ada.
+ */
+const mentorApplicationInFlight = new Map<string, Promise<MentorApplication>>()
+
+/**
  * Kirim lamaran mentor (6 info + afiliasi opsional, migrasi 033). Bila ada
  * lamaran 'revision_required', perbarui lamaran itu dan kembalikan ke
  * 'pending' (ajukan ulang); bila ada lamaran 'pending', kembalikan
  * lamaran itu tanpa duplikat.
  */
 export async function submitMentorApplication(
+  userId: string,
+  input: MentorApplicationInput,
+): Promise<MentorApplication> {
+  const running = mentorApplicationInFlight.get(userId)
+  if (running) return running
+  const job = submitMentorApplicationInner(userId, input)
+  mentorApplicationInFlight.set(userId, job)
+  try {
+    return await job
+  } finally {
+    mentorApplicationInFlight.delete(userId)
+  }
+}
+
+async function submitMentorApplicationInner(
   userId: string,
   input: MentorApplicationInput,
 ): Promise<MentorApplication> {
@@ -1281,6 +1404,14 @@ export async function submitMentorApplication(
     .insert({ user_id: userId, ...row, status: 'pending' })
     .select('*')
     .single()
-  if (error) throw error
+  if (error) {
+    // Balapan antar-tab: lamaran aktif pengguna ini sudah masuk duluan
+    // (indeks unik migrasi 035). Kembalikan lamaran itu, bukan error.
+    if (String(error.message ?? '').toLowerCase().includes('duplicate')) {
+      const raced = await fetchMyMentorApplication(userId)
+      if (raced && (raced.status === 'pending' || raced.status === 'approved')) return raced
+    }
+    throw error
+  }
   return data as MentorApplication
 }
