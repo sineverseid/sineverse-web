@@ -21,6 +21,12 @@ export interface Profile {
   /** Migrasi 010, data pendaftaran artefak (jalur Anggota). */
   school?: string | null
   kelas?: string | null
+  /** Migrasi 027, pendaftaran Siswa & Mentor. */
+  username?: string | null
+  province?: string | null
+  regency?: string | null
+  school_id?: string | null
+  terms_agreed_at?: string | null
   // Migration 005 (Crew Finder), public-safe fields only; never email.
   skills?: string[] | null
   interests?: string[] | null
@@ -439,6 +445,39 @@ export interface School {
   is_verified: boolean
   created_by: string | null
   created_at: string
+  /** Migrasi 027: NPSN + wilayah referensi. */
+  npsn?: string | null
+  province?: string | null
+  regency?: string | null
+}
+
+/** Migrasi 027: pengajuan sekolah manual (nama tidak ada di referensi). */
+export interface SchoolSubmission {
+  id: string
+  user_id: string
+  name: string
+  npsn: string | null
+  province: string | null
+  regency: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  decision_note: string | null
+  decided_by: string | null
+  decided_at: string | null
+  school_id: string | null
+  created_at: string
+}
+
+/** Migrasi 027: referensi wilayah (seed-ref-wilayah.sql). */
+export interface RefProvince {
+  code: string
+  name: string
+}
+
+export interface RefRegency {
+  code: string
+  province_code: string
+  name: string
+  kind: 'kabupaten' | 'kota'
 }
 
 export interface SchoolMember {
@@ -751,12 +790,29 @@ export interface CourseClaim {
 export interface MentorApplication {
   id: string
   user_id: string
-  expertise: string | null
+  /** Migrasi 027: multi-pilih (dulu satu bidang teks bebas). */
+  expertise: string[] | null
   experience: string | null
   portfolio_link: string | null
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'rejected' | 'revision_required'
   decided_by: string | null
   created_at: string
+  /** Migrasi 027: 6 info lamaran mentor (master prompt §2). */
+  profession?: string | null
+  reason?: string | null
+  volunteer_agreed?: boolean | null
+  decision_note?: string | null
+  decided_at?: string | null
+}
+
+/** Nilai formulir mentor (dipakai MentorApplicationForm + submitMentorApplication). */
+export interface MentorApplicationInput {
+  profession: string
+  expertise: string[]
+  experience: string
+  portfolio_link: string | null
+  reason: string
+  volunteer_agreed: boolean
 }
 
 export interface AdminDiscussion {

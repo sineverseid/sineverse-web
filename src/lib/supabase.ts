@@ -19,10 +19,16 @@ import type {
   LessonResource,
   LibraryItem,
   LiveClass,
+  MentorApplication,
+  MentorApplicationInput,
   Module,
   Profile,
   Quiz,
   QuizAttempt,
+  RefProvince,
+  RefRegency,
+  School,
+  SchoolSubmission,
   Submission,
 } from './types'
 
@@ -928,4 +934,325 @@ export async function createLiveClass(input: {
 export async function deleteLiveClass(id: string): Promise<void> {
   const { error } = await supabase.from('live_classes').delete().eq('id', id)
   if (error) throw error
+}
+
+// ---------------------------------------------------------------------------
+// Pendaftaran Siswa & Mentor (migrasi 027)
+// ---------------------------------------------------------------------------
+
+/**
+ * Cek apakah username masih tersedia (live check di formulir daftar).
+ * Pakai RPC security definer karena RLS profiles tidak mengizinkan anon
+ * membaca tabel. Bila migrasi 027 belum diterapkan, anggap tersedia —
+ * indeks unik di database tetap jadi pengaman terakhir.
+ */
+export async function checkUsernameAvailable(username: string): Promise<boolean> {
+  const clean = username.trim()
+  if (!clean) return false
+  const { data, error } = await supabase.rpc('is_username_available', {
+    p_username: clean,
+  })
+  if (error) {
+    if (isMissingTableError(error)) return true
+    throw error
+  }
+  return data === true
+}
+
+/** Daftar provinsi (referensi, di-cache seperti katalog lain). */
+export async function fetchProvinces(): Promise<RefProvince[]> {
+  return cachedRead('catalog:provinces', async () => {
+    const { data, error } = await supabase
+      .from('ref_provinces')
+      .select('code,name')
+      .order('name')
+    if (error) {
+      if (isMissingTableError(error)) return []
+      throw error
+    }
+    return (data ?? []) as RefProvince[]
+  })
+}
+
+/** Daftar kabupaten/kota dalam satu provinsi (referensi, di-cache). */
+export async function fetchRegencies(provinceCode: string): Promise<RefRegency[]> {
+  if (!provinceCode) return []
+  return cachedRead(`catalog:regencies:${provinceCode}`, async () => {
+    const { data, error } = await supabase
+      .from('ref_regencies')
+      .select('code,province_code,name,kind')
+      .eq('province_code', provinceCode)
+      .order('name')
+    if (error) {
+      if (isMissingTableError(error)) return []
+      throw error
+    }
+    return (data ?? []) as RefRegency[]
+  })
+}
+
+/** Peta kode → nama untuk tabel referensi wilayah (untuk tampilan admin). */
+export async function fetchRefNameMap(
+  table: 'ref_provinces' | 'ref_regencies',
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const { data, error } = await supabase.from(table).select('code,name')
+  if (error) return map
+  for (const row of (data ?? []) as { code: string; name: string }[]) {
+    map.set(row.code, row.name)
+  }
+  return map
+}
+
+/** Cari sekolah terverifikasi berdasarkan nama atau NPSN (untuk daftar). */
+export async function searchSchools(query: string): Promise<School[]> {
+  const q = query.trim()
+  if (q.length < 2) return []
+  const like = `%${q.replace(/[%_]/g, '')}%`
+  const { data, error } = await supabase
+    .from('schools')
+    .select('*')
+    .eq('is_verified', true)
+    .or(`name.ilike.${like},npsn.ilike.${like}`)
+    .order('name')
+    .limit(20)
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  return (data ?? []) as School[]
+}
+
+/** Ajukan sekolah manual (siswa; status awal pending, ditinjau admin). */
+export async function submitSchoolSubmission(input: {
+  userId: string
+  name: string
+  npsn: string | null
+  province: string | null
+  regency: string | null
+}): Promise<SchoolSubmission> {
+  const { data, error } = await supabase
+    .from('school_submissions')
+    .insert({
+      user_id: input.userId,
+      name: input.name.trim(),
+      npsn: input.npsn?.trim() || null,
+      province: input.province || null,
+      regency: input.regency || null,
+      status: 'pending',
+    })
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as SchoolSubmission
+}
+
+/** Semua pengajuan sekolah (admin; pending dulu, lalu terbaru). */
+export async function fetchSchoolSubmissions(): Promise<SchoolSubmission[]> {
+  const { data, error } = await supabase
+    .from('school_submissions')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  const rows = (data ?? []) as SchoolSubmission[]
+  const rank = { pending: 0, approved: 1, rejected: 2 } as const
+  return rows.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9))
+}
+
+/**
+ * Putuskan pengajuan sekolah (admin).
+ * Setujui: pakai sekolah yang cocok bila sudah ada (NPSN sama, atau nama
+ * yang sama di provinsi+kabupaten yang sama), kalau tidak ada buat sekolah
+ * baru terverifikasi; tautkan pengajuan + profil pengaju ke sekolah itu.
+ * Tolak: simpan alasan (decision_note) agar terlihat oleh pengaju.
+ * Mengembalikan id sekolah yang ditautkan (atau null bila ditolak).
+ */
+export async function decideSchoolSubmission(
+  submission: SchoolSubmission,
+  decision: 'approved' | 'rejected',
+  note: string,
+  adminId: string,
+): Promise<string | null> {
+  const now = new Date().toISOString()
+  if (decision === 'rejected') {
+    const { error } = await supabase
+      .from('school_submissions')
+      .update({
+        status: 'rejected',
+        decision_note: note.trim() || null,
+        decided_by: adminId,
+        decided_at: now,
+      })
+      .eq('id', submission.id)
+    if (error) throw error
+    return null
+  }
+
+  // Cari sekolah yang cocok dulu — jangan buat duplikat.
+  let schoolId: string | null = null
+  if (submission.npsn) {
+    const { data } = await supabase
+      .from('schools')
+      .select('id')
+      .eq('npsn', submission.npsn)
+      .maybeSingle()
+    schoolId = (data as { id: string } | null)?.id ?? null
+  }
+  if (!schoolId) {
+    const { data } = await supabase
+      .from('schools')
+      .select('id')
+      .ilike('name', submission.name.trim())
+      .eq('province', submission.province)
+      .eq('regency', submission.regency)
+      .maybeSingle()
+    schoolId = (data as { id: string } | null)?.id ?? null
+  }
+  if (!schoolId) {
+    // Nama kabupaten/kota untuk kolom city (teks bebas lama di schools).
+    let city: string | null = null
+    if (submission.regency) {
+      const { data } = await supabase
+        .from('ref_regencies')
+        .select('name')
+        .eq('code', submission.regency)
+        .maybeSingle()
+      city = (data as { name: string } | null)?.name ?? null
+    }
+    const { data, error } = await supabase
+      .from('schools')
+      .insert({
+        name: submission.name.trim(),
+        npsn: submission.npsn || null,
+        province: submission.province,
+        regency: submission.regency,
+        city,
+        is_verified: true,
+        created_by: adminId,
+      })
+      .select('id')
+      .single()
+    if (error) throw error
+    schoolId = (data as { id: string }).id
+    invalidateCatalogCache()
+  }
+  const { error: subErr } = await supabase
+    .from('school_submissions')
+    .update({
+      status: 'approved',
+      school_id: schoolId,
+      decision_note: note.trim() || null,
+      decided_by: adminId,
+      decided_at: now,
+    })
+    .eq('id', submission.id)
+  if (subErr) throw subErr
+  const { error: profErr } = await supabase
+    .from('profiles')
+    .update({ school_id: schoolId })
+    .eq('id', submission.user_id)
+  if (profErr) throw profErr
+  return schoolId
+}
+
+/** Semua lamaran mentor (admin; semua status, terbaru dulu). */
+export async function fetchMentorApplications(): Promise<MentorApplication[]> {
+  const { data, error } = await supabase
+    .from('mentor_applications')
+    .select('*')
+    .order('created_at', { ascending: false })
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  return (data ?? []) as MentorApplication[]
+}
+
+/**
+ * Putuskan lamaran mentor (admin): Setujui / Tolak / Minta Revisi.
+ * Alasan/catatan wajib diisi pemanggil untuk tolak/revisi. Persetujuan
+ * mengaktifkan peran mentor lewat trigger database (008) — client tidak
+ * pernah mengubah profiles.role sendiri.
+ */
+export async function decideMentorApplication(
+  app: MentorApplication,
+  decision: 'approved' | 'rejected' | 'revision_required',
+  note: string,
+  adminId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('mentor_applications')
+    .update({
+      status: decision,
+      decision_note: note.trim() || null,
+      decided_by: adminId,
+      decided_at: new Date().toISOString(),
+    })
+    .eq('id', app.id)
+  if (error) throw error
+}
+
+/** Lamaran mentor terbaru milik pengguna (untuk status + ajukan ulang). */
+export async function fetchMyMentorApplication(
+  userId: string,
+): Promise<MentorApplication | null> {
+  const { data, error } = await supabase
+    .from('mentor_applications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    if (isMissingTableError(error)) return null
+    throw error
+  }
+  return (data ?? null) as MentorApplication | null
+}
+
+/**
+ * Kirim lamaran mentor (6 info). Bila ada lamaran 'revision_required',
+ * perbarui lamaran itu dan kembalikan ke 'pending' (ajukan ulang);
+ * bila ada lamaran 'pending', kembalikan lamaran itu tanpa duplikat.
+ */
+export async function submitMentorApplication(
+  userId: string,
+  input: MentorApplicationInput,
+): Promise<MentorApplication> {
+  const existing = await fetchMyMentorApplication(userId)
+  const row = {
+    profession: input.profession.trim(),
+    expertise: input.expertise,
+    experience: input.experience.trim(),
+    portfolio_link: input.portfolio_link?.trim() || null,
+    reason: input.reason.trim(),
+    volunteer_agreed: input.volunteer_agreed,
+  }
+  if (existing && (existing.status === 'pending' || existing.status === 'approved')) return existing
+  if (existing && existing.status === 'revision_required') {
+    const { data, error } = await supabase
+      .from('mentor_applications')
+      .update({
+        ...row,
+        status: 'pending',
+        decision_note: null,
+        decided_by: null,
+        decided_at: null,
+      })
+      .eq('id', existing.id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return data as MentorApplication
+  }
+  const { data, error } = await supabase
+    .from('mentor_applications')
+    .insert({ user_id: userId, ...row, status: 'pending' })
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as MentorApplication
 }
