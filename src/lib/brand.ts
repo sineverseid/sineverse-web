@@ -55,6 +55,28 @@ export function rpsWeekLabel(courseId: string): string | null {
   return `Minggu ${idx * 2 + 1}–${idx * 2 + 2}`
 }
 
+// Ilustrasi course menurut urutan RPS (index+1 = nomor file di
+// public/illustrations). Dipakai Detail Course dan kartu rekomendasi;
+// course di luar urutan seed tidak punya ilustrasi (null) sehingga
+// pemanggil memakai ikon default.
+export const COURSE_ILLUSTRATIONS = [
+  './illustrations/course-01-dasar-sinematografi.jpg',
+  './illustrations/course-02-penulisan-skenario.jpg',
+  './illustrations/course-03-storyboard.jpg',
+  './illustrations/course-04-penyutradaraan.jpg',
+  './illustrations/course-05-editing-film.jpg',
+  './illustrations/course-06-tata-suara.jpg',
+  './illustrations/course-07-film-dokumenter.jpg',
+  './illustrations/course-08-jobdesk-crew.jpg',
+  './illustrations/course-09-produksi-manajemen.jpg',
+  './illustrations/course-10-akting-kamera.jpg',
+] as const
+
+export function courseIllustration(courseId: string): string | null {
+  const idx = (RPS_COURSE_ORDER as readonly string[]).indexOf(courseId)
+  return idx === -1 ? null : COURSE_ILLUSTRATIONS[idx]
+}
+
 // Warna sampul film di artefak (satu hue per film). Web publik menurunkan hue
 // secara deterministik dari id film, karena tabel films Supabase tidak
 // menyimpan kolom hue — sampul tetap berwarna dan konsisten per film.
