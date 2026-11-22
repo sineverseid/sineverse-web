@@ -30,6 +30,7 @@ function toInput(app: MentorApplication): Partial<MentorApplicationInput> {
     expertise: app.expertise ?? [],
     experience: app.experience ?? '',
     portfolio_link: app.portfolio_link,
+    affiliation: app.affiliation ?? '',
     reason: app.reason ?? '',
     volunteer_agreed: app.volunteer_agreed ?? false,
   }

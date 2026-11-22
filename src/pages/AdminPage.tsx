@@ -688,6 +688,7 @@ export default function AdminPage() {
                 </div>
                 <div className="post-body">
                   <p>Pengalaman: {a.experience ?? '—'}</p>
+                  {a.affiliation && <p>Sekolah/institusi afiliasi: {a.affiliation}</p>}
                   {a.portfolio_link && <p><a href={a.portfolio_link} target="_blank" rel="noreferrer">Portofolio</a></p>}
                   <p>Alasan: {a.reason ?? '—'}</p>
                   <p>Sukarela: {a.volunteer_agreed ? 'Ya, menyetujui pernyataan sukarela' : 'Belum menyetujui'}</p>

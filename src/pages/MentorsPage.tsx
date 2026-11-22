@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, supabase } from '../lib/supabase'
 import type { Course, OfficeHour, Profile } from '../lib/types'
+import Icon from '../components/icons'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
@@ -25,6 +26,14 @@ export default function MentorsPage() {
   const [verifiedOnly, setVerifiedOnly] = useState(true)
   const [hoursError, setHoursError] = useState(false)
   const [brokenPhotos, setBrokenPhotos] = useState<Set<string>>(new Set())
+  // Nama sekolah referensi (id → nama) untuk mentor yang school_id-nya
+  // terisi — dimuat sekali dengan satu query .in().
+  const [schoolNames, setSchoolNames] = useState<Map<string, string>>(new Map())
+
+  // Afiliasi yang ditampilkan di kartu: nama sekolah referensi bila
+  // school_id terisi (dan ketemu), kalau tidak teks bebas profiles.school.
+  const affiliationOf = (p: Profile) =>
+    (p.school_id ? schoolNames.get(p.school_id) : undefined) ?? p.school ?? null
 
   useEffect(() => {
     let cancelled = false
@@ -37,7 +46,7 @@ export default function MentorsPage() {
         const [profRes, appsRes, courses, hoursRes] = await Promise.all([
           supabase
             .from('profiles')
-            .select('id,email,name,role,photo_url,phone,city,bio,skills,interests,created_at')
+            .select('id,email,name,role,photo_url,phone,city,bio,skills,interests,school,school_id,created_at')
             .eq('role', 'mentor')
             .order('name'),
           supabase
@@ -77,6 +86,22 @@ export default function MentorsPage() {
         }
         const hourRows = (hoursRes.data ?? []) as OfficeHour[]
         const now = new Date()
+        // Nama sekolah referensi untuk mentor yang school_id-nya terisi
+        // (satu query .in(), pola yang sama dipakai GrowthPage).
+        const schoolIds = [
+          ...new Set(visible.map((m) => m.school_id).filter((id): id is string => !!id)),
+        ]
+        if (schoolIds.length > 0) {
+          const { data: schoolRows } = await supabase
+            .from('schools')
+            .select('id,name')
+            .in('id', schoolIds)
+          if (!cancelled && schoolRows) {
+            setSchoolNames(
+              new Map((schoolRows as { id: string; name: string }[]).map((s) => [s.id, s.name])),
+            )
+          }
+        }
         const out: MentorRow[] = visible.map((m) => ({
           profile: m,
           courses: courses.filter((c: Course) => c.mentor_id === m.id).map((c: Course) => c.title),
@@ -167,6 +192,12 @@ export default function MentorsPage() {
                 )}
                 <div>
                   <h3 style={{ margin: 0 }}>{r.profile.name ?? 'Mentor'}</h3>
+                  {affiliationOf(r.profile) && (
+                    <p className="muted" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <Icon name="school" size={14} />
+                      {affiliationOf(r.profile)}
+                    </p>
+                  )}
                   {r.profile.city && <p className="muted" style={{ margin: 0 }}>{r.profile.city}</p>}
                 </div>
               </div>
