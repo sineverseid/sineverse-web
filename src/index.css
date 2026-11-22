@@ -737,6 +737,18 @@ p {
   background: #22354f;
 }
 
+/* Tombol aksi merusak (hapus): merah tegas, dipakai bersama konfirmasi
+   dua langkah di dalam halaman — bukan window.confirm. */
+.btn-danger {
+  background: #b3261e;
+  color: #fff;
+}
+
+.btn-danger:hover {
+  text-decoration: none;
+  background: #8f1d17;
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--navy);
@@ -1053,6 +1065,30 @@ p {
 }
 
 .list-row .chip {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+/* Isi baris daftar admin (mis. Verifikasi Sekolah): nama + pil status di
+   kiri, tombol aksi selalu di ujung kanan dan tidak pernah terselip di
+   tengah teks. */
+.list-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row-title {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.list-row-main .pill-active,
+.list-row-main .pill-waiting {
+  margin-top: 0.35rem;
+}
+
+.list-row-action {
   flex-shrink: 0;
   margin-top: 0.15rem;
 }
