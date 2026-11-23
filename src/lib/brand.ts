@@ -11,10 +11,10 @@ export const BRAND = {
   name: 'SINEVERSE',
   tagline: 'Your World of Filmmaking',
   slogan: 'Learn. Create. Collaborate.',
-  // Versi web publik — mengikuti rilis artefak yang dicerminkan (v1.3,
-  // real-logo PWA, 21 Nov 2026). Satu rilis, dua penyaluran (artefak + web).
-  version: 'v1.3',
-  versionUpdated: '23 Nov 2026',
+  // Versi web publik — mengikuti rilis artefak yang dicerminkan (v1.4,
+  // lupa kata sandi, 24 Nov 2026). Satu rilis, dua penyaluran (artefak + web).
+  version: 'v1.4',
+  versionUpdated: '24 Nov 2026',
   description:
     'Platform pendidikan filmmaking nasional untuk pelajar SMA/SMK di seluruh Indonesia.',
   gradebook: {
