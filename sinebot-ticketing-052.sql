@@ -592,10 +592,12 @@ begin
     raise exception 'offset must not be negative';
   end if;
 
-  -- Escape karakter LIKE (backslash dulu, lalu % dan _) supaya search
-  -- diperlakukan sebagai teks literal.
+  -- Pencarian literal case-insensitive via position(): tanpa LIKE,
+  -- jadi tidak ada karakter wildcard yang perlu di-escape dan tidak
+  -- ada backslash di fungsi ini (paste SQL Editor pernah menggandakan
+  -- backslash sehingga escape LIKE gagal dengan 22025).
   if p_search is not null and btrim(p_search) <> '' then
-    v_search := replace(replace(replace(btrim(p_search), '\', '\\'), '%', '\%'), '_', '\_');
+    v_search := lower(btrim(p_search));
   end if;
 
   perform public.log_audit(
@@ -609,14 +611,14 @@ begin
     select * from public.support_tickets
     where (p_status is null or status = p_status)
       and (v_search is null
-           or subject ilike '%' || v_search || '%' escape '\'
-           or description ilike '%' || v_search || '%' escape '\')
+           or position(v_search in lower(subject)) > 0
+           or position(v_search in lower(description)) > 0)
     order by created_at desc
     limit p_limit
     offset p_offset;
 end;
 $$;
-comment on function public.admin_list_tickets(text, text, int, int) is 'Admin-only support ticket list with optional status filter and ILIKE search over subject/description (%, _ escaped). Every call is written to audit_log (sinebot_ticket_viewed, scope list) before data is returned.';
+comment on function public.admin_list_tickets(text, text, int, int) is 'Admin-only support ticket list with optional status filter and case-insensitive literal substring search over subject/description (position, no LIKE wildcards). Every call is written to audit_log (sinebot_ticket_viewed, scope list) before data is returned.';
 revoke execute on function public.admin_list_tickets(text, text, int, int) from public, anon;
 grant execute on function public.admin_list_tickets(text, text, int, int) to authenticated;
 
