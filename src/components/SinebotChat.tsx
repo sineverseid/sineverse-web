@@ -101,6 +101,10 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
     getMessages(activeId)
       .then((rows) => {
         if (cancelled) return
+        // Pemuatan berhasil: bersihkan error panel yang mungkin tertinggal
+        // dari kegagalan sementara sebelumnya (mis. feedback gagal) supaya
+        // spanduk merah tidak menempel padahal semuanya sudah normal.
+        setError(null)
         setMessages(
           rows
             .filter((m) => m.sender_type === 'user' || m.sender_type === 'ai')
@@ -156,6 +160,15 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
   }
 
   function openConversation(id: string): void {
+    // Klik entri riwayat yang SUDAH aktif tidak boleh menghapus transkrip:
+    // setActiveId(id-yang-sama) tidak mengubah state, jadi effect pemuat
+    // pesan tidak jalan lagi — sementara setMessages([]) sudah menghapus
+    // yang tampil. Sebelum perbaikan ini, klik riwayat aktif selalu
+    // menampilkan panel kosong (temuan verifikasi live Tahap 2 ronde 2).
+    if (id === activeId) {
+      setView('chat')
+      return
+    }
     setActiveId(id)
     setMessages([])
     setError(null)
