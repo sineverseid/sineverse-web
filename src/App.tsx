@@ -66,6 +66,7 @@ const MentorVideosPage = lazy(() => import('./pages/MentorVideosPage'))
 const MentorAnalyticsPage = lazy(() => import('./pages/MentorAnalyticsPage'))
 const MentorCourseBuilderPage = lazy(() => import('./pages/MentorCourseBuilderPage'))
 const MentorDiscussionsPage = lazy(() => import('./pages/MentorDiscussionsPage'))
+  const MentorGroupPage = lazy(() => import('./pages/MentorGroupPage'))
 const MentorStudentsPage = lazy(() => import('./pages/MentorStudentsPage'))
 const MentorsPage = lazy(() => import('./pages/MentorsPage'))
 const ModerationPage = lazy(() => import('./pages/ModerationPage'))
@@ -154,6 +155,17 @@ export default function App() {
             <Route path="komunitas/perkenalan" element={<IntroCommunityPage />} />
             <Route path="komunitas" element={<Protected><CommunitiesPage /></Protected>} />
             <Route path="komunitas/:id" element={<Protected><CommunityDetailPage /></Protected>} />
+            {/* Mentor Community (Fase 1, migrasi 060/061) — grup resmi admin +
+            mentor; RoleRoute menampilkan "Akses terbatas" di tempat
+            untuk peran lain (siswa/mentor pending). */}
+            <Route
+              path="komunitas-mentor"
+              element={
+              <RoleRoute roles={['mentor', 'admin']}>
+                <MentorGroupPage />
+              </RoleRoute>
+              }
+              />
             <Route path="sekolah" element={<Protected><SchoolsPage /></Protected>} />
             {/* Projects / Crew Finder (Fase C) */}
             <Route path="proyek/perkenalan" element={<IntroProjectsPage />} />
