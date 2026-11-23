@@ -26,14 +26,52 @@ import {
 } from '../lib/sinebot'
 import type { SinebotConversation, SinebotRole, SinebotSource } from '../lib/sinebot'
 
-const QUICK_PROMPTS = [
-  'Cara ikut kelas',
-  'Cara mengumpulkan tugas',
-  'Sertifikat',
-  'Kendala login',
-  'Hubungi admin',
-  'Cek status enrollment saya',
-] as const
+/**
+ * Pertanyaan cepat (chip) di panel SINEBOT — BERBEDA per peran akun
+ * (perintah Arif, 23 Nov 2026: tamu/siswa/mentor/admin masing-masing
+ * melihat prompt yang relevan dengan akunnya, bukan satu set yang sama).
+ * Setiap prompt harus bisa dijawab SINEBOT dari KB/status untuk peran itu:
+ * - guest: artikel 1, 2, 3, 14 + FAQ gratis; 'Hubungi admin' membuka form tiket.
+ * - siswa: set lama (sudah sesuai siswa); TANPA artikel mentor (audience
+ *   artikel 14 diubah menjadi guest+mentor, jadi prompt mentor tidak ada).
+ * - mentor: artikel 3, 9, 12 + status pengajuan mentor + FAQ/kendala login.
+ * - admin: HANYA artikel 15 (Panduan Dasar untuk Admin) + status layanan;
+ *   tanpa 'Hubungi admin' (admin adalah yang dihubungi) dan tanpa
+ *   'Kendala login' (artikel 2 tidak beraudience admin).
+ * Role diambil dari sesi resmi (profile?.role); tamu (belum login) = 'guest'.
+ */
+const QUICK_PROMPTS_BY_ROLE: Record<SinebotRole, readonly string[]> = {
+  guest: [
+    'Cara mendaftar akun',
+    'Apakah SINEVERSE gratis?',
+    'Cara ikut kelas',
+    'Cara mengajukan diri sebagai mentor',
+    'Kendala login',
+    'Hubungi admin',
+  ],
+  siswa: [
+    'Cara ikut kelas',
+    'Cara mengumpulkan tugas',
+    'Sertifikat',
+    'Kendala login',
+    'Hubungi admin',
+    'Cek status enrollment saya',
+  ],
+  mentor: [
+    'Cara mengikuti course',
+    'Status pengajuan mentor saya bagaimana?',
+    'Sertifikat',
+    'Cara bergabung komunitas',
+    'Kendala login',
+    'Hubungi admin',
+  ],
+  admin: [
+    'Panduan dasar untuk admin',
+    'Cara menyetujui lamaran mentor',
+    'Cara menerbitkan sertifikat',
+    'Status layanan SINEVERSE',
+  ],
+} as const
 
 const WELCOME_TEXT =
   'Halo! Aku SINEBOT, asisten filmmaking SINEVERSE. Tanya apa saja seputar kelas, tugas, sertifikat, atau kendala saat memakai platform ini.'
@@ -141,6 +179,9 @@ export function renderSinebotMarkdown(text: string): string {
 export default function SinebotChat({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, profile } = useAuth()
   const navigate = useNavigate()
+  // Chip pertanyaan cepat mengikuti peran akun (tamu = belum login).
+  const roleForPrompts = (profile?.role as SinebotRole | undefined) ?? 'guest'
+  const quickPrompts = QUICK_PROMPTS_BY_ROLE[roleForPrompts] ?? QUICK_PROMPTS_BY_ROLE.guest
   const [view, setView] = useState<'chat' | 'history'>('chat')
   const [conversations, setConversations] = useState<SinebotConversation[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -521,7 +562,7 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                   <div className="sinebot-msg sinebot-msg-ai">
                     <div className="sinebot-bubble">{WELCOME_TEXT}</div>
                     <div className="sinebot-quick" aria-label="Pertanyaan cepat">
-                      {QUICK_PROMPTS.map((q) => (
+                      {quickPrompts.map((q) => (
                         <button
                           key={q}
                           type="button"
