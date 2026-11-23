@@ -29,6 +29,7 @@ const QUICK_PROMPTS = [
   'Sertifikat',
   'Kendala login',
   'Hubungi admin',
+  'Cek status enrollment saya',
 ] as const
 
 const WELCOME_TEXT =
