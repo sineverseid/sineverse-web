@@ -106,6 +106,9 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
   return data as Profile | null
 }
 
+/** Jenis kelamin yang diizinkan di profil (P21) — sama dengan pilihan di formulir daftar/edit profil. */
+const ALLOWED_GENDERS = ['Laki-laki', 'Perempuan']
+
 export async function updateProfile(
   userId: string,
   patch: Partial<
@@ -128,6 +131,50 @@ export async function updateProfile(
     >
   >,
 ): Promise<Profile> {
+  // P21 (audit 23 Nov 2026): validasi nilai sebelum tulis — school_id
+  // sembarang, birth_date sembarang string, dan gender bebas tidak lagi
+  // lolos ke tabel profiles.
+  if (patch.birth_date !== undefined && patch.birth_date !== null && patch.birth_date !== '') {
+    const raw = patch.birth_date.trim()
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    // Validasi tanggal kalender sungguhan (komponen lokal — JANGAN lewat
+    // toISOString, yang menggeser tanggal di zona UTC+7).
+    const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+    const parsed = parts
+      ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))
+      : null
+    if (
+      !parts ||
+      !parsed ||
+      parsed.getFullYear() !== Number(parts[1]) ||
+      parsed.getMonth() !== Number(parts[2]) - 1 ||
+      parsed.getDate() !== Number(parts[3])
+    ) {
+      throw new Error('Tanggal lahir tidak valid. Gunakan tanggal yang benar (YYYY-MM-DD).')
+    }
+    if (raw > todayStr) {
+      throw new Error('Tanggal lahir tidak boleh di masa depan.')
+    }
+  }
+  if (patch.gender !== undefined && patch.gender !== null && patch.gender !== '') {
+    if (!ALLOWED_GENDERS.includes(patch.gender)) {
+      throw new Error('Jenis kelamin tidak valid. Pilih "Laki-laki" atau "Perempuan".')
+    }
+  }
+  if (patch.school_id !== undefined && patch.school_id !== null && patch.school_id !== '') {
+    const { data: schoolRow, error: schoolErr } = await supabase
+      .from('schools')
+      .select('id')
+      .eq('id', patch.school_id)
+      .maybeSingle()
+    if (schoolErr) {
+      throw new Error('Tidak dapat memeriksa sekolah yang dipilih. Periksa koneksi lalu coba lagi.')
+    }
+    if (!schoolRow) {
+      throw new Error('Sekolah yang dipilih tidak ditemukan. Pilih lagi dari daftar sekolah.')
+    }
+  }
   const { data, error } = await supabase
     .from('profiles')
     .update(patch)
@@ -278,6 +325,8 @@ export async function updateCourseAccessMode(
   courseId: string,
   mode: 'direct' | 'sequential',
 ): Promise<Course> {
+  // P5: hanya mentor course / admin (RLS courses_update_mentor + admin).
+  await assertCourseTeacherOrAdmin(courseId, 'mengubah mode akses course')
   const { data, error } = await supabase
     .from('courses')
     .update({ access_mode: mode })
@@ -378,6 +427,79 @@ async function assertNotAdmin(userId: string): Promise<void> {
   }
 }
 
+/** Id pengguna yang sedang masuk, atau null bila belum masuk. */
+async function currentUserId(): Promise<string | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  return user?.id ?? null
+}
+
+/** Peran profil satu pengguna; null bila tidak dapat dibaca (fail-open). */
+async function userRole(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle()
+  if (error) return null
+  return (data as { role?: string } | null)?.role ?? null
+}
+
+/**
+ * P5 (audit 23 Nov 2026): defense-in-depth — hanya mentor course itu atau
+ * admin yang boleh melakukan aksi tulis milik course (mode akses, kelas
+ * live, rubrik). Penegakan sebenarnya ada di RLS/RPC; helper ini hanya
+ * gagal cepat dengan pesan yang jelas. Fail-open seperti assertNotAdmin:
+ * bila course/peran tidak dapat dibaca, biarkan lanjut — RLS yang
+ * memutuskan, bukan helper ini.
+ */
+async function assertCourseTeacherOrAdmin(courseId: string, action: string): Promise<void> {
+  const userId = await currentUserId()
+  if (!userId) {
+    throw new Error(`Kamu harus masuk untuk ${action}.`)
+  }
+  let course: Course | null
+  try {
+    course = await fetchCourse(courseId)
+  } catch {
+    return
+  }
+  if (!course) return
+  if (course.mentor_id !== null && course.mentor_id === userId) return
+  const role = await userRole(userId)
+  if (role === null) return
+  if (role === 'admin') return
+  throw new Error(`Hanya mentor course ini atau admin yang dapat ${action}.`)
+}
+
+/** Course pemilik sebuah tugas (tugas → lesson → modul → course); null bila rantai tidak terbaca. */
+async function courseIdForAssignment(assignmentId: string): Promise<string | null> {
+  try {
+    const { data: asg, error: aErr } = await supabase
+      .from('assignments')
+      .select('lesson_id')
+      .eq('id', assignmentId)
+      .maybeSingle()
+    if (aErr || !asg) return null
+    const { data: les, error: lErr } = await supabase
+      .from('lessons')
+      .select('module_id')
+      .eq('id', (asg as { lesson_id: string }).lesson_id)
+      .maybeSingle()
+    if (lErr || !les) return null
+    const { data: mod, error: mErr } = await supabase
+      .from('modules')
+      .select('course_id')
+      .eq('id', (les as { module_id: string }).module_id)
+      .maybeSingle()
+    if (mErr || !mod) return null
+    return (mod as { course_id: string }).course_id
+  } catch {
+    return null
+  }
+}
+
 export async function enrollInCourse(userId: string, courseId: string): Promise<void> {
   // Defense in depth (migrasi 022): admin tidak boleh mengambil course.
   // Penegakan sebenarnya ada di RLS; ini hanya gagal cepat dengan pesan jelas.
@@ -386,6 +508,19 @@ export async function enrollInCourse(userId: string, courseId: string): Promise<
   // bukan error unique-violation mentah ke UI.
   const existing = await fetchEnrollment(userId, courseId)
   if (existing) return
+  // P22 (audit 23 Nov 2026): course tanpa mentor tidak bisa diambil
+  // langsung — jalurnya daftar tunggu (joinWaitlist). UI CourseDetailPage
+  // sudah menyembunyikan tombol "Ambil Course" untuk course tanpa mentor;
+  // ini penegakan di lib bila ada yang memanggil langsung.
+  const course = await fetchCourse(courseId)
+  if (!course) {
+    throw new Error('Course tidak ditemukan.')
+  }
+  if (course.mentor_id === null) {
+    throw new Error(
+      'Course ini belum memiliki mentor. Ikuti daftar tunggu — kamu akan diberi tahu saat mentor ditugaskan.',
+    )
+  }
   const { error } = await supabase
     .from('enrollments')
     .upsert({ user_id: userId, course_id: courseId }, { onConflict: 'user_id,course_id' })
@@ -471,7 +606,10 @@ export async function markLessonCompleted(userId: string, lessonId: string): Pro
 
 // ---------------------------------------------------------------------------
 // Waitlist (courses without a mentor) — table planned in migration 003.
-// Fails gracefully (returns false) when the table does not exist yet.
+// P3: kegagalan query dilempar (bukan false) supaya UI tidak menampilkan
+// "belum bergabung" padahal hanya query yang gagal; pemanggil menangani
+// throw (CourseDetailPage membungkus dengan try/catch, joinWaitlist
+// menangkap pra-cek dan mengandalkan hasil insert).
 // ---------------------------------------------------------------------------
 
 /**
@@ -481,14 +619,27 @@ export async function markLessonCompleted(userId: string, lessonId: string): Pro
  * (CourseDetailPage) tidak berubah.
  */
 export async function joinWaitlist(userId: string, courseId: string): Promise<boolean> {
-  if (await fetchWaitlistEntry(userId, courseId)) return true
+  // P3: fetchWaitlistEntry kini melempar bila query gagal. Kegagalan baca
+  // pra-cek di sini bukan alasan menggagalkan gabung — lanjut ke insert
+  // dan biarkan hasilnya yang menentukan (duplikat = sudah bergabung).
+  let already = false
+  try {
+    already = await fetchWaitlistEntry(userId, courseId)
+  } catch {
+    already = false
+  }
+  if (already) return true
   const { error } = await supabase
     .from('waitlist')
     .insert({ user_id: userId, course_id: courseId })
   if (error) {
     // Balapan dengan tab lain: baris sudah masuk duluan.
     if (String(error.message ?? '').toLowerCase().includes('duplicate')) {
-      if (await fetchWaitlistEntry(userId, courseId)) return true
+      try {
+        if (await fetchWaitlistEntry(userId, courseId)) return true
+      } catch {
+        // Keanggotaan tidak dapat dikonfirmasi — laporkan gagal secara jujur.
+      }
     }
     return false
   }
@@ -505,7 +656,10 @@ export async function fetchWaitlistEntry(
     .eq('user_id', userId)
     .eq('course_id', courseId)
     .maybeSingle()
-  if (error) return false
+  // P3 (audit 23 Nov 2026): error query dilempar, bukan false — false
+  // hanya berarti "tidak ada baris". Pemanggil (CourseDetailPage) sudah
+  // membungkus pemanggilan ini dengan try/catch.
+  if (error) throw error
   return data !== null
 }
 
@@ -598,6 +752,10 @@ export async function saveRubric(
   title: string,
   criteria: RubricCriterionInput[],
 ): Promise<RubricWithCriteria> {
+  // P5: hanya mentor course / admin. RPC save_rubric (migrasi 039) juga
+  // menegakkan ini server-side; ini gagal cepat di lib.
+  const courseId = await courseIdForAssignment(assignmentId)
+  if (courseId) await assertCourseTeacherOrAdmin(courseId, 'menyimpan rubrik')
   const rows = criteria
     .filter((c) => c.title.trim())
     .map((c, i) => ({
@@ -735,13 +893,16 @@ export async function fetchDiscussions(lessonId: string): Promise<Discussion[]> 
     .order('created_at', { ascending: true })
   if (error) throw error
   const rows = (data ?? []) as Discussion[]
-  // Attach author names (best effort; RLS may hide other users' profiles).
+  // Attach author names. P19 (pola yang sama seperti fetchProfileNames):
+  // bila query profil gagal, lempar — bukan author null diam-diam.
+  // Pemanggil (LessonDetailPage) sudah try/catch dan menampilkan error.
   const userIds = [...new Set(rows.map((r) => r.user_id))]
   if (userIds.length > 0) {
-    const { data: profiles } = await supabase
+    const { data: profiles, error: profErr } = await supabase
       .from('profiles')
       .select('id,name,photo_url')
       .in('id', userIds)
+    if (profErr) throw profErr
     const byId = new Map(
       ((profiles ?? []) as { id: string; name: string | null; photo_url: string | null }[]).map(
         (p) => [p.id, p],
@@ -755,15 +916,27 @@ export async function fetchDiscussions(lessonId: string): Promise<Discussion[]> 
   return rows
 }
 
+/** Panjang maksimum isi diskusi (P4) — body di kolom discussions.body bertipe text tanpa batas DB. */
+const DISCUSSION_BODY_MAX_LENGTH = 5000
+
 export async function postDiscussion(
   lessonId: string,
   userId: string,
   body: string,
   parentId: string | null,
 ): Promise<Discussion> {
+  // P4 (audit 23 Nov 2026): tolak body kosong/setelah trim dan batasi
+  // panjang — diskusi kosong tidak lagi tersimpan sebagai baris.
+  const clean = body.trim()
+  if (!clean) {
+    throw new Error('Isi diskusi tidak boleh kosong.')
+  }
+  if (clean.length > DISCUSSION_BODY_MAX_LENGTH) {
+    throw new Error(`Isi diskusi terlalu panjang (maksimal ${DISCUSSION_BODY_MAX_LENGTH} karakter).`)
+  }
   const { data, error } = await supabase
     .from('discussions')
-    .insert({ lesson_id: lessonId, user_id: userId, body, parent_id: parentId })
+    .insert({ lesson_id: lessonId, user_id: userId, body: clean, parent_id: parentId })
     .select()
     .single()
   if (error) throw error
@@ -874,6 +1047,19 @@ export async function fetchUnreadCount(userId: string): Promise<number | null> {
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
+  // P5: hanya pemilik notifikasi (RLS notifications_update_own). Bila
+  // baris tidak terbaca, biarkan lanjut — RLS yang memutuskan.
+  const userId = await currentUserId()
+  if (userId) {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('user_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (!error && data && (data as { user_id: string }).user_id !== userId) {
+      throw new Error('Notifikasi ini bukan milikmu.')
+    }
+  }
   const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id)
   if (error) throw error
 }
@@ -957,7 +1143,11 @@ export async function fetchProfileNames(userIds: string[]): Promise<Map<string, 
   const map = new Map<string, string>()
   const unique = [...new Set(userIds.filter(Boolean))]
   if (unique.length === 0) return map
-  const { data } = await supabase.from('profiles').select('id,name').in('id', unique)
+  const { data, error } = await supabase.from('profiles').select('id,name').in('id', unique)
+  // P19 (audit 23 Nov 2026): error query dilempar, bukan map parsial —
+  // nama yang gagal dimuat tidak lagi tampil sebagai "Anggota" berulang.
+  // Pemanggil sudah menangani throw (try/catch atau .catch → Map kosong).
+  if (error) throw error
   for (const row of (data ?? []) as { id: string; name: string | null }[]) {
     map.set(row.id, row.name ?? 'Anggota')
   }
@@ -990,14 +1180,22 @@ export async function logAudit(
   detail?: Record<string, unknown> | null,
 ): Promise<void> {
   try {
-    await supabase.rpc('log_audit', {
+    const { error } = await supabase.rpc('log_audit', {
       p_action: action,
       p_target_type: targetType,
       p_target_id: targetId,
       p_detail: detail ?? null,
     })
-  } catch {
-    // Audit is best-effort: never block the admin action itself.
+    // P17 (audit 23 Nov 2026): kegagalan audit tidak lagi hilang diam-diam
+    // — catat ke console.warn (tetap best-effort: tidak memblokir aksi admin).
+    if (error) {
+      console.warn('log_audit gagal:', error.message)
+    }
+  } catch (err) {
+    console.warn(
+      'log_audit gagal:',
+      err instanceof Error ? err.message : err,
+    )
   }
 }
 
@@ -1087,6 +1285,15 @@ export async function createLiveClass(input: {
 
 /** Batalkan satu kelas live (mentor course / admin). */
 export async function deleteLiveClass(id: string): Promise<void> {
+  // P5: hanya mentor course / admin (RLS live_classes_write_teacher).
+  // Bila baris tidak terbaca, biarkan lanjut — RLS yang memutuskan.
+  const { data } = await supabase
+    .from('live_classes')
+    .select('course_id')
+    .eq('id', id)
+    .maybeSingle()
+  const courseId = (data as { course_id?: string } | null)?.course_id
+  if (courseId) await assertCourseTeacherOrAdmin(courseId, 'membatalkan kelas live')
   const { error } = await supabase.from('live_classes').delete().eq('id', id)
   if (error) throw error
 }
@@ -1152,7 +1359,10 @@ export async function fetchRefNameMap(
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   const { data, error } = await supabase.from(table).select('code,name')
-  if (error) return map
+  // P2 (audit 23 Nov 2026): error query dilempar, bukan map kosong — UI
+  // admin tidak lagi menampilkan kode wilayah mentah tanpa penjelasan.
+  // Pemanggil sudah menangani throw (try/catch di load masing-masing).
+  if (error) throw error
   for (const row of (data ?? []) as { code: string; name: string }[]) {
     map.set(row.code, row.name)
   }
@@ -1168,7 +1378,10 @@ export async function fetchRefNameMap(
 export async function searchSchools(query: string, regencyName?: string): Promise<School[]> {
   const q = query.trim()
   if (q.length < 2 && !regencyName) return []
-  const like = `%${q.replace(/[%_]/g, '')}%`
+  // P1 (audit 23 Nov 2026): `,` `(` `)` `"` di dalam query merusak sintaks
+  // filter PostgREST `.or()` (error 400) — buang bersama `%` dan `_` yang
+  // sudah dibuang sebelumnya, sebelum interpolasi.
+  const like = `%${q.replace(/[%_,()"]/g, '')}%`
   let qb = supabase.from('schools').select('*').eq('is_verified', true)
   if (regencyName) qb = qb.eq('regency', regencyName)
   if (q.length >= 2) qb = qb.or(`name.ilike.${like},npsn.ilike.${like}`)

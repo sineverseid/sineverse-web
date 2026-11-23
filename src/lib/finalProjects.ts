@@ -338,17 +338,20 @@ export async function setProjectMentor(projectId: string, mentorId: string | nul
 }
 
 export async function deleteFinalProject(projectId: string): Promise<void> {
-  // Hapus objek Storage dulu (best-effort), baru baris proyek — kalau tidak,
-  // berkas proyek akan yatim di bucket project-files.
+  // P10 (audit 23 Nov 2026): hapus baris DB DULU, baru objek Storage
+  // (best-effort). Urutan lama (Storage dulu) meninggalkan baris yatim
+  // menunjuk file yang sudah terhapus bila delete DB gagal. Bila delete
+  // Storage gagal, yang tersisa hanya objek yatim di bucket — tidak ada
+  // baris yang menunjuk ke file yang hilang.
   const files = await fetchProjectFiles(projectId)
+  const { error } = await supabase.from('final_projects').delete().eq('id', projectId)
+  if (error) throw error
   if (files.length > 0) {
     await supabase.storage
       .from('project-files')
       .remove(files.map((f) => f.file_path))
       .catch(() => undefined)
   }
-  const { error } = await supabase.from('final_projects').delete().eq('id', projectId)
-  if (error) throw error
 }
 
 export async function addProjectMember(
@@ -389,6 +392,32 @@ export async function createProjectTask(input: {
   assigneeId: string | null
   dueDate: string | null
 }): Promise<FinalProjectTask> {
+  // P12 (audit 23 Nov 2026): tolak step di luar 1–10 (10 langkah produksi
+  // di FINAL_PROJECT_STEPS) dan dueDate yang sudah lewat.
+  if (!Number.isInteger(input.step) || input.step < 1 || input.step > FINAL_PROJECT_STEPS.length) {
+    throw new Error(`Langkah tugas harus antara 1 dan ${FINAL_PROJECT_STEPS.length}.`)
+  }
+  if (input.dueDate) {
+    const raw = input.dueDate.trim()
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    // Validasi tanggal kalender sungguhan (komponen lokal — JANGAN lewat
+    // toISOString, yang menggeser tanggal di zona UTC+7).
+    const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+    const due = parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])) : null
+    if (
+      !parts ||
+      !due ||
+      due.getFullYear() !== Number(parts[1]) ||
+      due.getMonth() !== Number(parts[2]) - 1 ||
+      due.getDate() !== Number(parts[3])
+    ) {
+      throw new Error('Tenggat tugas tidak valid. Gunakan tanggal yang benar (YYYY-MM-DD).')
+    }
+    if (raw < todayStr) {
+      throw new Error('Tenggat tugas tidak boleh di masa lalu.')
+    }
+  }
   const { data, error } = await supabase
     .from('final_project_tasks')
     .insert({
@@ -419,6 +448,35 @@ export async function deleteProjectTask(taskId: string): Promise<void> {
   if (error) throw error
 }
 
+/** Ekstensi berkas proyek yang diizinkan (P11): dokumen + gambar — sesuai
+ *  jenis berkas (skenario, storyboard, shot list, jadwal, lainnya). */
+export const PROJECT_FILE_ALLOWED_EXTS = [
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'txt',
+  'md',
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+]
+
+/** Ukuran maksimum satu berkas proyek (P11): 25 MB. */
+export const PROJECT_FILE_MAX_SIZE = 25 * 1024 * 1024
+
+/** Id unik untuk path Storage (P11): crypto.randomUUID bila tersedia. */
+function uniqueFileId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
+
 /** Unggah berkas ke bucket project-files lalu catat di final_project_files.
  *  Mengembalikan null bila bucket belum tersedia (pemanggil menampilkan
  *  pesan jujur, mengikuti pola ProjectDetailPage). */
@@ -428,7 +486,25 @@ export async function uploadProjectFile(
   kind: FinalProjectFileKind,
   uploadedBy: string,
 ): Promise<FinalProjectFile | null> {
-  const path = `${projectId}/final/${Date.now()}-${file.name}`
+  // P11 (audit 23 Nov 2026): validasi tipe/ukuran + path unik. Tanpa ini
+  // file apa pun bisa diunggah, dan dua upload dalam milidetik yang sama
+  // dengan nama sama menimpa satu sama lain (upsert: true) sementara
+  // baris DB-nya berbeda.
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  if (!PROJECT_FILE_ALLOWED_EXTS.includes(ext)) {
+    throw new Error(
+      `Jenis berkas ".${ext || '?'}" tidak diizinkan. Berkas proyek harus berupa ${PROJECT_FILE_ALLOWED_EXTS.join(', ')}.`,
+    )
+  }
+  if (file.size > PROJECT_FILE_MAX_SIZE) {
+    throw new Error(
+      `Ukuran berkas melebihi batas ${Math.round(PROJECT_FILE_MAX_SIZE / (1024 * 1024))} MB.`,
+    )
+  }
+  // Nama file asli tetap disimpan di kolom file_name (tampilan); path
+  // Storage memakai UUID supaya tidak pernah bentrok — bukan Date.now() +
+  // nama file mentah.
+  const path = `${projectId}/final/${uniqueFileId()}.${ext}`
   const url = await uploadToBucket('project-files', path, file)
   if (url === null) return null
   const { data, error } = await supabase
@@ -448,22 +524,23 @@ export async function uploadProjectFile(
 }
 
 export async function deleteProjectFile(fileId: string): Promise<void> {
-  // Hapus objek Storage dulu (best-effort), baru baris DB — kalau tidak,
-  // berkas akan yatim di bucket project-files.
+  // P10 (audit 23 Nov 2026): hapus baris DB DULU, baru objek Storage
+  // (best-effort) — bila delete DB gagal, tidak tersisa baris yatim yang
+  // menunjuk file yang sudah terhapus.
   const { data } = await supabase
     .from('final_project_files')
     .select('file_path')
     .eq('id', fileId)
     .maybeSingle()
   const path = (data as { file_path?: string } | null)?.file_path
+  const { error } = await supabase.from('final_project_files').delete().eq('id', fileId)
+  if (error) throw error
   if (path) {
     await supabase.storage
       .from('project-files')
       .remove([path])
       .catch(() => undefined)
   }
-  const { error } = await supabase.from('final_project_files').delete().eq('id', fileId)
-  if (error) throw error
 }
 
 /**

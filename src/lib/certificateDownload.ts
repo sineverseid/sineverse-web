@@ -674,7 +674,20 @@ function drawBarcode(
 ): number {
   const narrow = 1.1
   const wide = narrow * 3
-  const data = `*${text.toUpperCase()}*`
+  // P15 (audit 23 Nov 2026): barcode mengodekan string yang SAMA dengan
+  // yang tercetak di bawahnya. Huruf kecil dinormalisasi ke kapital
+  // (Code 39 tidak punya huruf kecil); karakter di luar alfabet Code 39
+  // dilempar — diam-diam melewatinya membuat barcode mengodekan string
+  // yang berbeda dari serial yang tercetak.
+  const encoded = text.toUpperCase()
+  for (const ch of encoded) {
+    if (!CODE39[ch]) {
+      throw new Error(
+        `Nomor serial sertifikat mengandung karakter yang tidak didukung barcode Code 39: "${ch}".`,
+      )
+    }
+  }
+  const data = `*${encoded}*`
   let total = 0
   for (const ch of data) {
     const pat = CODE39[ch]
@@ -705,7 +718,8 @@ function drawBarcode(
   }
 
   ctx.font = `700 20px ${FONT}`
-  ctx.fillText(text, cx, barTop + barHeight + 28)
+  // Cetak string yang sama dengan yang di-barcode (sudah dinormalisasi ke kapital).
+  ctx.fillText(encoded, cx, barTop + barHeight + 28)
   ctx.restore()
   return barTop + barHeight + 28
 }
@@ -973,10 +987,14 @@ function drawRecipientName(ctx: CanvasRenderingContext2D, ownerName: string, sta
 // ---------------------------------------------------------------------------
 
 function formatDateEn(value: string): string {
+  // P13 (audit 23 Nov 2026): format dalam WIB, bukan timezone lokal
+  // browser — tanggal terbit bisa bergeser satu hari di sekitar tengah
+  // malam UTC bila issued_at (UTC) diformat tanpa timeZone.
   return new Date(value).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+    timeZone: 'Asia/Jakarta',
   })
 }
 
@@ -1030,15 +1048,18 @@ export async function renderCertificate(
 
   await ensureFonts()
 
-  // QR hanya untuk completion; bila gagal, sertifikat tetap digambar
-  // tanpa QR.
+  // QR hanya untuk completion. P14 (audit 23 Nov 2026): kegagalan QR
+  // tidak lagi ditelan — sertifikat tanpa QR verifikasi tidak boleh
+  // terunduh diam-diam. Pratinjau (CertificatesPage) sudah menangkap
+  // throw ini dan tetap menampilkan kartu info teks; unduhan menampilkan
+  // pesan error ini ke pengguna.
   let qrImg: HTMLImageElement | null = null
   if (!isMentor) {
     try {
       const dataUrl = await QRCode.toDataURL(verificationLink(cert), { width: 220, margin: 1 })
       qrImg = await loadImage(dataUrl)
     } catch {
-      qrImg = null
+      throw new Error('Kode QR verifikasi gagal dibuat. Coba unduh ulang sertifikat.')
     }
   }
 

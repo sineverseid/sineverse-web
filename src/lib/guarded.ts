@@ -55,12 +55,6 @@ export function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Serial helpers — SVS-CRS / SVS-EXM / SVS-KRY + year + zero-padded sequence. */
-export function nextSerial(prefix: 'SVS-CRS' | 'SVS-EXM' | 'SVS-KRY', existingCount: number): string {
-  const year = new Date().getFullYear()
-  return `${prefix}-${year}-${String(existingCount + 1).padStart(4, '0')}`
-}
-
 /** Embed helper shared by lesson video + showcase film URLs. */
 export function videoEmbed(url: string): { kind: 'youtube' | 'vimeo' | 'link'; embedUrl?: string } {
   const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/)

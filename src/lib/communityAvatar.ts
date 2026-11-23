@@ -26,7 +26,7 @@
 // inisial baku, bukan error.
 // ---------------------------------------------------------------------------
 
-import { dataUrlToBlob, photoExtFromFile, photoToDataUrl } from './photo'
+import { dataUrlToBlob, photoToDataUrl } from './photo'
 import { uploadToBucket } from './supabase'
 
 /** Bucket Storage untuk foto avatar komunitas (migrasi 031, publik). */
@@ -127,7 +127,11 @@ export async function uploadCommunityAvatar(
 ): Promise<string | null> {
   const dataUrl = await photoToDataUrl(file)
   const blob = await dataUrlToBlob(dataUrl)
-  const ext = photoExtFromFile(file)
+  // P8 (audit 23 Nov 2026): photoToDataUrl mengubah foto besar menjadi
+  // JPEG — samakan ekstensi dengan isi blob sebenarnya (pola yang sama
+  // dipakai registration.ts dan uploadEventPoster), bukan dari file asli.
+  // Kalau tidak, file PNG besar tersimpan sebagai `.png` berisi byte JPEG.
+  const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg'
   const uploadFile = new File([blob], `avatar.${ext}`, {
     type: blob.type || 'image/jpeg',
   })

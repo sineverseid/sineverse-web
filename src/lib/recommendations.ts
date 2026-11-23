@@ -45,13 +45,19 @@ function rpsIndex(courseId: string): number {
   return idx === -1 ? 999 : idx
 }
 
+/** Escape karakter khusus regex di dalam satu minat. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function matchInterest(hay: string, interests: string[]): string | null {
-  const lower = hay.toLowerCase()
+  // P7 (audit 23 Nov 2026): cocokkan berdasarkan KATA UTUH (word boundary),
+  // bukan substring — minat "AI" tidak lagi cocok dengan "lain"/"baik".
   return (
     interests
-      .map((s) => s.toLowerCase())
-      .filter(Boolean)
-      .find((it) => it.length > 1 && lower.includes(it)) ?? null
+      .map((s) => s.trim().toLowerCase())
+      .filter((it) => it.length > 1)
+      .find((it) => new RegExp(`\\b${escapeRegExp(it)}\\b`, 'i').test(hay)) ?? null
   )
 }
 

@@ -50,7 +50,11 @@ export async function photoToDataUrl(file: File): Promise<string> {
   canvas.width = Math.round(img.naturalWidth * scale)
   canvas.height = Math.round(img.naturalHeight * scale)
   const ctx = canvas.getContext('2d')
-  if (!ctx) return dataUrl
+  // P9 (audit 23 Nov 2026): konteks canvas null tidak lagi mengembalikan
+  // data URL asli yang belum diperkecil — foto raksasa akan lolos ke
+  // localStorage dan gagal diam-diam di savePendingRegistration. Lempar
+  // supaya pemanggil menampilkan error yang jelas.
+  if (!ctx) throw new Error('Canvas tidak didukung di browser ini — foto tidak dapat diperkecil.')
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
   return canvas.toDataURL('image/jpeg', 0.85)
 }

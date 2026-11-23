@@ -316,6 +316,29 @@ export async function issueWorkCertificate(
   return { serial: row.serial, alreadyIssued: row.already_issued }
 }
 
+/**
+ * P20 (audit 23 Nov 2026): urai body respons Edge Function dengan aman.
+ * Body non-JSON, body bukan JSON (mis. halaman error HTML), atau objek
+ * yang bukan hasil verifikasi yang valid ({}, {error: ...}) mengembalikan
+ * null — bukan objek kosong yang di-cast sebagai VerificationResult.
+ * Status HTTP non-2xx tetap dilempar oleh pemanggil sebelum sampai sini.
+ */
+async function parseVerificationResponse(res: Response): Promise<VerificationResult | null> {
+  const contentType = res.headers.get('content-type') ?? ''
+  if (contentType && !contentType.includes('application/json')) return null
+  let data: unknown
+  try {
+    data = await res.json()
+  } catch {
+    return null
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
+  if (!row || typeof row !== 'object') return null
+  if (typeof row.serial !== 'string' || row.serial === '') return null
+  if (row.status !== 'valid' && row.status !== 'revoked' && row.status !== 'inactive') return null
+  return row
+}
+
 /** Verifikasi publik via Edge Function verify-certificate (bukan RPC
  *  langsung): fungsi ini memanggil RPC verify_certificate_by_token di
  *  server dan menerapkan rate limiting — HTTP 429 berarti terlalu banyak
@@ -336,9 +359,7 @@ export async function verifyByToken(token: string): Promise<VerificationResult |
     throw new Error('Terlalu banyak percobaan verifikasi, coba lagi sebentar lagi.')
   }
   if (!res.ok) throw new Error(`Verifikasi gagal (${res.status}).`)
-  const data = await res.json()
-  const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
-  return row ?? null
+  return parseVerificationResponse(res)
 }
 
 /** Verifikasi publik via Edge Function berdasarkan nomor serial
@@ -357,9 +378,7 @@ export async function verifyBySerial(serial: string): Promise<VerificationResult
     throw new Error('Terlalu banyak percobaan verifikasi, coba lagi sebentar lagi.')
   }
   if (!res.ok) throw new Error(`Verifikasi gagal (${res.status}).`)
-  const data = await res.json()
-  const row = (Array.isArray(data) ? data[0] : data) as VerificationResult | null | undefined
-  return row ?? null
+  return parseVerificationResponse(res)
 }
 
 /** Cabut sertifikat (admin). Mengembalikan status baru ('revoked'). */

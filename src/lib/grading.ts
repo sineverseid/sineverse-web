@@ -12,12 +12,15 @@
 //   - Hitung postingan siswa di lesson-lesson course itu (thread + balasan).
 //   - distinctLessons = jumlah lesson berbeda tempat siswa pernah posting.
 //   - totalPosts = jumlah total postingan.
-//   - skor = min(100, distinctLessons * 10 + totalPosts * 2)
-//   Contoh: posting 1x di masing-masing 10 lesson = 100. Posting 1x di
-//   5 lesson = 60. Posting 10x di 1 lesson saja = 30. Rumus ini menghargai
-//   penyebaran partisipasi di banyak lesson, bukan sekadar spam di satu
-//   tempat. Skor 0 tidak pernah diberikan otomatis — siswa yang belum
-//   posting sama sekali mendapat null ("belum ada nilai").
+//   - skor = min(100, distinctLessons * 10 + Σ per lesson min(10, postingan lesson itu * 2))
+//   P6 (audit 23 Nov 2026): kontribusi postingan DIBATASI per lesson (maks.
+//   10 poin dari jumlah postingan di satu lesson) — rumus lama
+//   (distinctLessons * 10 + totalPosts * 2) mencapai 100 dari satu lesson
+//   saja (45 postingan), bertentangan dengan komentar ini yang bilang rumus
+//   menghargai penyebaran. Contoh baru: posting 1x di masing-masing
+//   10 lesson = 100. Posting 1x di 5 lesson = 60. Posting 45x di 1 lesson
+//   saja = 20 (bukan 100). Skor 0 tidak pernah diberikan otomatis — siswa
+//   yang belum posting sama sekali mendapat null ("belum ada nilai").
 import type { GradeComponents } from './types'
 
 export interface GradePart {
@@ -55,8 +58,18 @@ export function discussionParticipationScore(
   userPosts: { lesson_id: string }[],
 ): number | null {
   if (userPosts.length === 0) return null
-  const distinctLessons = new Set(userPosts.map((p) => p.lesson_id)).size
-  return Math.min(100, distinctLessons * 10 + userPosts.length * 2)
+  const perLesson = new Map<string, number>()
+  for (const p of userPosts) {
+    perLesson.set(p.lesson_id, (perLesson.get(p.lesson_id) ?? 0) + 1)
+  }
+  const distinctLessons = perLesson.size
+  // P6: bonus jumlah postingan dibatasi 10 poin per lesson — spam di satu
+  // lesson tidak lagi mengangkat skor sampai 100 sendirian.
+  let postsBonus = 0
+  for (const count of perLesson.values()) {
+    postsBonus += Math.min(10, count * 2)
+  }
+  return Math.min(100, distinctLessons * 10 + postsBonus)
 }
 
 /**
