@@ -293,6 +293,8 @@ export interface LessonResource {
   title: string
   url: string | null
   body: string | null
+  /** Path objek di bucket lesson-resources (migrasi 062); null bila hanya URL. */
+  file_path?: string | null
   created_at: string
 }
 
@@ -804,7 +806,8 @@ export interface MentorApplication {
   status: 'pending' | 'approved' | 'rejected' | 'revision_required'
   decided_by: string | null
   created_at: string
-  /** Migrasi 027: 6 info lamaran mentor (master prompt §2). */
+  /** Migrasi 027: 6 info lamaran mentor (master prompt 
+  2). */
   profession?: string | null
   reason?: string | null
   volunteer_agreed?: boolean | null
