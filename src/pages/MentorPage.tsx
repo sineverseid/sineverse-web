@@ -1,17 +1,14 @@
 // SINEVERSE, Mentor Workspace (008 + 003 + 027): course yang diampu +
 // jumlah siswa / penilaian tertunda, "Ajukan untuk Mengampu" course tanpa
-// mentor, lamaran mentor, office hours, RPS read-only.
+// mentor, office hours, RPS read-only.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import MentorApplicationForm from '../components/MentorApplicationForm'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchCourses,
-  fetchMyMentorApplication,
-  submitMentorApplication,
   supabase,
 } from '../lib/supabase'
-import type { Course, CourseClaim, MentorApplication, MentorApplicationInput } from '../lib/types'
+import type { Course, CourseClaim } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -22,18 +19,6 @@ interface MentorCourseRow {
   course: Course
   students: number
   pending: number
-}
-
-function toInput(app: MentorApplication): Partial<MentorApplicationInput> {
-  return {
-    profession: app.profession ?? '',
-    expertise: app.expertise ?? [],
-    experience: app.experience ?? '',
-    portfolio_link: app.portfolio_link,
-    affiliation: app.affiliation ?? '',
-    reason: app.reason ?? '',
-    volunteer_agreed: app.volunteer_agreed ?? false,
-  }
 }
 
 type ClaimTab = 'diampu' | 'pengajuan'
@@ -64,26 +49,13 @@ export default function MentorPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [tab, setTab] = useState<ClaimTab>('diampu')
-  // Lamaran mentor milik pengguna (migrasi 027): status ditampilkan apa
-  // adanya — pending, disetujui, ditolak (dengan alasan), atau diminta
-  // revisi (dengan catatan + bisa diajukan ulang).
-  const [myApplication, setMyApplication] = useState<MentorApplication | null>(null)
-  const [applying, setApplying] = useState(false)
-  const [showForm, setShowForm] = useState(false)
   // P25: guard pengiriman klaim — tanpa ini klik ganda menyisipkan klaim duplikat.
   const [claimBusy, setClaimBusy] = useState(false)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
   const isAdmin = profile?.role === 'admin'
-  const isSiswa = profile?.role === 'siswa'
   // K2: hanya peran mentor yang boleh mengajukan klaim mengampu. Admin
   // tetap bisa MEMANTAU workspace ini (migrasi 022), tapi tidak mengklaim.
-
-  function friendlyError(err: unknown): string {
-    const msg = err instanceof Error ? err.message : ''
-    if (/duplicate|unique|23505/i.test(msg)) return 'Lamaran kamu masih menunggu persetujuan.'
-    return 'Gagal mengirim. Coba lagi sebentar lagi.'
-  }
 
   useEffect(() => {
     if (!user) return
@@ -91,11 +63,10 @@ export default function MentorPage() {
     let cancelled = false
     async function load() {
       try {
-        // fetchCourses, klaim, dan lamaran independen — paralel sejak awal.
-        const [courses, { data: cl }, myApp] = await Promise.all([
+        // fetchCourses dan klaim independen — paralel sejak awal.
+        const [courses, { data: cl }] = await Promise.all([
           fetchCourses(),
           supabase.from('course_claims').select('*').eq('mentor_id', currentUser.id).order('created_at', { ascending: false }),
-          fetchMyMentorApplication(currentUser.id),
         ])
         if (cancelled) return
         const mine = profile?.role === 'admin' ? courses : courses.filter((c) => c.mentor_id === currentUser.id)
@@ -166,7 +137,6 @@ export default function MentorPage() {
           setUnassigned(courses.filter((c) => !c.mentor_id))
           setClaims((cl ?? []) as CourseClaim[])
           setAllCourses(courses)
-          setMyApplication(myApp)
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat Mentor Workspace.')
@@ -224,21 +194,6 @@ export default function MentorPage() {
     }
   }
 
-  async function handleApply(values: MentorApplicationInput) {
-    if (!user) return
-    setApplying(true)
-    try {
-      const result = await submitMentorApplication(user.id, values)
-      setMyApplication(result)
-      setShowForm(false)
-      setNotice('Lamaran mentor terkirim. Persetujuan admin mengubah peranmu menjadi mentor secara otomatis (trigger di database, bukan dari aplikasi).')
-    } catch (err) {
-      setNotice(friendlyError(err))
-    } finally {
-      setApplying(false)
-    }
-  }
-
   if (loading) return <div className="page"><p className="muted">Memuat Mentor Workspace…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
@@ -256,54 +211,6 @@ export default function MentorPage() {
       <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
 
-      {isSiswa && (
-        <section className="section">
-          <div className="dash-section-head">
-            <h2>Gabung sebagai Mentor</h2>
-          </div>
-          {myApplication?.status === 'pending' && (
-            <p className="notice-box">Lamaran kamu masih menunggu persetujuan admin. Peran mentor aktif begitu lamaran disetujui.</p>
-          )}
-          {myApplication?.status === 'approved' && (
-            <p className="notice-box">Lamaranmu disetujui — peran mentor sudah aktif di akun ini.</p>
-          )}
-          {myApplication?.status === 'rejected' && !showForm && (
-            <>
-              <p className="error-box">
-                Lamaranmu ditolak oleh admin.
-                {myApplication.decision_note ? ` Alasan: ${myApplication.decision_note}` : ''}
-              </p>
-              <button type="button" className="btn btn-primary" onClick={() => setShowForm(true)}>
-                Ajukan Lamaran Baru
-              </button>
-            </>
-          )}
-          {myApplication?.status === 'revision_required' && !showForm && (
-            <>
-              <p className="notice-box">
-                Admin meminta perbaikan pada lamaranmu.
-                {myApplication.decision_note ? ` Catatan: ${myApplication.decision_note}` : ''}
-              </p>
-              <button type="button" className="btn btn-primary" onClick={() => setShowForm(true)}>
-                Perbaiki &amp; Kirim Ulang
-              </button>
-            </>
-          )}
-          {(!myApplication || showForm) && (
-            <>
-              <p className="muted">Kamu saat ini terdaftar sebagai siswa. Kirim lamaran mentor di sini; admin yang menyetujui.</p>
-              <MentorApplicationForm
-                initial={myApplication ? toInput(myApplication) : undefined}
-                onSubmit={handleApply}
-                submitting={applying}
-                submitLabel={myApplication?.status === 'revision_required' ? 'Kirim Ulang Lamaran' : 'Kirim Lamaran Mentor'}
-              />
-            </>
-          )}
-        </section>
-      )}
-
-      {!isMentor && !isSiswa && <p className="empty">Mentor Workspace hanya untuk mentor dan admin.</p>}
 
       {isMentor && (
         <>
