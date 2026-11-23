@@ -78,6 +78,12 @@ const RpsEditorPage = lazy(() => import('./pages/RpsEditorPage'))
 const RpsPage = lazy(() => import('./pages/RpsPage'))
 const SchoolsPage = lazy(() => import('./pages/SchoolsPage'))
 const ShowcasePage = lazy(() => import('./pages/ShowcasePage'))
+// Halaman perkenalan fitur (publik, untuk guest): named export dari
+// FeatureIntroPage, pola lazy yang sama seperti CertificatesPage.
+const IntroAcademyPage = lazy(() => import('./pages/FeatureIntroPage').then((m) => ({ default: m.IntroAcademyPage })))
+const IntroCommunityPage = lazy(() => import('./pages/FeatureIntroPage').then((m) => ({ default: m.IntroCommunityPage })))
+const IntroProjectsPage = lazy(() => import('./pages/FeatureIntroPage').then((m) => ({ default: m.IntroProjectsPage })))
+const IntroShowcasePage = lazy(() => import('./pages/FeatureIntroPage').then((m) => ({ default: m.IntroShowcasePage })))
 
 function NotFoundPage() {
   return (
@@ -108,6 +114,8 @@ export default function App() {
             <Route path="tentang" element={<AboutPage section="tentang" />} />
             <Route path="privasi" element={<AboutPage section="privasi" />} />
             <Route path="syarat" element={<AboutPage section="syarat" />} />
+            {/* Halaman perkenalan fitur (publik) — tepat di atas rute fitur. */}
+            <Route path="akademi/perkenalan" element={<IntroAcademyPage />} />
             <Route path="akademi" element={<AkademiPage />} />
             <Route path="course/:id" element={<CourseDetailPage />} />
             <Route path="lesson/:id" element={<LessonDetailPage />} />
@@ -116,6 +124,7 @@ export default function App() {
             <Route path="rps" element={<RpsPage />} />
             <Route path="pengumuman" element={<AnnouncementsPage />} />
             {/* Showcase / Library / Events / Competitions: public read */}
+            <Route path="showcase/perkenalan" element={<IntroShowcasePage />} />
             <Route path="showcase" element={<ShowcasePage />} />
             <Route path="showcase/:id" element={<FilmDetailPage />} />
             <Route path="pustaka" element={<LibraryPage />} />
@@ -137,10 +146,12 @@ export default function App() {
             <Route path="notifikasi" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="notifikasi/pengaturan" element={<Protected><NotificationPrefsPage /></Protected>} />
             {/* Community / Schools / Clubs (Fase C) */}
+            <Route path="komunitas/perkenalan" element={<IntroCommunityPage />} />
             <Route path="komunitas" element={<Protected><CommunitiesPage /></Protected>} />
             <Route path="komunitas/:id" element={<Protected><CommunityDetailPage /></Protected>} />
             <Route path="sekolah" element={<Protected><SchoolsPage /></Protected>} />
             {/* Projects / Crew Finder (Fase C) */}
+            <Route path="proyek/perkenalan" element={<IntroProjectsPage />} />
             <Route path="proyek" element={<Protected><ProjectsPage /></Protected>} />
             <Route path="proyek/:id" element={<Protected><ProjectDetailPage /></Protected>} />
             <Route path="proyek-akhir" element={<FinalProjectsPage />} />

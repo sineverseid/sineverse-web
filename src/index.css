@@ -3631,3 +3631,110 @@ a.file-row:hover {
     height: 120px;
   }
 }
+
+/* --- Halaman pengenalan fitur (FeatureIntroPage) --- */
+.intro-page {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.intro-back {
+  margin-bottom: 1rem;
+}
+
+.intro-hero {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.25rem;
+}
+
+.intro-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: var(--radius-md);
+  background: var(--mint-soft);
+  color: var(--film-green);
+  margin-bottom: 0.75rem;
+}
+
+.intro-title {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0 0 1rem;
+}
+
+.intro-desc p {
+  line-height: 1.65;
+  margin: 0 0 0.75rem;
+}
+
+.intro-desc p:first-child {
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.intro-list-card {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem 1.25rem 0.5rem;
+  margin: 1.5rem 0;
+}
+
+.intro-list-card h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.intro-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.intro-list li {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--light-grey);
+  line-height: 1.55;
+}
+
+.intro-check {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--film-green);
+  margin-top: 0.1rem;
+}
+
+.intro-cta {
+  padding: 0.85rem 1.1rem;
+  font-size: 1rem;
+}
+
+.intro-support {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 1rem 0 0;
+}
+
+@media (min-width: 640px) {
+  .intro-title {
+    font-size: 1.9rem;
+  }
+}
