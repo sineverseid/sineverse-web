@@ -2488,7 +2488,7 @@ function AdminHome(props: {
         </p>
       )}
 
-{/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
+      {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
           admin + mentor; ringkasan unread + pesan terakhir. */}
       <section className="section">
         <div className="dash-section-head">
