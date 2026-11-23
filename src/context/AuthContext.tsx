@@ -30,6 +30,10 @@ interface AuthContextValue {
   session: Session | null
   profile: Profile | null
   loading: boolean
+  /** True selama fetch profil latar sedang berjalan (P72): Beranda memakai
+   *  ini untuk membedakan "profil masih dimuat" dari "profil gagal dimuat",
+   *  tanpa heuristik tenggat. */
+  profileLoading: boolean
   /** Pemberitahuan jujur bila penyelesaian pendaftaran tertunda gagal
    *  (mis. foto belum terunggah karena bucket belum ada). */
   registrationNotice: string | null
@@ -87,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileLoading, setProfileLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [registrationNotice, setRegistrationNotice] = useState<string | null>(null)
 
@@ -135,11 +140,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       )
     }
     try {
+      setProfileLoading(true)
       const p = await pending
       setProfile(p)
       writeCachedProfile(userId, p)
     } catch {
       setProfile(null)
+    } finally {
+      setProfileLoading(false)
     }
   }, [])
 
@@ -243,6 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setSession(null)
     setProfile(null)
+    setProfileLoading(false)
     try {
       localStorage.removeItem(PROFILE_CACHE_KEY)
     } catch {
@@ -265,6 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       profile,
       loading,
+      profileLoading,
       registrationNotice,
       dismissRegistrationNotice,
       signIn,
@@ -280,6 +290,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       profile,
       loading,
+      profileLoading,
       registrationNotice,
       dismissRegistrationNotice,
       signIn,
