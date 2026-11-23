@@ -284,6 +284,24 @@ p {
   mask-image: linear-gradient(to right, #000 85%, transparent 100%);
 }
 
+/* LB11: fade tepi mengikuti posisi scroll, meniru .topnav (K1) — fade
+   kiri hanya saat nav sudah digeser, fade kanan hilang saat mentok kanan;
+   bila isi muat tanpa scroll, tidak ada fade sama sekali. */
+.workspace-nav.is-scrolled {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 85%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 85%, transparent 100%);
+}
+
+.workspace-nav.is-scrolled.is-end {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 100%);
+}
+
+.workspace-nav.is-end:not(.is-scrolled) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .workspace-nav::-webkit-scrollbar {
   display: none;
 }
@@ -573,6 +591,24 @@ p {
 
 .page-narrow {
   max-width: 520px;
+}
+
+/* LB14: halaman yang butuh lebar penuh (mis. Editor RPS) — keluar dari
+   batas .main (1140px) sampai hampir tepi viewport, supaya form tidak
+   terjepit jadi kartu sempit di layar lebar. Lebar dibatasi 1760px dan
+   100vw - 2rem supaya tidak pernah memicu scroll horizontal. */
+.page-wide {
+  width: min(1760px, calc(100vw - 2rem));
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+
+/* LB14: field angka berjejer di layar lebar supaya tidak jadi pita
+   selebar viewport; menumpuk sendiri di handphone. */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
 }
 
 /* --- Login (sama dengan layar login artefak) --- */
@@ -1756,6 +1792,22 @@ p {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+/* LB15: kartu lesson AdminSectionsPage — grid 2 kolom sejati di desktop,
+   1 kolom di handphone. (Sebelumnya inline auto-fill minmax(320px, 1fr)
+   yang jadi 3 kolom di .main 1140px, padahal komentarnya sudah bilang
+   "grid 2 kolom".) */
+.lesson-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+@media (max-width: 639px) {
+  .lesson-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .discussion-item {
