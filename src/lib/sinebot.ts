@@ -348,9 +348,14 @@ export async function submitFeedback(
   rating: 1 | -1,
   comment?: string,
 ): Promise<void> {
+  // RPC submit_sinebot_feedback menerima p_rating TEXT ('helpful' /
+  // 'not_helpful'), BUKAN angka. Mengirim 1/-1 membuat RPC menolak dengan
+  // 'rating must be helpful or not_helpful' — itulah kenapa tombol feedback
+  // di panel tidak pernah berubah jadi "Terima kasih" (temuan verifikasi
+  // live Tahap 2 ronde 2, 23 Nov 2026; dibuktikan via curl).
   const { error } = await supabase.rpc('submit_sinebot_feedback', {
     p_message_id: messageId,
-    p_rating: rating,
+    p_rating: rating === 1 ? 'helpful' : 'not_helpful',
     p_comment: comment ?? null,
   })
   if (error) throw friendlySupabaseError(error)
