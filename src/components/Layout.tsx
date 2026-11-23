@@ -13,6 +13,7 @@ import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } f
 import { checkDueReminders } from '../lib/reminders'
 import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
+import SinebotFab from './SinebotFab'
 
 type Role = 'siswa' | 'mentor' | 'admin'
 
@@ -261,6 +262,7 @@ export default function Layout() {
       </main>
 
       <InstallPrompt />
+      <SinebotFab />
 
       <footer className="footer">
         <p>
@@ -352,6 +354,10 @@ export default function Layout() {
               <NavLink to="/syarat" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
                 <Icon name="fileText" size={20} />
                 <span>Syarat</span>
+              </NavLink>
+              <NavLink to="/bantuan" className="more-sheet-item" onClick={() => setMoreOpen(false)}>
+                <Icon name="message" size={20} />
+                <span>Bantuan &amp; FAQ</span>
               </NavLink>
             </div>
           </div>
