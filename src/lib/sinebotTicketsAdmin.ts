@@ -24,6 +24,7 @@
 // diimpor ulang. Parsing dibuat defensif (kolom dibaca apa adanya dari
 // baris RPC) karena bentuk persis support_tickets /
 // support_ticket_messages ditentukan migrasi backend Tahap 4.
+import { checkTicketAttachmentContent } from './sinebot'
 import { supabase } from './supabase'
 
 export type TicketStatus =
@@ -333,6 +334,8 @@ export async function uploadTicketAttachment(
 ): Promise<TicketReplyAttachment> {
   const problem = validateTicketAttachment(file)
   if (problem) throw new TicketAdminError('generic', problem)
+  const contentProblem = await checkTicketAttachmentContent(file)
+  if (contentProblem) throw new TicketAdminError('generic', contentProblem)
   const path = `${userId}/${randomId()}-${sanitizeFileName(file.name)}`
   const { error } = await supabase.storage.from('ticket-attachments').upload(path, file, {
     upsert: false,
