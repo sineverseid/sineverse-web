@@ -22,18 +22,23 @@ type NavEntry = {
   icon: IconName
   end?: boolean
   roles?: Role[]
+  // Rute fitur utama: item nav tetap aktif saat pengguna di halaman intro
+  // (/x/perkenalan) maupun di halaman fitur (/x, /x/:id).
+  activePrefix?: string
 }
 
 // Menu utama, sama persis dengan navItems artefak (urutan dan label).
+// Keempat fitur menaut ke halaman perkenalan publiknya; halaman fitur
+// tetap dijangkau dari tombol di dalam halaman perkenalan itu sendiri.
 const NAV_ITEMS: NavEntry[] = [
   { to: '/', label: 'Beranda', icon: 'home', end: true },
-  { to: '/akademi', label: 'Akademi', icon: 'academy' },
-  { to: '/proyek', label: 'Proyek', icon: 'project' },
+  { to: '/akademi/perkenalan', label: 'Akademi', icon: 'academy', activePrefix: '/akademi' },
+  { to: '/proyek/perkenalan', label: 'Proyek', icon: 'project', activePrefix: '/proyek' },
   { to: '/proyek-akhir', label: 'Proyek Akhir', icon: 'project' },
   { to: '/kru', label: 'Pencari Kru', icon: 'crew' },
   { to: '/sekolah', label: 'Sekolah', icon: 'school' },
-  { to: '/komunitas', label: 'Komunitas', icon: 'community' },
-  { to: '/showcase', label: 'Etalase', icon: 'showcase' },
+  { to: '/komunitas/perkenalan', label: 'Komunitas', icon: 'community', activePrefix: '/komunitas' },
+  { to: '/showcase/perkenalan', label: 'Etalase', icon: 'showcase', activePrefix: '/showcase' },
   { to: '/acara', label: 'Acara', icon: 'event' },
   { to: '/growth', label: 'Pertumbuhan', icon: 'growth' },
   { to: '/pustaka', label: 'Pustaka', icon: 'library' },
@@ -47,10 +52,11 @@ const NAV_ITEMS: NavEntry[] = [
 ]
 
 // Bottom navigation handphone (artefak): 4 menu utama + Lainnya, per peran.
+// Kunci 'to' harus sama persis dengan NAV_ITEMS (kini rute perkenalan).
 const BOTTOM_NAV: Record<Role, string[]> = {
-  siswa: ['/', '/akademi', '/proyek', '/komunitas'],
-  mentor: ['/', '/akademi', '/mentor/penilaian', '/mentor'],
-  admin: ['/', '/akademi', '/admin', '/komunitas'],
+  siswa: ['/', '/akademi/perkenalan', '/proyek/perkenalan', '/komunitas/perkenalan'],
+  mentor: ['/', '/akademi/perkenalan', '/mentor/penilaian', '/mentor'],
+  admin: ['/', '/akademi/perkenalan', '/admin', '/komunitas/perkenalan'],
 }
 
 // Pengingat H-1 (Tahap 6): sudah dicek untuk user ini di sesi ini atau belum.
@@ -153,6 +159,14 @@ export default function Layout() {
 
   const role = (profile?.role ?? 'siswa') as Role
   const visible = (e: NavEntry) => !e.roles || e.roles.includes(role)
+  // Aktif juga saat di halaman fitur utama (/x, /x/:id), bukan hanya di
+  // halaman intro (/x/perkenalan) yang dituju NavLink. Perbandingan memakai
+  // batas segmen ('/x' atau '/x/...') supaya '/proyek-akhir' tidak ikut
+  // menyalakan item Proyek.
+  const isPrefixActive = (e: NavEntry) =>
+    !!e.activePrefix &&
+    (location.pathname === e.activePrefix ||
+      location.pathname.startsWith(`${e.activePrefix}/`))
   const allEntries = NAV_ITEMS.filter(visible)
   const bottomEntries = BOTTOM_NAV[role]
     .map((to) => NAV_ITEMS.find((e) => e.to === to))
@@ -176,7 +190,18 @@ export default function Layout() {
               aria-label="Navigasi utama"
             >
               {allEntries.map((e) => (
-                <NavLink key={e.to} to={e.to} end={e.end}>
+                // className fungsi MENGGANTIKAN perilaku 'active' default
+                // NavLink — jadi 'active' harus dikembalikan sendiri bila
+                // isActive ATAU halaman berada di bawah activePrefix.
+                // (.topnav a.active di index.css)
+                <NavLink
+                  key={e.to}
+                  to={e.to}
+                  end={e.end}
+                  className={({ isActive }) =>
+                    isActive || isPrefixActive(e) ? 'active' : ''
+                  }
+                >
                   <Icon name={e.icon} size={17} />
                   <span>{e.label}</span>
                 </NavLink>
@@ -251,7 +276,11 @@ export default function Layout() {
               key={e.to}
               to={e.to}
               end={e.end}
-              className="bottomnav-item"
+              // (.bottomnav-item.active di index.css; className fungsi
+              // menggantikan perilaku 'active' default NavLink.)
+              className={({ isActive }) =>
+                `bottomnav-item${isActive || isPrefixActive(e) ? ' active' : ''}`
+              }
               onClick={() => setMoreOpen(false)}
             >
               <Icon name={e.icon} size={22} />
@@ -297,7 +326,11 @@ export default function Layout() {
                 key={e.to}
                 to={e.to}
                 end={e.end}
-                className="more-sheet-item"
+                // (.more-sheet-item.active di index.css; className fungsi
+                // menggantikan perilaku 'active' default NavLink.)
+                className={({ isActive }) =>
+                  `more-sheet-item${isActive || isPrefixActive(e) ? ' active' : ''}`
+                }
                 onClick={() => setMoreOpen(false)}
               >
                 <Icon name={e.icon} size={20} />
