@@ -143,7 +143,7 @@ export default function App() {
             {/* Projects / Crew Finder (Fase C) */}
             <Route path="proyek" element={<Protected><ProjectsPage /></Protected>} />
             <Route path="proyek/:id" element={<Protected><ProjectDetailPage /></Protected>} />
-            <Route path="proyek-akhir" element={<Protected><FinalProjectsPage /></Protected>} />
+            <Route path="proyek-akhir" element={<FinalProjectsPage />} />
             <Route path="proyek-akhir/:id" element={<Protected><FinalProjectDetailPage /></Protected>} />
             <Route path="kru" element={<Protected><CrewFinderPage /></Protected>} />
             {/* Portfolio (Fase C) */}
