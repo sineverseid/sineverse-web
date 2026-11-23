@@ -277,8 +277,11 @@ p {
   padding: 0.35rem 0.1rem 0.75rem;
   margin-bottom: 0.25rem;
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, #000 92%, transparent 100%);
-  mask-image: linear-gradient(to right, #000 92%, transparent 100%);
+  /* LB11: fade dilebarkan 92% -> 85% — fade 8% ternyata tidak terbaca
+     sebagai petunjuk scroll di baris tab admin ("Section &" terpotong
+     tanpa cue); pola mask tetap sama seperti .topnav (K1). */
+  -webkit-mask-image: linear-gradient(to right, #000 85%, transparent 100%);
+  mask-image: linear-gradient(to right, #000 85%, transparent 100%);
 }
 
 .workspace-nav::-webkit-scrollbar {
@@ -914,6 +917,37 @@ p {
   flex-wrap: wrap;
 }
 
+/* B70: label berisi textarea di dalam .form-actions (alasan penolakan /
+   catatan revisi di Admin Panel & Admin Home) mengambil baris sendiri
+   selebar penuh, bukan berdempetan dengan tombol selebar ~20 kolom.
+   :has(> textarea) membatasi aturan ini hanya untuk label textarea —
+   baris tombol biasa dan label berisi select/input tidak berubah. */
+.form-actions > label:has(> textarea) {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.form-actions > label:has(> textarea) textarea {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  background: var(--soft-white);
+  color: var(--text);
+}
+
+.form-actions > label:has(> textarea) textarea:focus {
+  outline: 2px solid var(--film-green);
+  outline-offset: 1px;
+  background: #fff;
+}
+
 /* --- Grid aksi Kelola Academy (Admin Panel) ---
    Tombol dibuat grid rata 2 kolom (HP) / 3 kolom (≥640px) dengan gap
    lega, bukan flex-wrap yang menghasilkan baris 2+2+3 tidak rata dan
@@ -1469,6 +1503,24 @@ p {
 @media (min-width: 640px) {
   .stat-grid {
     grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* B69: kartu sendirian di baris terakhir melebar penuh — pola yang sama
+   dengan .action-grid/.admin-action-grid (batch 5). Selektor :nth-child
+   memastikan grid 2/3/4 kartu tidak berubah: hanya kartu terakhir yang
+   jatuh sendirian di barisnya yang melebar (jumlah ganjil di <640px;
+   jumlah 1, 5, 9, … di ≥640px — mis. kartu ke-5 "Postingan diskusi" di
+   Analitik). Kartu ke-5 melebar penuh sebaris, bukan setengah lebar. */
+@media (max-width: 639px) {
+  .stat-grid > :last-child:nth-child(odd) {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 640px) {
+  .stat-grid > :last-child:nth-child(4n+1) {
+    grid-column: span 4;
   }
 }
 
