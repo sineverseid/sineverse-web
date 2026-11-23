@@ -18,6 +18,12 @@
 //   ai_sourced_pct, ai_unsourced, feedback_helpful, feedback_not_helpful,
 //   escalations_to_ticket, unanswered: [{conversation_id, question,
 //   asked_at}]}
+//   Tahap 6 (migrasi 055) menambahkan kunci metrik dari sinebot_metrics:
+//   avg_response_ms, p95_response_ms, error_rate (fraksi 0-1),
+//   total_requests, total_tokens, requests_by_provider, tokens_by_provider,
+//   blocked_injections. Semua null/0 bila belum ada data metrik.
+//   Sejak Tahap 6, unanswered[].question berisi teks pertanyaan asli
+//   (bukan null lagi), kecuali bila tidak ada pesan user sebelumnya.
 // - admin_sinebot_audit_log(p_action, p_limit, p_offset) -> array {id,
 //   actor_id, actor_name, action, target_type, target_id, detail,
 //   created_at}
@@ -76,6 +82,15 @@ export interface SinebotQuality {
   feedback_not_helpful: number
   escalations_to_ticket: number
   unanswered: UnansweredQuestion[]
+  // Metrik kinerja AI (Tahap 6, migrasi 055; null/0 bila belum ada data).
+  avg_response_ms: number | null
+  p95_response_ms: number | null
+  error_rate: number | null
+  total_requests: number
+  total_tokens: number
+  requests_by_provider: Record<string, number>
+  tokens_by_provider: Record<string, number>
+  blocked_injections: number
 }
 
 export interface AuditRow {
@@ -272,6 +287,14 @@ function parseQuality(row: Record<string, unknown>): SinebotQuality {
     feedback_not_helpful: asNumber(row.feedback_not_helpful),
     escalations_to_ticket: asNumber(row.escalations_to_ticket),
     unanswered,
+    avg_response_ms: asNumberOrNull(row.avg_response_ms),
+    p95_response_ms: asNumberOrNull(row.p95_response_ms),
+    error_rate: asNumberOrNull(row.error_rate),
+    total_requests: asNumber(row.total_requests),
+    total_tokens: asNumber(row.total_tokens),
+    requests_by_provider: asCountRecord(row.requests_by_provider),
+    tokens_by_provider: asCountRecord(row.tokens_by_provider),
+    blocked_injections: asNumber(row.blocked_injections),
   }
 }
 

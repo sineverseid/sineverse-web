@@ -17,6 +17,8 @@
 // - Edge Function POST /functions/v1/sinebot-chat, body
 //   {conversation_id, message} -> {reply, sources, provider,
 //   conversation_id, quota_exhausted}
+//   Tahap 6 menambahkan di semua respons 200: features
+//   {ticketing, status_check, kb_search} dan prompt_version ("v1"/"v2").
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabase } from './supabase'
 
 export type SinebotRole = 'siswa' | 'mentor' | 'admin' | 'guest'
@@ -55,6 +57,11 @@ export interface SinebotChatReply {
   provider: string
   conversation_id: string | null
   quota_exhausted: boolean
+  // Tahap 6: Edge Function mengembalikan flag fitur yang aktif dan versi
+  // prompt yang dipakai untuk jawaban ini. Keduanya opsional — respons
+  // lama (atau tanpa field ini) tetap dibaca, nilainya undefined.
+  features?: { ticketing: boolean; status_check: boolean; kb_search: boolean }
+  prompt_version?: string
 }
 
 export interface KbResult {
@@ -77,11 +84,14 @@ export type SinebotErrorCode =
 
 export class SinebotError extends Error {
   code: SinebotErrorCode
+  /** Estimasi tunggu dalam detik — hanya diisi untuk 'rate_limited'. */
+  retryAfterSeconds?: number
 
-  constructor(code: SinebotErrorCode, message: string) {
+  constructor(code: SinebotErrorCode, message: string, retryAfterSeconds?: number) {
     super(message)
     this.name = 'SinebotError'
     this.code = code
+    if (typeof retryAfterSeconds === 'number') this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -168,6 +178,48 @@ function parseConversationRow(row: Record<string, unknown>): SinebotConversation
 }
 
 /**
+ * Format detik tunggu menjadi label Bahasa Indonesia: 3600 -> "1 jam",
+ * 7200 -> "2 jam", 1800 -> "30 menit", 90 -> "2 menit".
+ * Dipakai pesan rate limit supaya estimasi tunggu mengikuti angka dari
+ * server, bukan teks yang dikarang.
+ */
+function formatWaitTime(seconds: number): string {
+  if (seconds >= 3600 && seconds % 3600 === 0) {
+    return `${seconds / 3600} jam`
+  }
+  return `${Math.max(1, Math.ceil(seconds / 60))} menit`
+}
+
+/**
+ * Baca estimasi tunggu dari respons 429, berurutan: body
+ * `retry_after_seconds` dulu, lalu header `Retry-After`, lalu 3600 detik
+ * (window rate limit default 60 menit). Tidak pernah throw — sumber yang
+ * tidak ada / tidak bisa dibaca dilewati begitu saja.
+ */
+async function readRetryAfterSeconds(res: Response): Promise<number> {
+  const fallbackSeconds = 3600
+  try {
+    const data: unknown = await res.json()
+    if (
+      isRecord(data) &&
+      typeof data.retry_after_seconds === 'number' &&
+      Number.isFinite(data.retry_after_seconds) &&
+      data.retry_after_seconds > 0
+    ) {
+      return Math.floor(data.retry_after_seconds)
+    }
+  } catch {
+    // Body bukan JSON / tidak bisa dibaca — lanjut ke header.
+  }
+  const header = res.headers.get('Retry-After')
+  if (header !== null) {
+    const parsed = Number(header)
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed)
+  }
+  return fallbackSeconds
+}
+
+/**
  * Kirim satu pesan ke SINEBOT. conversationId null = percakapan baru.
  * Untuk tamu, Edge Function membuat percakapan tamu (user_id NULL) tapi
  * tamu tidak bisa membacanya kembali setelah refresh (RLS) — jadi UI tamu
@@ -210,9 +262,18 @@ export async function sendMessage(
     )
   }
   if (res.status === 429) {
+    // F1 (Tahap 6, perbaikan 23 Nov 2026): HTTP 429 dari Edge Function
+    // HANYA berarti rate limit per-user (20 pesan / 60 menit) — BUKAN
+    // kuota harian habis. Kuota provider habis dikembalikan sebagai 200 +
+    // quota_exhausted: true (jalur itu tetap memakai kode
+    // 'quota_exhausted', lihat SinebotChat). Pesan di sini memakai angka
+    // retry_after_seconds dari server supaya pengguna tahu kapan boleh
+    // mencoba lagi, bukan dikira SINEBOT mati seharian.
+    const retryAfterSeconds = await readRetryAfterSeconds(res)
     throw new SinebotError(
-      'quota_exhausted',
-      'SINEBOT sedang mencapai batas pemakaian hari ini. Coba lagi nanti, atau hubungi admin bila pertanyaanmu mendesak.',
+      'rate_limited',
+      `Kamu mengirim pesan terlalu cepat. Coba lagi dalam ${formatWaitTime(retryAfterSeconds)}.`,
+      retryAfterSeconds,
     )
   }
   if (res.status === 401 || res.status === 403) {
@@ -242,6 +303,15 @@ export async function sendMessage(
       'SINEBOT belum bisa menjawab saat ini. Coba lagi, atau hubungi admin bila pertanyaanmu mendesak.',
     )
   }
+  // Tahap 6: baca features + prompt_version secara defensif — field
+  // tidak ada / bentuknya salah = undefined, bukan crash.
+  const features = isRecord(data.features)
+    ? {
+        ticketing: data.features.ticketing !== false,
+        status_check: data.features.status_check !== false,
+        kb_search: data.features.kb_search !== false,
+      }
+    : undefined
   return {
     reply: data.reply,
     sources: parseSources(data.sources),
@@ -249,6 +319,8 @@ export async function sendMessage(
     conversation_id:
       typeof data.conversation_id === 'string' ? data.conversation_id : conversationId,
     quota_exhausted: data.quota_exhausted === true,
+    features,
+    prompt_version: typeof data.prompt_version === 'string' ? data.prompt_version : undefined,
   }
 }
 
