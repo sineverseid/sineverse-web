@@ -25,42 +25,40 @@ export default function ProfilePhotoUpload() {
     // Tidak ada batas ukuran: foto besar diperkecil otomatis di browser.
     setBusy(true)
     setNotice(null)
-    let dataUrl: string
     try {
-      dataUrl = await photoToDataUrl(file)
+      const dataUrl = await photoToDataUrl(file)
+      // photoToDataUrl mengubah foto besar menjadi JPEG; samakan ekstensi
+      // nama file dengan isi sebenarnya.
+      const ext = dataUrl.startsWith('data:image/jpeg')
+        ? 'jpg'
+        : dataUrl.startsWith('data:image/png')
+          ? 'png'
+          : dataUrl.startsWith('data:image/webp')
+            ? 'webp'
+            : (file.name.split('.').pop() ?? 'jpg')
+      const blob = await dataUrlToBlob(dataUrl)
+      const uploadFile = new File([blob], `photo.${ext}`, { type: blob.type })
+      const url = await uploadToBucket('profile-photos', `${user.id}/photo.${ext}`, uploadFile)
+      if (!url) {
+        setNotice('Bucket profile-photos belum tersedia — foto tidak bisa diunggah. Minta admin membuat bucket-nya di Dashboard Supabase (lihat supabase/README.md). Foto lama tetap dipakai.')
+        return
+      }
+      try {
+        await updatePhotoUrl(user.id, url)
+        await refreshProfile()
+        setNotice(
+          profile?.photo_url
+            ? 'Foto profil diganti dengan foto baru.'
+            : 'Foto profil diunggah.',
+        )
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Gagal menyimpan foto profil.')
+      }
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Tidak dapat membaca file foto.')
-      setBusy(false)
-      return
-    }
-    // photoToDataUrl mengubah foto besar menjadi JPEG; samakan ekstensi
-    // nama file dengan isi sebenarnya.
-    const ext = dataUrl.startsWith('data:image/jpeg')
-      ? 'jpg'
-      : dataUrl.startsWith('data:image/png')
-        ? 'png'
-        : dataUrl.startsWith('data:image/webp')
-          ? 'webp'
-          : (file.name.split('.').pop() ?? 'jpg')
-    const blob = await dataUrlToBlob(dataUrl)
-    const uploadFile = new File([blob], `photo.${ext}`, { type: blob.type })
-    const url = await uploadToBucket('profile-photos', `${user.id}/photo.${ext}`, uploadFile)
-    if (!url) {
-      setNotice('Bucket profile-photos belum tersedia — foto tidak bisa diunggah. Minta admin membuat bucket-nya di Dashboard Supabase (lihat supabase/README.md). Foto lama tetap dipakai.')
-      setBusy(false)
-      return
-    }
-    try {
-      await updatePhotoUrl(user.id, url)
-      await refreshProfile()
-      setNotice(
-        profile?.photo_url
-          ? 'Foto profil diganti dengan foto baru.'
-          : 'Foto profil diunggah.',
-      )
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Gagal menyimpan foto profil.')
     } finally {
+      // B74: seluruh proses unggah (baca + konversi + upload) dibungkus
+      // satu try/finally — tombol tidak pernah macet di "Mengunggah…".
       setBusy(false)
     }
   }
