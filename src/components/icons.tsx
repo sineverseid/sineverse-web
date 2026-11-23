@@ -179,8 +179,10 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   certificate: (
     <>
-      <circle cx="12" cy="8" r="6" />
-      <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+      {/* P58: dulu identik dengan ikon mentor (medali) — kini gulungan
+          piagam supaya "Kelola/Terbitkan Sertifikat" mudah dibedakan. */}
+      <path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4" />
+      <path d="M19 17V5a2 2 0 0 0-2-2H4" />
     </>
   ),
   announcement: (

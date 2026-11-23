@@ -21,10 +21,31 @@ function isStandalone(): boolean {
   )
 }
 
+// P68: status dismiss disimpan di localStorage supaya banner tidak muncul
+// lagi di setiap reload.
+const DISMISSED_KEY = 'sineverse-install-dismissed'
+
+function readDismissed(): boolean {
+  try {
+    return localStorage.getItem(DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 export default function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
-  const [dismissed, setDismissed] = useState(false)
+  const [dismissed, setDismissed] = useState(readDismissed)
   const [showIos, setShowIos] = useState(false)
+
+  function dismiss() {
+    try {
+      localStorage.setItem(DISMISSED_KEY, '1')
+    } catch {
+      // localStorage tidak tersedia — banner cukup disembunyikan sesi ini.
+    }
+    setDismissed(true)
+  }
 
   useEffect(() => {
     if (isStandalone()) return
@@ -58,7 +79,7 @@ export default function InstallPrompt() {
           >
             Pasang Aplikasi
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => setDismissed(true)}>
+          <button type="button" className="btn btn-ghost" onClick={dismiss}>
             Nanti
           </button>
         </div>
@@ -75,7 +96,7 @@ export default function InstallPrompt() {
             Ketuk tombol Bagikan di Safari, lalu pilih &ldquo;Tambah ke Layar Utama&rdquo;.
           </p>
         </div>
-        <button type="button" className="btn btn-ghost" onClick={() => setDismissed(true)}>
+        <button type="button" className="btn btn-ghost" onClick={dismiss}>
           Tutup
         </button>
       </div>
