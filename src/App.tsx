@@ -180,13 +180,14 @@ export default function App() {
                 rute tetap ada. */}
             <Route path="profil" element={<Protected><ProfilePage /></Protected>} />
             <Route path="profil/edit" element={<Protected><EditProfilePage /></Protected>} />
-            {/* Mentor Workspace (Fase D) — siswa juga boleh masuk: halaman ini
-                menampilkan seksi "Gabung sebagai Mentor" khusus untuk siswa
-                (migrasi 027); course & penilaian tetap hanya mentor/admin. */}
+            {/* Mentor Workspace (Fase D) — hanya mentor & admin. Siswa tidak
+                bisa mendaftar sebagai mentor dari akun siswa (24 Nov 2026):
+                pendaftaran mentor hanya lewat formulir pendaftaran
+                (/register?role=mentor). */}
             <Route
               path="mentor"
               element={
-                <RoleRoute roles={['mentor', 'admin', 'siswa']}>
+                <RoleRoute roles={['mentor', 'admin']}>
                   <MentorPage />
                 </RoleRoute>
               }
