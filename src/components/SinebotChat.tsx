@@ -1,14 +1,18 @@
-// SINEVERSE — SINEBOT chat panel (Tahap 2).
+// SINEVERSE — SINEBOT chat panel (Tahap 2; tiket + Markdown Tahap 4).
 //
 // Bottom sheet di handphone, panel kanan di desktop (CSS .sinebot-panel).
 // Tamu: percakapan hanya hidup di memori sesi ini (tidak dimuat ulang
 // setelah refresh — RLS tidak mengizinkan tamu membaca kembali percakapan
 // tamu). Pengguna login: riwayat tersimpan, bisa dibuka lagi dan dihapus.
-// Ticketing penuh baru Tahap 4 — untuk sementara "Hubungi Admin" memakai
-// mailto ke sineverse.id@gmail.com.
+// "Hubungi Admin" (tombol error + quick prompt) membuka form Buat Tiket
+// di Pusat Bantuan (/bantuan?tab=tiket) — TIDAK lagi mengirim pesan chat
+// "Saya ingin menghubungi admin" dan tidak lagi memakai mailto.
+// Pesan AI dirender dengan renderSinebotMarkdown: escape HTML dulu
+// (anti-XSS), lalu **tebal**, *miring*, `kode`, baris baru, dan daftar
+// sederhana — tanpa dependensi baru.
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import Icon from './icons'
 import {
@@ -18,7 +22,6 @@ import {
   getMessages,
   listConversations,
   sendMessage,
-  sinebotAdminMailto,
   submitFeedback,
 } from '../lib/sinebot'
 import type { SinebotConversation, SinebotRole, SinebotSource } from '../lib/sinebot'
@@ -49,8 +52,95 @@ function localId(prefix: string): string {
   return `${prefix}-${Date.now()}-${localIdCounter}`
 }
 
+// ---- Pure helper: render Markdown aman (diuji unit via skrip Node) ----
+// Urutan penting: ESCAPE HTML dulu (anti-XSS — `<script>` dan
+// `<img onerror=...>` tampil sebagai teks, tidak dieksekusi), baru
+// format Markdown. `kode inline` dilindungi placeholder supaya isinya
+// tidak ikut diformat tebal/miring. Baris kosong memisahkan paragraf;
+// baris berawalan "- " jadi <ul>, "1. " jadi <ol>. Output fungsi ini
+// satu-satunya yang boleh masuk dangerouslySetInnerHTML di file ini.
+// Keputusan: dipakai untuk gelembung AI DAN pengguna — jawaban status
+// Tahap 3 (mis. "Cek status enrollment saya") memakai **tebal**, dan
+// pengguna yang mengetik **tebal** sendiri juga harus tampil tebal.
+// ---- Akhir pure helper ----
+
+/**
+ * Render subset Markdown ke HTML aman. Mendukung **tebal**, *miring*,
+ * `kode inline`, jeda baris, paragraf, dan daftar sederhana ("- " / "1. ").
+ * Semua HTML masukan di-escape dulu — tidak ada tag masukan yang lolos.
+ */
+export function renderSinebotMarkdown(text: string): string {
+  const escapeHtml = (s: string): string =>
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+
+  const renderInline = (line: string): string => {
+    const codeSpans: string[] = []
+    let out = escapeHtml(line)
+    out = out.replace(/`([^`]+)`/g, (_m, code: string) => {
+      codeSpans.push(code)
+      return `\uE000${codeSpans.length - 1}\uE000`
+    })
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    out = out.replace(/\uE000(\d+)\uE000/g, (_m, idx: string) => `<code>${codeSpans[Number(idx)]}</code>`)
+    return out
+  }
+
+  const blocks: string[] = []
+  let para: string[] = []
+  let list: { ordered: boolean; items: string[] } | null = null
+  const flushPara = (): void => {
+    if (para.length > 0) {
+      blocks.push(`<p>${para.map(renderInline).join('<br>')}</p>`)
+      para = []
+    }
+  }
+  const flushList = (): void => {
+    if (list) {
+      const tag = list.ordered ? 'ol' : 'ul'
+      blocks.push(
+        `<${tag}>${list.items.map((item) => `<li>${renderInline(item)}</li>`).join('')}</${tag}>`,
+      )
+      list = null
+    }
+  }
+
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim()
+    if (line === '') {
+      flushPara()
+      flushList()
+      continue
+    }
+    const unordered = line.match(/^- (.+)$/)
+    const ordered = line.match(/^\d+\. (.+)$/)
+    if (unordered || ordered) {
+      flushPara()
+      const isOrdered = Boolean(ordered)
+      const item = (unordered?.[1] ?? ordered?.[1] ?? '').trim()
+      if (!list || list.ordered !== isOrdered) {
+        flushList()
+        list = { ordered: isOrdered, items: [] }
+      }
+      list.items.push(item)
+      continue
+    }
+    flushList()
+    para.push(line)
+  }
+  flushPara()
+  flushList()
+  return blocks.join('\n')
+}
+
 export default function SinebotChat({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user, profile } = useAuth()
+  const navigate = useNavigate()
   const [view, setView] = useState<'chat' | 'history'>('chat')
   const [conversations, setConversations] = useState<SinebotConversation[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -158,6 +248,15 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
     setFailedText(null)
     setView('chat')
     inputRef.current?.focus()
+  }
+
+  // "Hubungi Admin" membuka form Buat Tiket di Pusat Bantuan — bukan
+  // mengirim pesan chat. Query ?tab=tiket dipakai (bukan location
+  // state) supaya section tiket tetap terbuka setelah refresh dan
+  // tautannya bisa dibagikan; HelpCenterPage membaca param yang sama.
+  function goToTicketForm(): void {
+    onClose()
+    navigate('/bantuan?tab=tiket')
   }
 
   function openConversation(id: string): void {
@@ -428,7 +527,9 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                           type="button"
                           className="sinebot-chip"
                           disabled={sending}
-                          onClick={() => void handleSend(q === 'Hubungi admin' ? 'Saya ingin menghubungi admin' : q)}
+                          onClick={() =>
+                            q === 'Hubungi admin' ? goToTicketForm() : void handleSend(q)
+                          }
                         >
                           {q}
                         </button>
@@ -441,7 +542,10 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                     key={m.id}
                     className={`sinebot-msg sinebot-msg-${m.sender}`}
                   >
-                    <div className="sinebot-bubble">{m.content}</div>
+                    <div
+                      className="sinebot-bubble"
+                      dangerouslySetInnerHTML={{ __html: renderSinebotMarkdown(m.content) }}
+                    />
                     {m.sender === 'ai' && m.sources.length > 0 && (
                       <div className="sinebot-sources" aria-label="Sumber panduan">
                         <span className="sinebot-sources-title">Sumber panduan:</span>
@@ -518,9 +622,13 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                     Coba Lagi
                   </button>
                 )}
-                <a className="btn btn-primary" href={sinebotAdminMailto('Butuh bantuan SINEVERSE')}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={goToTicketForm}
+                >
                   Hubungi Admin
-                </a>
+                </button>
               </div>
             </div>
           )}
