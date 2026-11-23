@@ -327,10 +327,12 @@ export default function AdminSectionsPage() {
             {modLessons.length === 0 ? (
               <p className="empty">Section ini belum punya lesson.</p>
             ) : (
-              // LB15: kartu lesson ringkas — grid 2 kolom, tiap kartu hanya
-              // judul + meta sebaris dan aksi sebaris (bukan kartu tinggi
-              // dengan kontrol menumpuk).
-              <ul className="discussion-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.75rem' }}>
+              // LB15: kartu lesson ringkas — grid 2 kolom sejati via
+              // .lesson-grid (judul + meta sebaris dan aksi sebaris).
+              // Sebelumnya inline auto-fill minmax(320px, 1fr) yang jadi
+              // 3 kolom di .main 1140px — komentarnya bilang 2 kolom
+              // tapi kodenya tidak pernah 2 kolom.
+              <ul className="discussion-list lesson-grid">
                 {modLessons.map((lesson, idx) => (
                   <li key={lesson.id} className="discussion-item">
                     {editingLessonId === lesson.id ? (

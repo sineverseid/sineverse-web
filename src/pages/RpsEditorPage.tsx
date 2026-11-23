@@ -136,9 +136,11 @@ export default function RpsEditorPage() {
   }
 
   return (
-    // LB14: form memakai lebar penuh .page (bukan .page-narrow ~520px) —
-    // textarea dan field tidak lagi terjepit di kolom sempit.
-    <div className="page">
+    // LB14: .page-wide keluar dari batas .main (1140px) sampai hampir
+    // tepi viewport — .page saja tidak cukup karena tidak punya aturan
+    // lebar dan tetap terjepit di 1140px (~58% di 1919px). Field angka
+    // di .form-grid supaya tetap enak dibaca di lebar penuh.
+    <div className="page page-wide">
       <h1>Editor RPS — {BRAND.rpsCode}</h1>
       <WorkspaceNav entries={ADMIN_NAV} />
       <p className="muted">Hanya admin yang bisa mengubah RPS. Mentor melihat versi read-only.</p>
@@ -146,13 +148,15 @@ export default function RpsEditorPage() {
       <form className="form" onSubmit={handleSave}>
         <label>Judul<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
         <label>Deskripsi<textarea ref={descRef} value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} style={{ overflow: 'hidden', resize: 'none' }} /></label>
-        <label>Bobot pretest (%)<input type="number" min={0} max={100} value={wPretest} onChange={(e) => setWPretest(Number(e.target.value))} required /></label>
-        <label>Bobot posttest (%)<input type="number" min={0} max={100} value={wPosttest} onChange={(e) => setWPosttest(Number(e.target.value))} required /></label>
-        <label>Bobot tugas mingguan (%)<input type="number" min={0} max={100} value={wTugasMingguan} onChange={(e) => setWTugasMingguan(Number(e.target.value))} required /></label>
-        <label>Bobot tugas praktik akhir (%)<input type="number" min={0} max={100} value={wTugasAkhir} onChange={(e) => setWTugasAkhir(Number(e.target.value))} required /></label>
-        <label>Bobot partisipasi diskusi (%)<input type="number" min={0} max={100} value={wDiskusi} onChange={(e) => setWDiskusi(Number(e.target.value))} required /></label>
+        <div className="form-grid">
+          <label>Bobot pretest (%)<input type="number" min={0} max={100} value={wPretest} onChange={(e) => setWPretest(Number(e.target.value))} required /></label>
+          <label>Bobot posttest (%)<input type="number" min={0} max={100} value={wPosttest} onChange={(e) => setWPosttest(Number(e.target.value))} required /></label>
+          <label>Bobot tugas mingguan (%)<input type="number" min={0} max={100} value={wTugasMingguan} onChange={(e) => setWTugasMingguan(Number(e.target.value))} required /></label>
+          <label>Bobot tugas praktik akhir (%)<input type="number" min={0} max={100} value={wTugasAkhir} onChange={(e) => setWTugasAkhir(Number(e.target.value))} required /></label>
+          <label>Bobot partisipasi diskusi (%)<input type="number" min={0} max={100} value={wDiskusi} onChange={(e) => setWDiskusi(Number(e.target.value))} required /></label>
+          <label>Nilai lulus<input type="number" min={0} max={100} value={passing} onChange={(e) => setPassing(Number(e.target.value))} required /></label>
+        </div>
         <p className="muted">Total bobot saat ini: {wPretest + wPosttest + wTugasMingguan + wTugasAkhir + wDiskusi}% (harus 100%).</p>
-        <label>Nilai lulus<input type="number" min={0} max={100} value={passing} onChange={(e) => setPassing(Number(e.target.value))} required /></label>
         <button type="submit" className="btn btn-primary">Simpan RPS</button>
       </form>
       <section className="section">

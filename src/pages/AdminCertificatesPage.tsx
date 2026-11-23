@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { activityLabel } from '../lib/activityLabels'
 import {
   avgOrNull,
   bestScoresByQuiz,
@@ -859,7 +860,7 @@ export default function AdminCertificatesPage() {
                     {auditLog.map((row) => (
                       <tr key={row.id}>
                         <td>{formatDate(row.created_at)}</td>
-                        <td>{row.action}</td>
+                        <td>{activityLabel(row.action)}</td>
                         <td>{row.previous_status ?? '—'} → {row.new_status ?? '—'}</td>
                         <td>{row.performed_by ? names.get(row.performed_by) ?? 'Admin' : 'Sistem'}</td>
                         <td>{row.notes ?? '—'}</td>
