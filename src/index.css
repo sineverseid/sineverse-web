@@ -4316,3 +4316,202 @@ a.file-row:hover {
     flex: 1;
   }
 }
+
+/* --- Konsol SINEBOT & Helpdesk (Tahap 5, AdminSinebotPage) --- */
+.sinebot-admin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.sinebot-admin-stat {
+  border: 1px solid var(--light-grey);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem;
+  background: #fff;
+}
+
+.sinebot-admin-num {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--navy);
+  line-height: 1.2;
+}
+
+.sinebot-admin-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.sinebot-admin-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  height: 140px;
+  padding-top: 0.5rem;
+}
+
+.sinebot-admin-bar-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  height: 100%;
+}
+
+.sinebot-admin-bar {
+  width: 100%;
+  max-width: 28px;
+  min-height: 3px;
+  background: var(--film-green);
+  border-radius: 4px 4px 0 0;
+}
+
+.sinebot-admin-bar-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sinebot-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sinebot-admin-table th,
+.sinebot-admin-table td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--light-grey);
+}
+
+.sinebot-admin-table th {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.sinebot-admin-chip {
+  display: inline-block;
+  background: var(--mint-soft);
+  color: #0c5c40;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin: 0.15rem 0.3rem 0.15rem 0;
+}
+
+/* SINEBOT Tahap 5 — Admin KB / Pengaturan AI / Kualitas (Worker C).
+   Prefix .sinebot-kb-* supaya tidak bentrok dengan Worker B maupun
+   gaya SINEBOT yang sudah ada. Hanya gaya pendukung tab admin; daftar
+   dan form memakai class yang sudah ada (.section, .form, .btn,
+   .error-box, .notice-box, .discussion-list, .profile-list). */
+.sinebot-kb-pill {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.sinebot-kb-pill.is-draft {
+  background: #e8edf3;
+  color: #172438;
+}
+.sinebot-kb-pill.is-published {
+  background: #a3e6c4;
+  color: #14532d;
+}
+.sinebot-kb-pill.is-archived {
+  background: #fef3c7;
+  color: #92400e;
+}
+.sinebot-kb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.sinebot-kb-fieldset {
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  margin: 0;
+}
+.sinebot-kb-fieldset legend {
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+.sinebot-kb-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+.sinebot-kb-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400;
+}
+.sinebot-kb-check input {
+  width: auto;
+}
+.sinebot-kb-history {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  background: var(--soft-white, #f5f7fa);
+}
+.sinebot-kb-history h4 {
+  margin-top: 0;
+}
+.sinebot-kb-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.sinebot-kb-history-preview {
+  white-space: pre-wrap;
+}
+.sinebot-kb-setting-row {
+  padding: 1rem 0;
+  border-top: 1px solid var(--light-grey);
+}
+.sinebot-kb-setting-row:first-child {
+  border-top: none;
+}
+.sinebot-kb-setting-row h3 {
+  margin-top: 0;
+}
+.sinebot-kb-setting-meta {
+  overflow-wrap: anywhere;
+}
+.sinebot-kb-fallback-row {
+  display: grid;
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .sinebot-kb-fallback-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.sinebot-kb-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: #e8edf3;
+  overflow: hidden;
+}
+.sinebot-kb-meter-fill {
+  height: 100%;
+  background: #16865e;
+  border-radius: 999px;
+}

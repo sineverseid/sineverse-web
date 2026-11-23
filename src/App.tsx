@@ -24,6 +24,7 @@ const AdminQuizzesPage = lazy(() => import('./pages/AdminQuizzesPage'))
 const AdminResourcesPage = lazy(() => import('./pages/AdminResourcesPage'))
 const AdminSectionsPage = lazy(() => import('./pages/AdminSectionsPage'))
 const AdminSettingsPage = lazy(() => import('./pages/AdminSettingsPage'))
+const AdminSinebotPage = lazy(() => import('./pages/AdminSinebotPage'))
 const AdminTicketsPage = lazy(() => import('./pages/AdminTicketsPage'))
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
@@ -300,6 +301,14 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin']}>
                   <AdminTicketsPage />
+                </RoleRoute>
+              }
+            />
+            <Route
+              path="admin/sinebot"
+              element={
+                <RoleRoute roles={['admin']}>
+                  <AdminSinebotPage />
                 </RoleRoute>
               }
             />
