@@ -102,7 +102,7 @@ export default function ProfilePage() {
             {menuItem('/growth', 'chart', 'Progress Belajar')}
             {menuItem('/sertifikat', 'certificate', 'Sertifikat Saya')}
             {menuItem('/notifikasi/pengaturan', 'settings', 'Pengaturan')}
-            {menuItem('/tentang', 'info', 'Bantuan & FAQ')}
+            {menuItem('/bantuan', 'info', 'Bantuan & FAQ')}
           </>
         )}
         {role === 'mentor' && (
@@ -113,7 +113,7 @@ export default function ProfilePage() {
             {menuItem('/sertifikat', 'certificate', 'Sertifikat Saya')}
             {/* P48: mentor juga punya jalan ke Pengaturan Notifikasi (siswa punya). */}
             {menuItem('/notifikasi/pengaturan', 'settings', 'Pengaturan')}
-            {menuItem('/tentang', 'info', 'Bantuan & FAQ')}
+            {menuItem('/bantuan', 'info', 'Bantuan & FAQ')}
           </>
         )}
         {role === 'admin' && (
@@ -122,7 +122,7 @@ export default function ProfilePage() {
             {menuItem('/admin', 'admin', 'Dashboard Admin')}
             {menuItem('/admin/pengaturan', 'settings', 'Pengaturan')}
             {menuItem('/sertifikat', 'certificate', 'Sertifikat Saya')}
-            {menuItem('/tentang', 'info', 'Bantuan & FAQ')}
+            {menuItem('/bantuan', 'info', 'Bantuan & FAQ')}
           </>
         )}
         <li>
