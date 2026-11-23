@@ -1857,6 +1857,7 @@ p {
 .grade-table th {
   background: var(--navy);
   color: #fff;
+  white-space: nowrap;
 }
 
 .badge-pass {
@@ -1866,6 +1867,7 @@ p {
   padding: 0.2rem 0.7rem;
   font-weight: 700;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .badge-fail {
@@ -1875,6 +1877,7 @@ p {
   padding: 0.2rem 0.7rem;
   font-weight: 700;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 /* --- RPS --- */
@@ -1938,6 +1941,14 @@ p {
 
 .profile-list dd {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .profile-list dt {
+    min-width: 0;
+  }
 }
 
 /* --- Install banner --- */
@@ -2642,6 +2653,7 @@ p {
   box-shadow: var(--shadow-card);
   padding: 1.1rem 1.25rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1rem;
   margin-bottom: 1.25rem;
@@ -2707,6 +2719,12 @@ p {
 
 .ring-action {
   flex-shrink: 0;
+}
+
+@media (max-width: 399px) {
+  .ring-action {
+    flex-basis: 100%;
+  }
 }
 
 /* --- Grid jalan pintas (4 kolom, ubin ikon) --- */
@@ -2861,12 +2879,20 @@ a.dash-course:hover {
 .dash-course-body h3 {
   margin: 0 0 0.2rem;
   font-size: 1rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .dash-course-meta {
   margin: 0;
   color: var(--muted);
   font-size: 0.85rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .dash-course-body .progress-track {
