@@ -1,12 +1,15 @@
-// SINEVERSE — Pusat Bantuan / Help Center (Tahap 2, publik).
+// SINEVERSE — Pusat Bantuan / Help Center (Tahap 2, publik; filter role Tahap 3).
 //
-// Pencarian + artikel memakai RPC search_sinebot_kb; daftar FAQ dibaca
-// dari tabel ai_faq (status published). Bila knowledge base masih kosong
-// (belum ada artikel/FAQ yang diterbitkan), tampilkan empty state yang
-// rapi — jangan pernah menampilkan data palsu. Riwayat percakapan hanya
-// untuk pengguna login; tamu melihat ajakan login. Ticketing penuh baru
-// Tahap 4 — "Butuh bantuan manusia?" memakai mailto ke admin.
-import { useEffect, useState } from 'react'
+// Daftar artikel + FAQ difilter berdasarkan role dari session resmi
+// (profile?.role ?? 'guest') memakai kolom audience_roles — di query
+// Supabase (.contains) dan dicek ulang di client sebagai lapis kedua.
+// Pencarian memakai RPC search_sinebot_kb yang sudah memfilter per role.
+// Bila knowledge base masih kosong (belum ada artikel/FAQ yang
+// diterbitkan), tampilkan empty state yang rapi — jangan pernah
+// menampilkan data palsu. Riwayat percakapan hanya untuk pengguna login;
+// tamu melihat ajakan login. Ticketing penuh baru Tahap 4 — "Butuh
+// bantuan manusia?" memakai mailto ke admin.
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
@@ -22,15 +25,24 @@ import {
 } from '../lib/sinebot'
 import type { KbResult, SinebotConversation, SinebotRole } from '../lib/sinebot'
 
-const CATEGORIES = [
-  'Akun & Login',
+// Urutan tampil kategori. Nilai di sini HARUS sama persis dengan nilai
+// `category` di seed 049 (mis. 'Akun', bukan 'Akun & Login') — chip yang
+// tidak cocok dengan satu pun kategori tidak akan pernah menampilkan
+// konten. Hanya kategori yang masih punya konten SETELAH filter role yang
+// dirender (lihat visibleCategories di bawah); kategori kosong tidak
+// ditampilkan sama sekali.
+const CATEGORY_ORDER = [
+  'Akun',
   'Academy',
-  'Tugas & Penilaian',
+  'Penilaian',
   'Sertifikat',
-  'Proyek & Kru',
-  'Komunitas & Showcase',
+  'Showcase',
+  'Proyek',
+  'Komunitas',
+  'Acara',
   'Mentor',
   'Admin',
+  'Umum',
 ] as const
 
 interface KbArticle {
@@ -38,6 +50,7 @@ interface KbArticle {
   title: string
   category: string
   content: string
+  audience_roles: string[]
 }
 
 interface FaqItem {
@@ -45,6 +58,7 @@ interface FaqItem {
   question: string
   answer: string
   category: string
+  audience_roles: string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,44 +82,79 @@ export default function HelpCenterPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
 
-  // Daftar artikel + FAQ published. Tabel belum ada (migrasi Tahap 2
+  // Daftar artikel + FAQ published, DIFILTER BERDASARKAN ROLE (Tahap 3).
+  // Role dari session resmi: profile?.role ?? 'guest' ('guest' | 'siswa'
+  // | 'mentor' | 'admin'). Filter utama di query Supabase
+  // (.contains('audience_roles', [role]) → audience_roles=cs.{role} di
+  // PostgREST; perilaku operator ini dibuktikan via REST API live, 23 Nov
+  // 2026: siswa = 14 artikel, mentor = 6, tamu = 5, admin = 1).
+  // audience_roles ikut di-select dan dicek ulang di client sebagai lapis
+  // kedua, supaya baris yang lolos query secara tak sengaja tetap tidak
+  // tampil bila role tidak ada di audience-nya. Effect bergantung pada
+  // `role`: bila role berubah (login/logout, atau profil selesai dimuat)
+  // daftar dimuat ulang dengan filter baru — daftar lama TIDAK boleh
+  // bertahan melewati pergantian role. Tabel belum ada (migrasi Tahap 2
   // belum jalan) berarti KB kosong — bukan error yang harus dilempar ke
   // pengguna; halaman tetap tampil dengan empty state.
   useEffect(() => {
     let cancelled = false
     setKbLoading(true)
+    // Pergantian role menutup detail yang sedang terbuka dan mengembalikan
+    // filter kategori ke 'Semua' (kategori lama bisa jadi kosong untuk
+    // role baru).
+    setExpandedId(null)
+    setCategory('Semua')
     Promise.all([
       supabase
         .from('ai_knowledge_base')
-        .select('id,title,category,content')
+        .select('id,title,category,content,audience_roles')
         .eq('status', 'published')
+        .contains('audience_roles', [role])
         .order('updated_at', { ascending: false }),
       supabase
         .from('ai_faq')
-        .select('id,question,answer,category')
+        .select('id,question,answer,category,audience_roles')
         .eq('status', 'published')
+        .contains('audience_roles', [role])
         .order('updated_at', { ascending: false }),
     ])
       .then(([kbRes, faqRes]) => {
         if (cancelled) return
         if (!kbRes.error && Array.isArray(kbRes.data)) {
           setArticles(
-            kbRes.data.filter(isRecord).map((r) => ({
-              id: typeof r.id === 'string' ? r.id : '',
-              title: typeof r.title === 'string' ? r.title : '',
-              category: typeof r.category === 'string' ? r.category : '',
-              content: typeof r.content === 'string' ? r.content : '',
-            })),
+            kbRes.data
+              .filter(isRecord)
+              .map((r) => ({
+                id: typeof r.id === 'string' ? r.id : '',
+                title: typeof r.title === 'string' ? r.title : '',
+                category: typeof r.category === 'string' ? r.category : '',
+                content: typeof r.content === 'string' ? r.content : '',
+                audience_roles: Array.isArray(r.audience_roles)
+                  ? r.audience_roles.filter(
+                      (v): v is string => typeof v === 'string',
+                    )
+                  : [],
+              }))
+              // Lapis kedua: hanya tampil bila role ada di audience_roles.
+              .filter((a) => a.audience_roles.includes(role)),
           )
         }
         if (!faqRes.error && Array.isArray(faqRes.data)) {
           setFaqs(
-            faqRes.data.filter(isRecord).map((r) => ({
-              id: typeof r.id === 'string' ? r.id : '',
-              question: typeof r.question === 'string' ? r.question : '',
-              answer: typeof r.answer === 'string' ? r.answer : '',
-              category: typeof r.category === 'string' ? r.category : '',
-            })),
+            faqRes.data
+              .filter(isRecord)
+              .map((r) => ({
+                id: typeof r.id === 'string' ? r.id : '',
+                question: typeof r.question === 'string' ? r.question : '',
+                answer: typeof r.answer === 'string' ? r.answer : '',
+                category: typeof r.category === 'string' ? r.category : '',
+                audience_roles: Array.isArray(r.audience_roles)
+                  ? r.audience_roles.filter(
+                      (v): v is string => typeof v === 'string',
+                    )
+                  : [],
+              }))
+              .filter((f) => f.audience_roles.includes(role)),
           )
         }
       })
@@ -115,7 +164,7 @@ export default function HelpCenterPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [role])
 
   // Pencarian KB (debounce singkat). Query kosong = kembali ke daftar.
   useEffect(() => {
@@ -202,7 +251,30 @@ export default function HelpCenterPage() {
   const filteredFaqs =
     category === 'Semua' ? faqs : faqs.filter((f) => f.category === category)
 
+  // Kategori yang ditampilkan sebagai chip: hanya kategori yang masih
+  // punya konten (artikel atau FAQ) SETELAH filter role. Urutan mengikuti
+  // CATEGORY_ORDER; kategori yang tidak ada di daftar itu (bila seed
+  // bertambah) ditambahkan di akhir sesuai urutan kemunculan.
+  const visibleCategories = useMemo(() => {
+    const present = new Set<string>()
+    for (const a of articles) if (a.category) present.add(a.category)
+    for (const f of faqs) if (f.category) present.add(f.category)
+    const ordered: string[] = CATEGORY_ORDER.filter((c) => present.has(c))
+    for (const c of present) if (!ordered.includes(c)) ordered.push(c)
+    return ordered
+  }, [articles, faqs])
+
   function toggleExpanded(id: string): void {
+    // Detail (expand-in-place) hanya untuk item yang sedang tampil — dan
+    // yang tampil sudah lolos filter role. Tidak ada route, modal, atau
+    // deep-link ke detail artikel di halaman ini, jadi tidak ada jalur lain
+    // untuk membuka konten di luar audience: pengaman ini menutup celah
+    // bila toggle dipanggil dengan id yang tidak ada di daftar saat ini
+    // (mis. id artikel admin yang ditebak/diketik manual).
+    const isVisible = searchResults
+      ? searchResults.some((r) => r.id === id)
+      : articles.some((a) => a.id === id) || faqs.some((f) => f.id === id)
+    if (!isVisible) return
     setExpandedId((current) => (current === id ? null : id))
   }
 
@@ -238,7 +310,7 @@ export default function HelpCenterPage() {
         >
           Semua
         </button>
-        {CATEGORIES.map((c) => (
+        {visibleCategories.map((c) => (
           <button
             key={c}
             type="button"
