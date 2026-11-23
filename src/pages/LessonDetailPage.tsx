@@ -205,8 +205,7 @@ export default function LessonDetailPage() {
             if (course && course.mentor_id === user.id) {
               allowed = true
             } else if (course && !course.mentor_id) {
-              // Master Prompt 
-              3: siswa belum boleh memulai course sebelum
+              // Master Prompt §3: siswa belum boleh memulai course sebelum
               // mentor ditetapkan — berlaku juga untuk akses langsung via URL,
               // bukan hanya lewat tautan lesson di halaman course.
               setLockedReason('Course ini belum memiliki mentor — lesson belum bisa dimulai.')
