@@ -31,6 +31,9 @@ const KIND_LABELS: Record<string, string> = {
   quiz: 'Kuis',
   exam: 'Ujian',
   community: 'Komunitas',
+    mentor_group_mention: 'Disebut di Komunitas Mentor',
+    mentor_group_message: 'Komunitas Mentor',
+    mentor_group_announcement: 'Pengumuman Komunitas Mentor',
   project: 'Proyek',
   film: 'Film',
   waitlist: 'Daftar Tunggu',
@@ -44,6 +47,19 @@ function kindLabel(kind: string): string {
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
+}
+
+/** Deep link tujuan notifikasi. Baru grup mentor (Fase 1) yang punya
+tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya. */
+function notificationLink(kind: string): string | null {
+    if (
+        kind === 'mentor_group_mention' ||
+        kind === 'mentor_group_message' ||
+        kind === 'mentor_group_announcement'
+    ) {
+        return '/komunitas-mentor'
+    }
+    return null
 }
 
 export default function NotificationsPage() {
@@ -139,21 +155,29 @@ export default function NotificationsPage() {
         <p className="empty">Belum ada notifikasi.</p>
       ) : (
         <ul className="discussion-list">
-          {items.map((n) => (
-            <li key={n.id} className="discussion-item" style={n.is_read ? undefined : { borderLeft: '4px solid var(--film-green)' }}>
-              <p className="discussion-meta">
-                {kindLabel(n.kind)} · {fmtDate(n.created_at)}
-                {n.is_read ? '' : ' · Belum dibaca'}
-              </p>
-              <p><strong>{n.title}</strong></p>
-              {n.body && <p>{n.body}</p>}
-              {!n.is_read && (
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleReadOne(n.id)}>
-                  Tandai Dibaca
-                </button>
-              )}
-            </li>
-          ))}
+          {items.map((n) => {
+            const link = notificationLink(n.kind)
+                return (
+                    <li key={n.id} className="discussion-item" style={n.is_read ? undefined : { borderLeft: '4px solid var(--film-green)' }}>
+                        <p className="discussion-meta">
+                            {kindLabel(n.kind)} · {fmtDate(n.created_at)}
+                            {n.is_read ? '' : ' · Belum dibaca'}
+                        </p>
+                        <p><strong>{n.title}</strong></p>
+                        {n.body && <p>{n.body}</p>}
+                        {link && (
+                        <p>
+                            <Link to={link}>Buka di Komunitas Mentor →</Link>
+                        </p>
+                    )}
+                        {!n.is_read && (
+                        <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleReadOne(n.id)}>
+                            Tandai Dibaca
+                        </button>
+                    )}
+                    </li>
+                )
+        })}
         </ul>
       )}
     </div>
