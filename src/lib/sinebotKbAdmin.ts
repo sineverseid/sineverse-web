@@ -195,7 +195,15 @@ function friendlyRpcError(error: { message: string; code?: string }): KbAdminErr
       'Fitur admin KB belum aktif di server. Migrasi Tahap 5 (054) belum diterapkan — beri tahu koordinator.',
     )
   }
-  if (code === '23505' || msg.includes('duplicate key') || msg.includes('already exists')) {
+  if (
+    code === '23505' ||
+    msg.includes('duplicate key') ||
+    msg.includes('already exists') ||
+    // Pesan validasi RPC sendiri (P0001): "judul sudah digunakan" /
+    // "pertanyaan sudah ada" — tanpa ini keduanya jatuh ke generic.
+    msg.includes('judul sudah digunakan') ||
+    msg.includes('pertanyaan sudah ada')
+  ) {
     return new KbAdminError(
       'duplicate',
       'Judul atau pertanyaan ini sudah dipakai oleh entri lain. Ubah judul/pertanyaan lalu simpan lagi.',
