@@ -31,6 +31,7 @@ import {
   replyToTicket,
   searchKb,
   sinebotAdminMailto,
+  checkTicketAttachmentContent,
   validateTicketAttachment,
 } from '../lib/sinebot'
 import type {
@@ -412,7 +413,7 @@ export default function HelpCenterPage() {
     }
   }
 
-  function handleTicketFileChange(file: File | null): void {
+  async function handleTicketFileChange(file: File | null): Promise<void> {
     setTicketFileError(null)
     if (!file) {
       setTicketFile(null)
@@ -425,10 +426,19 @@ export default function HelpCenterPage() {
       if (ticketFileInputRef.current) ticketFileInputRef.current.value = ''
       return
     }
+    const contentError = await checkTicketAttachmentContent(file)
+    // Abaikan hasil bila pengguna sudah mengganti/membatalkan file selagi diperiksa.
+    if (ticketFileInputRef.current && ticketFileInputRef.current.files?.[0] !== file) return
+    if (contentError) {
+      setTicketFileError(contentError)
+      setTicketFile(null)
+      if (ticketFileInputRef.current) ticketFileInputRef.current.value = ''
+      return
+    }
     setTicketFile(file)
   }
 
-  function handleReplyFileChange(file: File | null): void {
+  async function handleReplyFileChange(file: File | null): Promise<void> {
     setReplyFileError(null)
     if (!file) {
       setReplyFile(null)
@@ -437,6 +447,15 @@ export default function HelpCenterPage() {
     const error = validateTicketAttachment(file)
     if (error) {
       setReplyFileError(error)
+      setReplyFile(null)
+      if (replyFileInputRef.current) replyFileInputRef.current.value = ''
+      return
+    }
+    const contentError = await checkTicketAttachmentContent(file)
+    // Abaikan hasil bila pengguna sudah mengganti/membatalkan file selagi diperiksa.
+    if (replyFileInputRef.current && replyFileInputRef.current.files?.[0] !== file) return
+    if (contentError) {
+      setReplyFileError(contentError)
       setReplyFile(null)
       if (replyFileInputRef.current) replyFileInputRef.current.value = ''
       return

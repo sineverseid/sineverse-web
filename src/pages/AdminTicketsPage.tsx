@@ -32,6 +32,7 @@ import {
   uploadTicketAttachment,
   validateTicketAttachment,
 } from '../lib/sinebotTicketsAdmin'
+import { checkTicketAttachmentContent } from '../lib/sinebot'
 import type {
   AdminListUser,
   TicketAdmin,
@@ -172,7 +173,7 @@ export default function AdminTicketsPage() {
     }
   }
 
-  function onReplyFileChange(file: File | null) {
+  async function onReplyFileChange(file: File | null) {
     setReplyFileError(null)
     if (!file) {
       setReplyFile(null)
@@ -181,6 +182,12 @@ export default function AdminTicketsPage() {
     const problem = validateTicketAttachment(file)
     if (problem) {
       setReplyFileError(problem)
+      setReplyFile(null)
+      return
+    }
+    const contentProblem = await checkTicketAttachmentContent(file)
+    if (contentProblem) {
+      setReplyFileError(contentProblem)
       setReplyFile(null)
       return
     }
