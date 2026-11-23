@@ -2491,8 +2491,7 @@ function AdminHome(props: {
             {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
           admin + mentor; ringkasan unread + pesan terakhir. */}
       <section className="section">
-        <div className="dash-section-head">
-          <h2>Ruang Komunikasi Mentor</h2>
+        <div className="dash-section-head"><h2>Ruang Komunikasi Mentor</h2>
         </div>
         {groupSummaryFailed ? (
           <p className="muted">
@@ -2525,11 +2524,11 @@ function AdminHome(props: {
         </p>
       </section>
 
-<section className="section" aria-label="Statistik platform">
+      <section className="section" aria-label="Statistik platform">
         <div className="dash-section-head">
           <h2>Statistik Platform</h2>
         </div>
-        <div
+              <div
           role="group"
           aria-label="Filter periode"
           style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}
