@@ -14,6 +14,8 @@ import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 import Icon from '../components/icons'
 import { fmtDate } from '../lib/guarded'
+  import { fetchMentorGroupSummary } from '../lib/mentorGroup'
+    import type { MentorGroupSummary } from '../lib/mentorGroup'
 
 interface MentorCourseRow {
   course: Course
@@ -51,6 +53,9 @@ export default function MentorPage() {
   const [tab, setTab] = useState<ClaimTab>('diampu')
   // P25: guard pengiriman klaim — tanpa ini klik ganda menyisipkan klaim duplikat.
   const [claimBusy, setClaimBusy] = useState(false)
+  // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
+  const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
+    const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
   const isAdmin = profile?.role === 'admin'
@@ -150,6 +155,23 @@ export default function MentorPage() {
     }
   }, [user, profile?.role])
 
+    // Ringkasan grup mentor dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
+  useEffect(() => {
+    if (!user) return
+      let cancelled = false
+        fetchMentorGroupSummary(user.id)
+          .then((s) => {
+            if (!cancelled) setGroupSummary(s)
+          })
+          .catch(() => {
+            if (!cancelled) setGroupSummaryFailed(true)
+          })
+          return () => {
+            cancelled = true
+          }
+  }, [user?.id])
+    
   async function handleClaim(courseId: string) {
     if (!user || claimBusy) return
     // K2: guard mentor-only — admin memantau saja, tidak mengklaim course.
@@ -334,6 +356,44 @@ export default function MentorPage() {
                   antara tombol navy gelap. */}
               <Link to="/rps" className="btn btn-secondary">Lihat RPS (read-only)</Link>
             </div>
+          </section>
+          
+          {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
+          admin + mentor; ringkasan unread + pesan terakhir. */}
+          <section className="section">
+            <div className="dash-section-head">
+              <h2>Ruang Komunikasi Mentor</h2>
+            </div>
+            {groupSummaryFailed ? (
+          <p className="muted">
+            Ringkasan grup belum bisa dimuat — grup chat mentor belum aktif di server.
+          </p>
+        ) : !groupSummary ? (
+          <p className="muted">Memuat ringkasan grup…</p>
+        ) : (
+          <>
+            <p>
+              {groupSummary.unread > 0
+              ? `${groupSummary.unread} pesan belum dibaca.`
+              : 'Semua pesan sudah dibaca.'}
+            </p>
+            {groupSummary.latest ? (
+            <p className="muted">
+              Terakhir dari {groupSummary.latest.senderName} ·{' '}
+              {fmtDate(groupSummary.latest.createdAt)}: {groupSummary.latest.body.slice(0, 120)}
+              {groupSummary.latest.body.length > 120 ? '…' : ''}
+            </p>
+          ) : (
+            <p className="muted">Belum ada pesan di grup.</p>
+          )}
+          </>
+        )}
+            <p>
+              <Link to="/komunitas-mentor" className="btn btn-primary">
+                Buka Ruang Komunikasi Mentor
+              </Link>
+            </p>
+            
           </section>
 
           {/* K2: seksi klaim hanya untuk mentor — admin memantau saja. */}
