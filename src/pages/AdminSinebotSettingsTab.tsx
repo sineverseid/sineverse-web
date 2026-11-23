@@ -7,12 +7,12 @@
 // Kejujuran yang dijaga di UI ini:
 // - Kunci API TIDAK tersimpan di sini dan tidak pernah ditampilkan —
 //   kunci hanya ada di server (Supabase Secrets).
-// - prompt_version hanya label versi — teks prompt masih di kode Edge
-//   Function; pengubahan teks prompt ditunda ke Tahap 6.
+// - prompt_version memilih teks system prompt di Edge Function sejak
+//   Tahap 6 (v1 = prompt awal; v2 = prompt diperkuat keamanan).
 // - quota_exhaustion tidak bisa diubah di Tahap 5 (tetap "Berhenti +
 //   tawarkan tiket").
-// - feature_flags disimpan dan tercatat, tapi belum ditegakkan Edge
-//   Function di Tahap 5.
+// - feature_flags disimpan dan tercatat, dan DITEGAKKAN Edge Function
+//   sejak Tahap 6.
 //
 // Bentuk nilai di ai_settings adalah JSON dan bisa berbeda-beda antar
 // kunci; parsing di bawah defensif (objek {provider, model}, string
@@ -217,7 +217,8 @@ export default function AdminSinebotSettingsTab() {
       setRateLimitWindow(String(asNumber(find('rate_limit_window_minutes'), DEFAULTS.rateLimitWindow)))
       setKbResultLimit(String(asNumber(find('kb_result_limit'), DEFAULTS.kbResultLimit)))
       const pv = find('prompt_version')
-      setPromptVersion(typeof pv === 'string' ? pv : DEFAULTS.promptVersion)
+      // Hanya v1/v2 yang valid (Tahap 6); nilai lain jatuh ke bawaan.
+      setPromptVersion(pv === 'v1' || pv === 'v2' ? pv : DEFAULTS.promptVersion)
       const qe = find('quota_exhaustion')
       setQuotaExhaustion(typeof qe === 'string' ? qe : DEFAULTS.quotaExhaustion)
       setFlags(parseFlags(find('feature_flags')))
@@ -569,21 +570,37 @@ export default function AdminSinebotSettingsTab() {
 
         <SettingRow
           label="Versi prompt"
-          hint="Label versi saja — teks prompt masih di kode Edge Function; pengubahan teks prompt ditunda ke Tahap 6."
+          hint="Memilih teks system prompt yang dipakai Edge Function untuk menjawab. Hanya v1 atau v2 yang bisa disimpan."
           setting={byKey('prompt_version')}
           busy={busy}
-          saving={false}
-          error={null}
-          notice={null}
-          readOnly
-          onSave={() => undefined}
+          saving={busyKey === 'prompt_version'}
+          error={rowErrors.prompt_version ?? null}
+          notice={rowNotices.prompt_version ?? null}
+          onSave={() => {
+            if (promptVersion !== 'v1' && promptVersion !== 'v2') {
+              setRowError('prompt_version', 'Versi prompt harus v1 atau v2.')
+              return
+            }
+            void saveRow('prompt_version', promptVersion)
+          }}
         >
-          <p>
-            Versi prompt saat ini: <strong>{promptVersion}</strong>
-          </p>
+          <form className="form" onSubmit={(e) => e.preventDefault()}>
+            <label>
+              Versi prompt
+              <select
+                value={promptVersion === 'v1' || promptVersion === 'v2' ? promptVersion : 'v1'}
+                onChange={(e) => setPromptVersion(e.target.value)}
+                disabled={busy}
+              >
+                <option value="v1">v1 — prompt awal</option>
+                <option value="v2">v2 — prompt diperkuat keamanan</option>
+              </select>
+            </label>
+          </form>
           <p className="muted">
-            Nilai ini hanya penanda versi. Mengubah teks prompt yang dipakai SINEBOT
-            membutuhkan perubahan kode Edge Function — ditunda ke Tahap 6.
+            v1: prompt awal SINEBOT. v2: prompt diperkuat — pertahanan injeksi dan
+            penolakan menampilkan system prompt. Perubahan berlaku untuk jawaban
+            SINEBOT berikutnya.
           </p>
         </SettingRow>
 
@@ -612,7 +629,7 @@ export default function AdminSinebotSettingsTab() {
 
         <SettingRow
           label="Fitur SINEBOT (feature flags)"
-          hint="Disimpan dan tercatat, tapi belum ditegakkan Edge Function di Tahap 5."
+          hint="Ditegakkan Edge Function sejak Tahap 6: flag yang dimatikan benar-benar menonaktifkan fitur terkait."
           setting={byKey('feature_flags')}
           busy={busy}
           saving={busyKey === 'feature_flags'}
@@ -656,8 +673,11 @@ export default function AdminSinebotSettingsTab() {
             </label>
           </div>
           <p className="muted">
-            Perubahan di sini disimpan dan tercatat, tapi Edge Function belum membaca
-            flag ini di Tahap 5 — penegakan flag direncanakan setelah Tahap 5.
+            Ditegakkan Edge Function sejak Tahap 6 — mematikan flag di sini
+            benar-benar menonaktifkan fitur terkait pada jawaban SINEBOT
+            berikutnya (status_check mati → tidak ada status check; kb_search
+            mati → tidak ada retrieval KB; ticketing mati → fitur tiket
+            dinonaktifkan).
           </p>
         </SettingRow>
       </section>

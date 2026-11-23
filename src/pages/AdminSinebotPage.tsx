@@ -191,7 +191,7 @@ function OverviewTab() {
         <p className="muted">
           Umpan balik: {rateText}
           {overview.tickets_avg_resolution_hours !== null
-            ? ` · Rata-rata penyelesaian tiket ±${overview.tickets_avg_resolution_hours.toFixed(1)} jam (perkiraan dari updated_at).`
+            ? ` · Rata-rata penyelesaian tiket ±${overview.tickets_avg_resolution_hours.toFixed(1)} jam (dihitung dari resolved_at; tiket yang diselesaikan sebelum Tahap 6 tidak masuk hitungan).`
             : ' · Rata-rata penyelesaian tiket belum bisa dihitung.'}
         </p>
         <p>

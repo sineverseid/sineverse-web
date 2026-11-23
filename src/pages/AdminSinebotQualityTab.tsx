@@ -1,16 +1,20 @@
-// SINEVERSE — Admin SINEBOT: tab Feedback & Kualitas (Tahap 5).
+// SINEVERSE — Admin SINEBOT: tab Feedback & Kualitas (Tahap 5; metrik
+// kinerja Tahap 6).
 //
 // Menampilkan metrik kualitas dari RPC admin_sinebot_quality lewat
 // getSinebotQuality() milik Worker B (src/lib/sinebotAdmin.ts) — fungsi
-// itu TIDAK ditulis ulang di sini. Bentuk hasil mengikuti kontrak Tahap 5:
+// itu TIDAK ditulis ulang di sini. Bentuk hasil mengikuti kontrak Tahap 5
+// ditambah kunci metrik Tahap 6 (migrasi 055, sinebot_metrics):
 // {ai_messages_total, ai_sourced, ai_sourced_pct (number|null),
 // ai_unsourced, feedback_helpful, feedback_not_helpful,
 // escalations_to_ticket, unanswered: [{conversation_id, question
-// (string|null), asked_at}]}.
+// (string|null — sejak Tahap 6 berisi teks pertanyaan asli), asked_at}],
+// avg_response_ms, p95_response_ms, error_rate (fraksi 0-1),
+// total_requests, total_tokens, requests_by_provider, tokens_by_provider,
+// blocked_injections}.
 //
-// Yang SENGAJA tidak ditampilkan sebagai angka: waktu respons AI, error
-// rate, dan biaya token — ketiganya tidak dilacak di mana pun, jadi
-// tampil sebagai baris keterangan "Belum dilacak", bukan angka karangan.
+// Biaya uang TIDAK ditampilkan: semua provider pada tier gratis, jadi
+// token dicatat apa adanya dan rupiah tidak dikarang.
 import { useEffect, useState } from 'react'
 import { fmtDate } from '../lib/guarded'
 import { getSinebotQuality } from '../lib/sinebotAdmin'
@@ -21,6 +25,12 @@ function formatPct(value: number | null | undefined): string {
   // RPC mengembalikan fraksi (0.8 = 80%); bila sudah persen (>1) dipakai apa adanya.
   const pct = value > 1 ? value : value * 100
   return `${Math.round(pct)}%`
+}
+
+/** Milidetik dari RPC (number|null) — "—" bila belum ada data metrik. */
+function formatMs(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  return `${Math.round(value)} ms`
 }
 
 export default function AdminSinebotQualityTab() {
@@ -70,12 +80,21 @@ export default function AdminSinebotQualityTab() {
   const helpfulPct =
     feedbackTotal > 0 ? `${Math.round((helpful / feedbackTotal) * 100)}%` : null
   const unanswered = data.unanswered
+  // Rincian per provider: gabungkan kunci requests_by_provider dan
+  // tokens_by_provider supaya provider yang hanya muncul di satu sisi
+  // tetap tampil (angka sisi lain = 0).
+  const providerNames = Array.from(
+    new Set([
+      ...Object.keys(data.requests_by_provider),
+      ...Object.keys(data.tokens_by_provider),
+    ]),
+  ).sort()
 
   return (
     <div>
       <p className="muted">
-        Ringkasan kualitas jawaban SINEBOT dari feedback pengguna dan sumber Knowledge
-        Base. Angka dihitung dari data nyata — yang belum dilacak ditulis apa adanya.
+        Ringkasan kualitas jawaban SINEBOT dari feedback pengguna, sumber Knowledge
+        Base, dan metrik kinerja AI. Angka dihitung dari data nyata.
       </p>
 
       <section className="section" aria-label="Feedback pengguna">
@@ -163,26 +182,66 @@ export default function AdminSinebotQualityTab() {
         )}
       </section>
 
-      <section className="section" aria-label="Metrik yang belum dilacak">
-        <h2>Belum Dilacak</h2>
+      <section className="section" aria-label="Kinerja AI">
+        <h2>Kinerja AI</h2>
         <dl className="profile-list">
           <div>
-            <dt>Waktu respons AI</dt>
-            <dd>Belum dilacak</dd>
+            <dt>Waktu respons rata-rata</dt>
+            <dd>{formatMs(data.avg_response_ms)}</dd>
+          </div>
+          <div>
+            <dt>Waktu respons p95</dt>
+            <dd>{formatMs(data.p95_response_ms)}</dd>
           </div>
           <div>
             <dt>Error rate</dt>
-            <dd>Belum dilacak</dd>
+            <dd>
+              {data.error_rate === null || data.error_rate === undefined
+                ? '—'
+                : formatPct(data.error_rate)}
+            </dd>
           </div>
           <div>
-            <dt>Biaya token</dt>
-            <dd>Belum dilacak</dd>
+            <dt>Total request</dt>
+            <dd>{data.total_requests}</dd>
+          </div>
+          <div>
+            <dt>Total token</dt>
+            <dd>{data.total_tokens}</dd>
+          </div>
+          <div>
+            <dt>Injeksi diblokir</dt>
+            <dd>{data.blocked_injections}</dd>
           </div>
         </dl>
+        {providerNames.length > 0 && (
+          <>
+            <h3>Per provider</h3>
+            <table className="sinebot-admin-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Request</th>
+                  <th>Token</th>
+                </tr>
+              </thead>
+              <tbody>
+                {providerNames.map((provider) => (
+                  <tr key={provider}>
+                    <td>{provider}</td>
+                    <td>{data.requests_by_provider[provider] ?? 0}</td>
+                    <td>{data.tokens_by_provider[provider] ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
         <p className="muted">
-          Ketiga metrik ini tidak dicatat di mana pun di Tahap 5 — menampilkannya sebagai
-          angka akan mengarang data. Pelacakan ketiganya butuh pencatatan di Edge
-          Function / tabel baru dan ditunda ke tahap berikutnya.
+          Metrik dihitung dari sinebot_metrics sejak migrasi 055 diterapkan; sebelum
+          itu tidak ada data metrik, jadi angka tampil 0 atau “—”. Biaya uang tidak
+          ditampilkan karena semua provider pada tier gratis — token dicatat,
+          rupiah tidak dikarang.
         </p>
       </section>
 

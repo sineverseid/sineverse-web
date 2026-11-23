@@ -724,6 +724,10 @@ export default function HelpCenterPage() {
 
       <section className="section" aria-label="Riwayat percakapan">
         <h2>Riwayat Percakapan</h2>
+        <p className="muted">
+          Riwayat chat disimpan 90 hari dan terhapus otomatis setelahnya. Kamu bisa
+          menghapus percakapanmu kapan saja lewat tombol Hapus.
+        </p>
         {user ? (
           historyLoading ? (
             <p className="muted">Memuat riwayat…</p>
