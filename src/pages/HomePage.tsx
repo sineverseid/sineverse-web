@@ -22,7 +22,7 @@
 //   "Selengkapnya"), Jelajahi 2x2 sebagai kartu navigasi langsung,
 //   CTA horizontal (teks kiri, tombol kanan).
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import '../index-homepage.css'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
@@ -117,7 +117,7 @@ const EXPLORE_MENUS: {
     icon: 'academy',
     name: 'Academy',
     short: 'Belajar filmmaking',
-    to: '/akademi',
+    to: '/akademi/perkenalan',
     featured: true,
   },
   {
@@ -125,21 +125,21 @@ const EXPLORE_MENUS: {
     icon: 'community',
     name: 'Community',
     short: 'Temukan komunitas',
-    to: '/komunitas',
+    to: '/komunitas/perkenalan',
   },
   {
     id: 'projects',
     icon: 'project',
     name: 'Projects',
     short: 'Berkolaborasi membuat film',
-    to: '/proyek',
+    to: '/proyek/perkenalan',
   },
   {
     id: 'showcase',
     icon: 'trophy',
     name: 'Showcase',
     short: 'Pamerkan karya dan ikuti event',
-    to: '/showcase',
+    to: '/showcase/perkenalan',
   },
 ]
 
@@ -158,8 +158,6 @@ export default function HomePage() {
   const [dataLoading, setDataLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [coursesError, setCoursesError] = useState<string | null>(null)
-  const [exploreNotice, setExploreNotice] = useState<string | null>(null)
-  const navigate = useNavigate()
   const [aboutOpen, setAboutOpen] = useState(false)
   // Carousel hero (landing logout): slide aktif + jeda saat hover/fokus.
   const [slide, setSlide] = useState(0)
@@ -576,63 +574,26 @@ export default function HomePage() {
               kartu navigasi langsung (sesuai acuan final). */}
           <section className="landing-explore" id="jelajahi" aria-label="Jelajahi Dunia Filmmaking">
             <h2>Jelajahi Dunia Filmmaking</h2>
-            {exploreNotice && (
-              <p className="notice-box" role="status">
-                {exploreNotice}
-              </p>
-            )}
             <div className="explore-grid">
-              {EXPLORE_MENUS.map((m) => {
-                // Community dan Projects butuh login: beri tahu pengunjung
-                // logout sebelum mengarahkannya ke halaman masuk.
-                const needsLogin = !user && (m.id === 'community' || m.id === 'projects')
-                return (
-                  <Link
-                    key={m.id}
-                    to={m.to}
-                    className={`explore-card${m.featured ? ' featured' : ''}`}
-                    onClick={
-                      needsLogin
-                        ? (e) => {
-                            e.preventDefault()
-                            setExploreNotice(
-                              'Masuk terlebih dahulu untuk membuka Komunitas/Proyek.',
-                            )
-                            window.setTimeout(() => navigate('/login'), 1600)
-                          }
-                        : undefined
-                    }
-                  >
-                    <span className="explore-icon">
-                      <Icon name={m.icon} size={28} />
-                    </span>
-                    <span className="explore-text">
-                      <span className="explore-name">{m.name}</span>
-                      <span className="explore-short">{m.short}</span>
-                      {needsLogin && (
-                        <span
-                          className="explore-badge"
-                          style={{
-                            display: 'inline-block',
-                            marginTop: '0.25rem',
-                            padding: '0.1rem 0.5rem',
-                            borderRadius: '999px',
-                            background: '#fff3cd',
-                            color: '#7a5b00',
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            whiteSpace: 'nowrap',
-                            alignSelf: 'flex-start',
-                          }}
-                        >
-                          Butuh masuk
-                        </span>
-                      )}
-                    </span>
-                    <Icon name="chevronRight" size={20} className="explore-chevron" />
-                  </Link>
-                )
-              })}
+              {/* Kartu menaut ke halaman perkenalan publik masing-masing
+                  fitur — guest bisa membacanya tanpa login; tombol di dalam
+                  halaman perkenalan yang mengarah ke fitur itu sendiri. */}
+              {EXPLORE_MENUS.map((m) => (
+                <Link
+                  key={m.id}
+                  to={m.to}
+                  className={`explore-card${m.featured ? ' featured' : ''}`}
+                >
+                  <span className="explore-icon">
+                    <Icon name={m.icon} size={28} />
+                  </span>
+                  <span className="explore-text">
+                    <span className="explore-name">{m.name}</span>
+                    <span className="explore-short">{m.short}</span>
+                  </span>
+                  <Icon name="chevronRight" size={20} className="explore-chevron" />
+                </Link>
+              ))}
             </div>
           </section>
 
@@ -828,7 +789,7 @@ function SiswaHome(props: SiswaHomeProps) {
       </section>
 
       <nav className="quick-grid" aria-label="Jalan pintas">
-        <Link to="/akademi" className="quick-tile">
+        <Link to="/akademi/perkenalan" className="quick-tile">
           <Icon name="academy" size={24} />
           Kursus Saya
         </Link>
@@ -844,7 +805,7 @@ function SiswaHome(props: SiswaHomeProps) {
           <Icon name="library" size={24} />
           Materi
         </Link>
-        <Link to="/komunitas" className="quick-tile">
+        <Link to="/komunitas/perkenalan" className="quick-tile">
           <Icon name="community" size={24} />
           Komunitas
         </Link>
