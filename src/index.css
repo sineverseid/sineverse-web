@@ -682,6 +682,11 @@ p {
   margin: 0.25rem 0 0;
 }
 
+.login-forgot {
+   text-align: right;
+   margin: -0.25rem 0 0;
+}
+
 .login-register {
   display: flex;
   flex-direction: column;
