@@ -7,9 +7,13 @@
 // Bila knowledge base masih kosong (belum ada artikel/FAQ yang
 // diterbitkan), tampilkan empty state yang rapi — jangan pernah
 // menampilkan data palsu. Riwayat percakapan hanya untuk pengguna login;
-// tamu melihat ajakan login. Ticketing penuh baru Tahap 4 — "Butuh
-// bantuan manusia?" memakai mailto ke admin.
-import { useEffect, useMemo, useState } from 'react'
+// tamu melihat ajakan login. Tiket dukungan penuh (Tahap 4): form "Buat
+// Tiket" + "Tiket Saya" di bawah, hanya untuk pengguna login; identitas
+// + role terisi otomatis dari session — tidak ada field nama/email/role
+// yang bisa diketik. "Butuh bantuan manusia?" tetap memakai mailto ke
+// admin sebagai jalan lain.
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
@@ -18,12 +22,27 @@ import Icon from '../components/icons'
 import { supabase } from '../lib/supabase'
 import {
   SinebotError,
+  createTicket,
+  createTicketAttachmentUrl,
   deleteConversation,
+  getTicket,
   listConversations,
+  listMyTickets,
+  replyToTicket,
   searchKb,
   sinebotAdminMailto,
+  validateTicketAttachment,
 } from '../lib/sinebot'
-import type { KbResult, SinebotConversation, SinebotRole } from '../lib/sinebot'
+import type {
+  KbResult,
+  SinebotConversation,
+  SinebotRole,
+  Ticket,
+  TicketCategory,
+  TicketDetail,
+  TicketPriority,
+  TicketStatus,
+} from '../lib/sinebot'
 
 // Urutan tampil kategori. Nilai di sini HARUS sama persis dengan nilai
 // `category` di seed 049 (mis. 'Akun', bukan 'Akun & Login') — chip yang
@@ -59,6 +78,86 @@ interface FaqItem {
   answer: string
   category: string
   audience_roles: string[]
+}
+
+// Kategori tiket: label yang tampil → nilai kontrak RPC (CHECK
+// constraint support_tickets.category). Jangan ubah nilai tanpa migrasi.
+const TICKET_CATEGORIES: { value: TicketCategory; label: string }[] = [
+  { value: 'akun', label: 'Akun & Login' },
+  { value: 'academy', label: 'Academy' },
+  { value: 'tugas', label: 'Tugas & Penilaian' },
+  { value: 'sertifikat', label: 'Sertifikat' },
+  { value: 'komunitas', label: 'Komunitas' },
+  { value: 'teknis', label: 'Teknis' },
+  { value: 'lainnya', label: 'Lainnya' },
+]
+
+const TICKET_PRIORITIES: { value: TicketPriority; label: string; hint: string }[] = [
+  { value: 'low', label: 'Low', hint: 'Tidak mendesak, bisa menunggu.' },
+  { value: 'medium', label: 'Medium', hint: 'Perlu ditangani dalam beberapa hari.' },
+  { value: 'high', label: 'High', hint: 'Mengganggu aktivitas belajarmu.' },
+  { value: 'critical', label: 'Critical', hint: 'Platform tidak bisa dipakai sama sekali.' },
+]
+
+const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
+  open: 'Baru',
+  assigned: 'Ditugaskan',
+  in_progress: 'Sedang Ditangani',
+  waiting_user: 'Menunggu Kamu',
+  resolved: 'Terselesaikan',
+  closed: 'Ditutup',
+}
+
+const TICKET_STATUS_CLASS: Record<TicketStatus, string> = {
+  open: 'sinebot-ticket-status-open',
+  assigned: 'sinebot-ticket-status-assigned',
+  in_progress: 'sinebot-ticket-status-progress',
+  waiting_user: 'sinebot-ticket-status-waiting',
+  resolved: 'sinebot-ticket-status-resolved',
+  closed: 'sinebot-ticket-status-closed',
+}
+
+// Gaya inline untuk pil status (index.css bukan file milik worker ini,
+// jadi warna pil didefinisikan di sini, mengikuti palet SINEVERSE).
+const TICKET_STATUS_PILL: CSSProperties = {
+  display: 'inline-block',
+  padding: '0.1rem 0.55rem',
+  borderRadius: '999px',
+  fontSize: '0.8rem',
+  fontWeight: 700,
+}
+
+const TICKET_STATUS_STYLE: Record<TicketStatus, CSSProperties> = {
+  open: { ...TICKET_STATUS_PILL, background: '#E8EDF3', color: '#172438' },
+  assigned: { ...TICKET_STATUS_PILL, background: '#FEF3C7', color: '#92400E' },
+  in_progress: { ...TICKET_STATUS_PILL, background: '#DBEAFE', color: '#1E40AF' },
+  waiting_user: { ...TICKET_STATUS_PILL, background: '#FDE68A', color: '#78350F' },
+  resolved: { ...TICKET_STATUS_PILL, background: '#A3E6C4', color: '#14532D' },
+  closed: { ...TICKET_STATUS_PILL, background: '#E8EDF3', color: '#5B6B7C' },
+}
+
+const TICKET_PRIORITY_LABELS: Record<TicketPriority, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
+}
+
+function formatTicketFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTicketDate(value: string): string {
+  if (!value) return ''
+  return new Date(value).toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -230,6 +329,200 @@ export default function HelpCenterPage() {
       cancelled = true
     }
   }, [user])
+
+  // ---- Tiket dukungan (Tahap 4) — hanya untuk pengguna login. ----
+  // Dibuka otomatis bila URL membawa ?tab=tiket — dipakai tombol
+  // "Hubungi Admin" di panel SINEBOT (lihat SinebotChat.tsx). Query
+  // param dipilih (bukan location state) supaya tautan bisa dibagikan
+  // dan tetap membuka section tiket setelah refresh.
+  const ticketRequested = searchParams.get('tab') === 'tiket'
+  const ticketSectionRef = useRef<HTMLElement | null>(null)
+  const [tickets, setTickets] = useState<Ticket[]>([])
+  const [ticketsLoading, setTicketsLoading] = useState(false)
+  const [ticketsError, setTicketsError] = useState<string | null>(null)
+  const [ticketCategory, setTicketCategory] = useState<TicketCategory>('akun')
+  const [ticketSubject, setTicketSubject] = useState('')
+  const [ticketDescription, setTicketDescription] = useState('')
+  const [ticketPageContext, setTicketPageContext] = useState('')
+  const [ticketPriority, setTicketPriority] = useState<TicketPriority>('medium')
+  const [ticketFile, setTicketFile] = useState<File | null>(null)
+  const [ticketFileError, setTicketFileError] = useState<string | null>(null)
+  const [formBusy, setFormBusy] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [formSuccess, setFormSuccess] = useState<string | null>(null)
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
+  const [ticketDetail, setTicketDetail] = useState<TicketDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [replyText, setReplyText] = useState('')
+  const [replyFile, setReplyFile] = useState<File | null>(null)
+  const [replyFileError, setReplyFileError] = useState<string | null>(null)
+  const [replyBusy, setReplyBusy] = useState(false)
+  const [replyError, setReplyError] = useState<string | null>(null)
+  const [attachmentBusy, setAttachmentBusy] = useState<string | null>(null)
+  const ticketFileInputRef = useRef<HTMLInputElement | null>(null)
+  const replyFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (!ticketRequested || !ticketSectionRef.current) return
+    ticketSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [ticketRequested])
+
+  async function loadTickets(): Promise<void> {
+    setTicketsLoading(true)
+    setTicketsError(null)
+    try {
+      setTickets(await listMyTickets())
+    } catch (err: unknown) {
+      setTicketsError(
+        err instanceof SinebotError
+          ? err.message
+          : 'Daftar tiket tidak bisa dimuat. Coba lagi nanti.',
+      )
+    } finally {
+      setTicketsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return
+    void loadTickets()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
+
+  async function openTicketDetail(id: string): Promise<void> {
+    setSelectedTicketId(id)
+    setTicketDetail(null)
+    setDetailError(null)
+    setReplyText('')
+    setReplyFile(null)
+    setReplyFileError(null)
+    setReplyError(null)
+    setDetailLoading(true)
+    try {
+      setTicketDetail(await getTicket(id))
+    } catch (err: unknown) {
+      setDetailError(
+        err instanceof SinebotError
+          ? err.message
+          : 'Detail tiket tidak bisa dimuat. Coba lagi nanti.',
+      )
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  function handleTicketFileChange(file: File | null): void {
+    setTicketFileError(null)
+    if (!file) {
+      setTicketFile(null)
+      return
+    }
+    const error = validateTicketAttachment(file)
+    if (error) {
+      setTicketFileError(error)
+      setTicketFile(null)
+      if (ticketFileInputRef.current) ticketFileInputRef.current.value = ''
+      return
+    }
+    setTicketFile(file)
+  }
+
+  function handleReplyFileChange(file: File | null): void {
+    setReplyFileError(null)
+    if (!file) {
+      setReplyFile(null)
+      return
+    }
+    const error = validateTicketAttachment(file)
+    if (error) {
+      setReplyFileError(error)
+      setReplyFile(null)
+      if (replyFileInputRef.current) replyFileInputRef.current.value = ''
+      return
+    }
+    setReplyFile(file)
+  }
+
+  async function handleCreateTicket(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    if (formBusy) return // busy guard: cegah double-submit
+    setFormError(null)
+    setFormSuccess(null)
+    setFormBusy(true)
+    try {
+      const id = await createTicket(
+        ticketCategory,
+        ticketSubject,
+        ticketDescription,
+        ticketPageContext,
+        ticketPriority,
+        ticketFile,
+      )
+      setFormSuccess('Tiket berhasil dibuat. Admin akan menindaklanjutinya — pantau balasannya di bawah.')
+      setTicketSubject('')
+      setTicketDescription('')
+      setTicketPageContext('')
+      setTicketPriority('medium')
+      setTicketFile(null)
+      setTicketFileError(null)
+      if (ticketFileInputRef.current) ticketFileInputRef.current.value = ''
+      await loadTickets()
+      await openTicketDetail(id)
+    } catch (err: unknown) {
+      setFormError(
+        err instanceof SinebotError
+          ? err.message
+          : 'Tiket tidak bisa dibuat. Coba lagi sebentar lagi.',
+      )
+    } finally {
+      setFormBusy(false)
+    }
+  }
+
+  async function handleReplyTicket(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    if (replyBusy || !selectedTicketId || !ticketDetail) return
+    if (ticketDetail.ticket.status === 'closed') return
+    setReplyError(null)
+    setReplyBusy(true)
+    try {
+      await replyToTicket(selectedTicketId, replyText, replyFile)
+      setReplyText('')
+      setReplyFile(null)
+      setReplyFileError(null)
+      if (replyFileInputRef.current) replyFileInputRef.current.value = ''
+      await loadTickets()
+      await openTicketDetail(selectedTicketId)
+    } catch (err: unknown) {
+      setReplyError(
+        err instanceof SinebotError
+          ? err.message
+          : 'Balasan tidak bisa dikirim. Coba lagi sebentar lagi.',
+      )
+    } finally {
+      setReplyBusy(false)
+    }
+  }
+
+  async function handleOpenAttachment(path: string): Promise<void> {
+    if (attachmentBusy) return
+    setAttachmentBusy(path)
+    try {
+      // Signed URL berumur 1 jam, dibuat saat diklik dan langsung dibuka
+      // di tab baru — tidak disimpan di state.
+      const url = await createTicketAttachmentUrl(path, 3600)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err: unknown) {
+      setDetailError(
+        err instanceof SinebotError
+          ? err.message
+          : 'Lampiran tidak bisa dibuka. Coba lagi nanti.',
+      )
+    } finally {
+      setAttachmentBusy(null)
+    }
+  }
 
   async function handleDeleteConversation(id: string): Promise<void> {
     if (!window.confirm('Hapus percakapan ini? Riwayatnya tidak bisa dikembalikan.')) return
@@ -473,6 +766,338 @@ export default function HelpCenterPage() {
           <p className="muted">
             <Link to="/login">Login</Link> untuk menyimpan dan melihat riwayat percakapanmu
             dengan SINEBOT.
+          </p>
+        )}
+      </section>
+
+      <section
+        ref={ticketSectionRef}
+        className="section"
+        aria-label="Tiket dukungan"
+        id="tiket"
+      >
+        <h2>Tiket Dukungan</h2>
+        {user ? (
+          <>
+            <form className="form" onSubmit={(e) => void handleCreateTicket(e)}>
+              <h3>Buat Tiket</h3>
+              <p className="muted">
+                Tiket dikirim atas nama akunmu yang sedang login
+                {user.email ? ` (${user.email})` : ''} — tidak perlu mengisi nama atau email.
+              </p>
+              <label>
+                Kategori
+                <select
+                  value={ticketCategory}
+                  onChange={(e) => setTicketCategory(e.target.value as TicketCategory)}
+                  disabled={formBusy}
+                >
+                  {TICKET_CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Subjek
+                <input
+                  type="text"
+                  value={ticketSubject}
+                  onChange={(e) => setTicketSubject(e.target.value)}
+                  placeholder="Ringkasan singkat masalahmu"
+                  maxLength={200}
+                  disabled={formBusy}
+                  required
+                />
+                <span className="muted">{ticketSubject.length}/200 karakter</span>
+              </label>
+              <label>
+                Deskripsi
+                <textarea
+                  value={ticketDescription}
+                  onChange={(e) => setTicketDescription(e.target.value)}
+                  placeholder="Jelaskan masalahmu sedetail mungkin: apa yang terjadi, kapan, dan langkah apa yang sudah kamu coba."
+                  rows={5}
+                  maxLength={2000}
+                  disabled={formBusy}
+                  required
+                />
+                <span className="muted">{ticketDescription.length}/2000 karakter</span>
+              </label>
+              <label>
+                Halaman / fitur terkait (opsional)
+                <input
+                  type="text"
+                  value={ticketPageContext}
+                  onChange={(e) => setTicketPageContext(e.target.value)}
+                  placeholder="Misalnya: halaman Tugas kelas Sinematografi"
+                  maxLength={200}
+                  disabled={formBusy}
+                />
+              </label>
+              <label>
+                Prioritas
+                <select
+                  value={ticketPriority}
+                  onChange={(e) => setTicketPriority(e.target.value as TicketPriority)}
+                  disabled={formBusy}
+                >
+                  {TICKET_PRIORITIES.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label} — {p.hint}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted">
+                  {TICKET_PRIORITIES.find((p) => p.value === ticketPriority)?.hint}
+                </span>
+              </label>
+              <label>
+                Lampiran (opsional, 1 file)
+                <input
+                  ref={ticketFileInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf"
+                  onChange={(e) => handleTicketFileChange(e.target.files?.[0] ?? null)}
+                  disabled={formBusy}
+                />
+                <span className="muted">
+                  Hanya JPG, PNG, WebP, atau PDF, maksimal 5 MB.
+                </span>
+              </label>
+              {ticketFile && (
+                <p>
+                  File dipilih: <strong>{ticketFile.name}</strong> (
+                  {formatTicketFileSize(ticketFile.size)}){' '}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => handleTicketFileChange(null)}
+                    disabled={formBusy}
+                  >
+                    Hapus pilihan
+                  </button>
+                </p>
+              )}
+              {ticketFileError && <p className="error-box">{ticketFileError}</p>}
+              {formError && <p className="error-box">{formError}</p>}
+              {formSuccess && (
+                <p className="sinebot-ticket-success" role="status" style={{ color: '#16865E', fontWeight: 700 }}>
+                  {formSuccess}
+                </p>
+              )}
+              <div className="form-actions">
+                <button type="submit" className="btn btn-primary" disabled={formBusy}>
+                  {formBusy ? 'Mengirim…' : 'Buat Tiket'}
+                </button>
+              </div>
+            </form>
+
+            <h3>Tiket Saya</h3>
+            {selectedTicketId ? (
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  onClick={() => {
+                    setSelectedTicketId(null)
+                    setTicketDetail(null)
+                    setDetailError(null)
+                  }}
+                >
+                  ← Kembali ke daftar tiket
+                </button>
+                {detailLoading ? (
+                  <p className="muted">Memuat detail tiket…</p>
+                ) : detailError ? (
+                  <p className="error-box">{detailError}</p>
+                ) : ticketDetail ? (
+                  <div className="sinebot-ticket-detail">
+                    <h4>{ticketDetail.ticket.subject}</h4>
+                    <p className="muted">
+                      <span
+                        className={`sinebot-ticket-status ${TICKET_STATUS_CLASS[ticketDetail.ticket.status]}`}
+                        style={TICKET_STATUS_STYLE[ticketDetail.ticket.status]}
+                      >
+                        {TICKET_STATUS_LABELS[ticketDetail.ticket.status]}
+                      </span>{' '}
+                      · Prioritas {TICKET_PRIORITY_LABELS[ticketDetail.ticket.priority]} ·{' '}
+                      {formatTicketDate(ticketDetail.ticket.created_at)}
+                    </p>
+                    {ticketDetail.ticket.page_context && (
+                      <p className="muted">
+                        Halaman / fitur terkait: {ticketDetail.ticket.page_context}
+                      </p>
+                    )}
+                    <p className="sinebot-article-body">{ticketDetail.ticket.description}</p>
+                    {ticketDetail.ticket.attachment_path && (
+                      <p>
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={attachmentBusy === ticketDetail.ticket.attachment_path}
+                          onClick={() =>
+                            void handleOpenAttachment(
+                              ticketDetail.ticket.attachment_path as string,
+                            )
+                          }
+                        >
+                          Lihat lampiran: {ticketDetail.ticket.attachment_name ?? 'lampiran'}
+                          {typeof ticketDetail.ticket.attachment_size === 'number'
+                            ? ` (${formatTicketFileSize(ticketDetail.ticket.attachment_size)})`
+                            : ''}
+                        </button>
+                      </p>
+                    )}
+                    <h4>Balasan</h4>
+                    {ticketDetail.messages.length === 0 ? (
+                      <p className="muted">
+                        Belum ada balasan. Admin akan membalas tiketmu di sini.
+                      </p>
+                    ) : (
+                      <ul className="sinebot-ticket-replies">
+                        {ticketDetail.messages.map((m) => (
+                          <li
+                            key={m.id}
+                            className={
+                              m.sender_type === 'admin'
+                                ? 'sinebot-ticket-reply-admin'
+                                : 'sinebot-ticket-reply-own'
+                            }
+                          >
+                            <p className="muted">
+                              <strong>
+                                {m.sender_type === 'admin' ? 'Admin SINEVERSE' : 'Kamu'}
+                              </strong>{' '}
+                              · {formatTicketDate(m.created_at)}
+                            </p>
+                            <p className="sinebot-article-body">{m.message}</p>
+                            {m.attachment_path && (
+                              <p>
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  disabled={attachmentBusy === m.attachment_path}
+                                  onClick={() =>
+                                    void handleOpenAttachment(m.attachment_path as string)
+                                  }
+                                >
+                                  Lihat lampiran: {m.attachment_name ?? 'lampiran'}
+                                  {typeof m.attachment_size === 'number'
+                                    ? ` (${formatTicketFileSize(m.attachment_size)})`
+                                    : ''}
+                                </button>
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {ticketDetail.ticket.status === 'closed' ? (
+                      <p className="muted">
+                        Tiket ini sudah Ditutup dan tidak bisa dibalas. Bila masalahmu belum
+                        selesai, buat tiket baru.
+                      </p>
+                    ) : (
+                      <form className="form" onSubmit={(e) => void handleReplyTicket(e)}>
+                        <label>
+                          Balas tiket
+                          <textarea
+                            value={replyText}
+                            onChange={(e) => setReplyText(e.target.value)}
+                            placeholder="Tulis balasanmu untuk admin…"
+                            rows={4}
+                            maxLength={2000}
+                            disabled={replyBusy}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Lampiran balasan (opsional, 1 file)
+                          <input
+                            ref={replyFileInputRef}
+                            type="file"
+                            accept=".jpg,.jpeg,.png,.webp,.pdf"
+                            onChange={(e) => handleReplyFileChange(e.target.files?.[0] ?? null)}
+                            disabled={replyBusy}
+                          />
+                          <span className="muted">
+                            Hanya JPG, PNG, WebP, atau PDF, maksimal 5 MB.
+                          </span>
+                        </label>
+                        {replyFile && (
+                          <p>
+                            File dipilih: <strong>{replyFile.name}</strong> (
+                            {formatTicketFileSize(replyFile.size)}){' '}
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => handleReplyFileChange(null)}
+                              disabled={replyBusy}
+                            >
+                              Hapus pilihan
+                            </button>
+                          </p>
+                        )}
+                        {replyFileError && <p className="error-box">{replyFileError}</p>}
+                        {replyError && <p className="error-box">{replyError}</p>}
+                        <div className="form-actions">
+                          <button
+                            type="submit"
+                            className="btn btn-primary"
+                            disabled={replyBusy}
+                          >
+                            {replyBusy ? 'Mengirim…' : 'Kirim Balasan'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : ticketsLoading ? (
+              <p className="muted">Memuat tiket…</p>
+            ) : ticketsError ? (
+              <p className="error-box">{ticketsError}</p>
+            ) : tickets.length === 0 ? (
+              <p className="muted">
+                Belum ada tiket. Bila SINEBOT belum bisa membantumu, buat tiket di atas dan
+                admin akan menindaklanjutinya.
+              </p>
+            ) : (
+              <ul className="sinebot-article-list">
+                {tickets.map((t) => (
+                  <li key={t.id}>
+                    <button
+                      type="button"
+                      className="sinebot-article-head"
+                      onClick={() => void openTicketDetail(t.id)}
+                    >
+                      <span>
+                        <strong>{t.subject}</strong>
+                        <span className="muted sinebot-article-meta">
+                          <span
+                            className={`sinebot-ticket-status ${TICKET_STATUS_CLASS[t.status]}`}
+                            style={TICKET_STATUS_STYLE[t.status]}
+                          >
+                            {TICKET_STATUS_LABELS[t.status]}
+                          </span>{' '}
+                          · Prioritas {TICKET_PRIORITY_LABELS[t.priority]} ·{' '}
+                          {formatTicketDate(t.created_at)}
+                        </span>
+                      </span>
+                      <Icon name="chevronRight" size={18} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <p className="muted">
+            <Link to="/login">Login</Link> untuk membuat tiket dukungan dan melihat tiketmu —
+            admin SINEVERSE akan menindaklanjutinya.
           </p>
         )}
       </section>
