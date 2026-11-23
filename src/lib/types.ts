@@ -806,8 +806,7 @@ export interface MentorApplication {
   status: 'pending' | 'approved' | 'rejected' | 'revision_required'
   decided_by: string | null
   created_at: string
-  /** Migrasi 027: 6 info lamaran mentor (master prompt 
-  2). */
+  /** Migrasi 027: 6 info lamaran mentor (master prompt §2). */
   profession?: string | null
   reason?: string | null
   volunteer_agreed?: boolean | null
