@@ -360,3 +360,390 @@ export async function submitFeedback(
   })
   if (error) throw friendlySupabaseError(error)
 }
+
+// ---------------------------------------------------------------------------
+// SINEBOT Tahap 4 — Tiket dukungan (support_tickets).
+//
+// Kontrak RPC (dibangun bersama pekerja backend dari kontrak yang sama):
+// - create_sinebot_ticket(p_category, p_subject, p_description,
+//   p_page_context, p_priority, p_attachment_path, p_attachment_name,
+//   p_attachment_size, p_attachment_type) RETURNS uuid
+// - list_my_tickets() RETURNS SETOF support_tickets (milik pemanggil)
+// - get_sinebot_ticket(p_ticket_id) RETURNS jsonb {ticket, messages[]}
+// - reply_to_sinebot_ticket(p_ticket_id, p_message, p_attachment_path,
+//   p_attachment_name, p_attachment_size, p_attachment_type) RETURNS uuid
+// Nilai category/priority di bawah HARUS cocok persis dengan CHECK
+// constraint tabel support_tickets; jangan ubah tanpa mengubah migrasi.
+// Lampiran: bucket privat 'ticket-attachments', 1 file per tiket/balasan,
+// hanya jpg/jpeg/png/webp/pdf, maks 5 MB. TIDAK ada scan malware —
+// jangan klaim ada di UI.
+// ---------------------------------------------------------------------------
+
+export type TicketCategory =
+  | 'akun'
+  | 'academy'
+  | 'tugas'
+  | 'sertifikat'
+  | 'komunitas'
+  | 'teknis'
+  | 'lainnya'
+
+export type TicketPriority = 'low' | 'medium' | 'high' | 'critical'
+
+export type TicketStatus =
+  | 'open'
+  | 'assigned'
+  | 'in_progress'
+  | 'waiting_user'
+  | 'resolved'
+  | 'closed'
+
+export interface TicketAttachment {
+  path: string
+  name: string
+  size: number
+  type: string
+}
+
+export interface Ticket {
+  id: string
+  user_id: string
+  category: TicketCategory
+  subject: string
+  description: string
+  page_context: string | null
+  priority: TicketPriority
+  status: TicketStatus
+  attachment_path: string | null
+  attachment_name: string | null
+  attachment_size: number | null
+  attachment_type: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TicketMessage {
+  id: string
+  ticket_id: string
+  sender_type: 'user' | 'admin'
+  sender_id: string | null
+  message: string
+  attachment_path: string | null
+  attachment_name: string | null
+  attachment_size: number | null
+  attachment_type: string | null
+  created_at: string
+}
+
+export interface TicketDetail {
+  ticket: Ticket
+  messages: TicketMessage[]
+}
+
+export const MAX_TICKET_ATTACHMENT_SIZE = 5242880 // 5 MB
+
+export const ALLOWED_TICKET_ATTACHMENT_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+] as const
+
+const TICKET_ATTACHMENTS_BUCKET = 'ticket-attachments'
+
+function friendlyTicketError(error: { message: string }, action: string): SinebotError {
+  const msg = error.message.toLowerCase()
+  if (msg.includes('failed to fetch') || msg.includes('network')) {
+    return new SinebotError(
+      'network',
+      'Tidak dapat terhubung ke SINEVERSE. Periksa koneksi internet kamu lalu coba lagi.',
+    )
+  }
+  if (msg.includes('jwt') || msg.includes('unauthorized') || msg.includes('not authenticated')) {
+    return new SinebotError(
+      'unauthorized',
+      'Sesi kamu sudah berakhir. Masuk lagi untuk melanjutkan.',
+    )
+  }
+  return new SinebotError('generic', `${action} Coba lagi sebentar lagi.`)
+}
+
+// ---- Pure helpers (diuji unit dengan skrip Node, lihat laporan Tahap 4) ----
+
+/**
+ * Validasi lampiran SEBELUM upload. Mengembalikan pesan error Bahasa
+ * Indonesia, atau null bila file boleh diunggah.
+ */
+export function validateTicketAttachment(file: {
+  name: string
+  type: string
+  size: number
+}): string | null {
+  if (!file || typeof file.size !== 'number' || file.size <= 0) {
+    return 'File lampiran tidak bisa dibaca. Pilih file lain.'
+  }
+  if (file.size > MAX_TICKET_ATTACHMENT_SIZE) {
+    return 'Ukuran file maksimal 5 MB. Pilih file yang lebih kecil.'
+  }
+  const type = (file.type || '').toLowerCase()
+  if (!(ALLOWED_TICKET_ATTACHMENT_TYPES as readonly string[]).includes(type)) {
+    return 'Format file harus JPG, PNG, WebP, atau PDF.'
+  }
+  return null
+}
+
+/**
+ * Saring nama file untuk path Storage: hilangkan karakter aneh, batasi
+ * panjang nama dasar (maks 60 karakter), pertahankan ekstensi.
+ */
+export function sanitizeTicketFileName(name: string): string {
+  const base = (name || 'lampiran').split(/[\\/]/).pop() || 'lampiran'
+  const dot = base.lastIndexOf('.')
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '') : ''
+  const stem = (dot > 0 ? base.slice(0, dot) : base)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 60) || 'lampiran'
+  return ext ? `${stem}.${ext}` : stem
+}
+
+// ---- Akhir pure helpers ----
+
+function parseTicketCategory(value: unknown): TicketCategory {
+  const allowed: TicketCategory[] = [
+    'akun',
+    'academy',
+    'tugas',
+    'sertifikat',
+    'komunitas',
+    'teknis',
+    'lainnya',
+  ]
+  return typeof value === 'string' && (allowed as string[]).includes(value)
+    ? (value as TicketCategory)
+    : 'lainnya'
+}
+
+function parseTicketPriority(value: unknown): TicketPriority {
+  const allowed: TicketPriority[] = ['low', 'medium', 'high', 'critical']
+  return typeof value === 'string' && (allowed as string[]).includes(value)
+    ? (value as TicketPriority)
+    : 'medium'
+}
+
+function parseTicketStatus(value: unknown): TicketStatus {
+  // Kontrak migrasi 052: nilai status di database adalah
+  // 'waiting_for_user'. Sisi pengguna memakai enum 'waiting_user'
+  // (label + pil status di HelpCenterPage) — petakan di sini supaya
+  // tiket berstatus menunggu pengguna tidak jatuh ke 'open'.
+  // Nilai enum database TIDAK diubah; pemetaan hanya di sisi baca.
+  if (value === 'waiting_for_user') return 'waiting_user'
+  const allowed: TicketStatus[] = [
+    'open',
+    'assigned',
+    'in_progress',
+    'waiting_user',
+    'resolved',
+    'closed',
+  ]
+  return typeof value === 'string' && (allowed as string[]).includes(value)
+    ? (value as TicketStatus)
+    : 'open'
+}
+
+function parseTicketRow(row: Record<string, unknown>): Ticket {
+  return {
+    id: typeof row.id === 'string' ? row.id : '',
+    user_id: typeof row.user_id === 'string' ? row.user_id : '',
+    category: parseTicketCategory(row.category),
+    subject: typeof row.subject === 'string' ? row.subject : '',
+    description: typeof row.description === 'string' ? row.description : '',
+    page_context: typeof row.page_context === 'string' ? row.page_context : null,
+    priority: parseTicketPriority(row.priority),
+    status: parseTicketStatus(row.status),
+    attachment_path: typeof row.attachment_path === 'string' ? row.attachment_path : null,
+    attachment_name: typeof row.attachment_name === 'string' ? row.attachment_name : null,
+    attachment_size: typeof row.attachment_size === 'number' ? row.attachment_size : null,
+    attachment_type: typeof row.attachment_type === 'string' ? row.attachment_type : null,
+    created_at: typeof row.created_at === 'string' ? row.created_at : '',
+    updated_at: typeof row.updated_at === 'string' ? row.updated_at : '',
+  }
+}
+
+function parseTicketMessageRow(row: Record<string, unknown>): TicketMessage {
+  return {
+    id: typeof row.id === 'string' ? row.id : '',
+    ticket_id: typeof row.ticket_id === 'string' ? row.ticket_id : '',
+    sender_type: row.sender_type === 'admin' ? 'admin' : 'user',
+    sender_id: typeof row.sender_id === 'string' ? row.sender_id : null,
+    message: typeof row.message === 'string' ? row.message : '',
+    attachment_path: typeof row.attachment_path === 'string' ? row.attachment_path : null,
+    attachment_name: typeof row.attachment_name === 'string' ? row.attachment_name : null,
+    attachment_size: typeof row.attachment_size === 'number' ? row.attachment_size : null,
+    attachment_type: typeof row.attachment_type === 'string' ? row.attachment_type : null,
+    created_at: typeof row.created_at === 'string' ? row.created_at : '',
+  }
+}
+
+function randomSuffix(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * Unggah lampiran ke bucket privat 'ticket-attachments' di path
+ * `<user_id>/<uuid-acak>-<nama-file-disaring>`. Validasi dilakukan
+ * SEBELUM upload; bila upload gagal, error dilempar dan pemanggil TIDAK
+ * boleh memanggil RPC (tiket tidak dibuat tanpa lampiran yang dijanjikan).
+ */
+async function uploadTicketAttachment(file: File): Promise<TicketAttachment> {
+  const validationError = validateTicketAttachment(file)
+  if (validationError) {
+    throw new SinebotError('generic', validationError)
+  }
+  const { data: sessionData } = await supabase.auth.getSession()
+  const userId = sessionData.session?.user.id
+  if (!userId) {
+    throw new SinebotError('unauthorized', 'Masuk dulu untuk mengirim lampiran.')
+  }
+  const path = `${userId}/${randomSuffix()}-${sanitizeTicketFileName(file.name)}`
+  const { error } = await supabase.storage
+    .from(TICKET_ATTACHMENTS_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false })
+  if (error) {
+    throw friendlyTicketError(error, 'Lampiran tidak bisa diunggah.')
+  }
+  return { path, name: file.name, size: file.size, type: file.type }
+}
+
+/**
+ * Buat tiket dukungan baru. Lampiran (bila ada) diunggah DULU; bila
+ * upload gagal, RPC tidak dipanggil dan tidak ada tiket yang dibuat.
+ * Mengembalikan id tiket (uuid dari RPC).
+ */
+export async function createTicket(
+  category: TicketCategory,
+  subject: string,
+  description: string,
+  pageContext?: string,
+  priority: TicketPriority = 'medium',
+  attachment?: File | null,
+): Promise<string> {
+  const cleanSubject = subject.trim()
+  const cleanDescription = description.trim()
+  if (!cleanSubject) {
+    throw new SinebotError('generic', 'Tulis dulu subjek tiketmu.')
+  }
+  if (cleanSubject.length > 200) {
+    throw new SinebotError('generic', 'Subjek tiket maksimal 200 karakter.')
+  }
+  if (!cleanDescription) {
+    throw new SinebotError('generic', 'Tulis dulu penjelasan masalahmu.')
+  }
+  if (cleanDescription.length > 2000) {
+    throw new SinebotError('generic', 'Deskripsi tiket maksimal 2000 karakter.')
+  }
+  let uploaded: TicketAttachment | null = null
+  if (attachment) {
+    uploaded = await uploadTicketAttachment(attachment)
+  }
+  const { data, error } = await supabase.rpc('create_sinebot_ticket', {
+    p_category: category,
+    p_subject: cleanSubject,
+    p_description: cleanDescription,
+    p_page_context: pageContext?.trim() ? pageContext.trim() : null,
+    p_priority: priority,
+    p_attachment_path: uploaded ? uploaded.path : null,
+    p_attachment_name: uploaded ? uploaded.name : null,
+    p_attachment_size: uploaded ? uploaded.size : null,
+    p_attachment_type: uploaded ? uploaded.type : null,
+  })
+  if (error) throw friendlyTicketError(error, 'Tiket tidak bisa dibuat.')
+  if (typeof data !== 'string' || data === '') {
+    throw new SinebotError('generic', 'Tiket tidak bisa dibuat. Coba lagi sebentar lagi.')
+  }
+  return data
+}
+
+/** Daftar tiket milik pengguna yang login (terbaru dulu). */
+export async function listMyTickets(): Promise<Ticket[]> {
+  const { data, error } = await supabase.rpc('list_my_tickets')
+  if (error) throw friendlyTicketError(error, 'Daftar tiket tidak bisa dimuat.')
+  if (!Array.isArray(data)) return []
+  return data.filter(isRecord).map(parseTicketRow)
+}
+
+/** Detail satu tiket milik pengguna: tiket + daftar balasannya. */
+export async function getTicket(ticketId: string): Promise<TicketDetail> {
+  const { data, error } = await supabase.rpc('get_sinebot_ticket', {
+    p_ticket_id: ticketId,
+  })
+  if (error) throw friendlyTicketError(error, 'Detail tiket tidak bisa dimuat.')
+  if (!isRecord(data) || !isRecord(data.ticket)) {
+    throw new SinebotError('generic', 'Tiket tidak ditemukan.')
+  }
+  const rawMessages = Array.isArray(data.messages) ? data.messages : []
+  return {
+    ticket: parseTicketRow(data.ticket),
+    messages: rawMessages.filter(isRecord).map(parseTicketMessageRow),
+  }
+}
+
+/**
+ * Balas tiket sendiri. Lampiran (bila ada) diunggah DULU; bila upload
+ * gagal, RPC tidak dipanggil dan balasan tidak terkirim.
+ * Mengembalikan id balasan (uuid dari RPC).
+ */
+export async function replyToTicket(
+  ticketId: string,
+  message: string,
+  attachment?: File | null,
+): Promise<string> {
+  const cleanMessage = message.trim()
+  if (!cleanMessage) {
+    throw new SinebotError('generic', 'Tulis dulu balasanmu.')
+  }
+  let uploaded: TicketAttachment | null = null
+  if (attachment) {
+    uploaded = await uploadTicketAttachment(attachment)
+  }
+  const { data, error } = await supabase.rpc('reply_to_sinebot_ticket', {
+    p_ticket_id: ticketId,
+    p_message: cleanMessage,
+    p_attachment_path: uploaded ? uploaded.path : null,
+    p_attachment_name: uploaded ? uploaded.name : null,
+    p_attachment_size: uploaded ? uploaded.size : null,
+    p_attachment_type: uploaded ? uploaded.type : null,
+  })
+  if (error) throw friendlyTicketError(error, 'Balasan tidak bisa dikirim.')
+  if (typeof data !== 'string' || data === '') {
+    throw new SinebotError('generic', 'Balasan tidak bisa dikirim. Coba lagi sebentar lagi.')
+  }
+  return data
+}
+
+/**
+ * Buat tautan unduh bertanda (signed URL) berumur singkat untuk satu
+ * lampiran tiket. URL dibuat saat diklik dan TIDAK disimpan di state —
+ * pemanggil langsung membukanya di tab baru.
+ */
+export async function createTicketAttachmentUrl(
+  path: string,
+  expiresInSeconds = 3600,
+): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(TICKET_ATTACHMENTS_BUCKET)
+    .createSignedUrl(path, expiresInSeconds)
+  if (error || !data?.signedUrl) {
+    throw friendlyTicketError(
+      error ?? { message: 'signed url gagal' },
+      'Lampiran tidak bisa dibuka.',
+    )
+  }
+  return data.signedUrl
+}
