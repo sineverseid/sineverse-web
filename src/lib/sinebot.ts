@@ -188,7 +188,11 @@ export async function sendMessage(
       method: 'POST',
       headers: {
         apikey: SUPABASE_PUBLISHABLE_KEY,
-        Authorization: `Bearer ${token ?? SUPABASE_PUBLISHABLE_KEY}`,
+        // Tamu TIDAK mengirim header Authorization: Edge Function
+        // memperlakukan "tanpa header" sebagai tamu. Mengirim publishable
+        // key sebagai Bearer justru dianggap token sesi → 401 (temuan
+        // verifikasi live Tahap 2, 23 Nov 2026).
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ conversation_id: conversationId, message: text }),
