@@ -144,6 +144,11 @@ function CommunityAvatarPicker({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
         {COMMUNITY_AVATAR_PRESETS.map((p) => {
           const selected = presetId === p.id && !uploadUrl
+          // LB2: bila nama komunitas belum diketik, communityAvatarLetter
+          // mengembalikan '?' — semua tombol tampil "?" literal. Bila
+          // belum ada huruf, pakai huruf awal label preset supaya tiap
+          // tombol tetap berbeda dan bisa dipilih.
+          const shown = letter === '?' ? p.label.charAt(0).toUpperCase() : letter
           return (
             <button
               key={p.id}
@@ -166,7 +171,7 @@ function CommunityAvatarPicker({
                 outlineOffset: 2,
               }}
             >
-              {letter}
+              {shown}
             </button>
           )
         })}
@@ -266,8 +271,17 @@ export default function CommunitiesPage() {
   // semua lingkungan dan tidak enak di HP).
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // Usulan yang sedang dikirim — tombol dikunci selama proses (B51).
+  const [proposing, setProposing] = useState(false)
+
   // Nilai cover_url efektif dari picker form usulan.
   const proposeCoverUrl = coverValueFromChoice(avatarUploadUrl, avatarPreset)
+
+  /** LC3: "N anggota", atau "belum ada anggota" bila benar-benar 0. */
+  const memberCountLabel = (communityId: string): string => {
+    const n = memberCounts.get(communityId) ?? 0
+    return n === 0 ? 'belum ada anggota' : `${n} anggota`
+  }
 
   useEffect(() => {
     setProposalAvatars(readProposalAvatars())
@@ -301,7 +315,7 @@ export default function CommunitiesPage() {
         user
           ? supabase.from('community_members').select('community_id,role').eq('user_id', user.id)
           : Promise.resolve({ data: null as { community_id: string; role: string | null }[] | null }),
-        supabase.from('community_members').select('community_id'),
+        supabase.from('community_members').select('community_id,user_id'),
         !isAdmin && user
           ? supabase
               .from('community_proposals')
@@ -323,12 +337,32 @@ export default function CommunitiesPage() {
         setMine(mineSet)
         setMyRoles(new Map(memRows.map((m) => [m.community_id, m.role ?? 'member'])))
       }
-      // Jumlah anggota per community (semua peran melihatnya).
+      // LC3: jumlah anggota per community dari baris community_members
+      // ASLI (bukan angka karangan) — pembuat community ikut dihitung
+      // bila belum tercatat sebagai anggota (kasus community seed),
+      // jadi community yang pembuatnya satu-satunya anggota tidak lagi
+      // tampil "0 anggota".
       {
-        const counts = new Map<string, number>()
-        for (const m of (allMemRes.data ?? []) as { community_id: string }[]) {
-          counts.set(m.community_id, (counts.get(m.community_id) ?? 0) + 1)
+        const memberSets = new Map<string, Set<string>>()
+        for (const m of (allMemRes.data ?? []) as { community_id: string; user_id: string }[]) {
+          let set = memberSets.get(m.community_id)
+          if (!set) {
+            set = new Set()
+            memberSets.set(m.community_id, set)
+          }
+          set.add(m.user_id)
         }
+        for (const c of visible) {
+          if (!c.created_by) continue
+          let set = memberSets.get(c.id)
+          if (!set) {
+            set = new Set()
+            memberSets.set(c.id, set)
+          }
+          set.add(c.created_by)
+        }
+        const counts = new Map<string, number>()
+        for (const [cid, set] of memberSets) counts.set(cid, set.size)
         setMemberCounts(counts)
       }
       // Usulan komunitas saya sendiri (semua status) agar pengusul bisa
@@ -553,7 +587,18 @@ export default function CommunitiesPage() {
 
   async function handlePropose(e: FormEvent) {
     e.preventDefault()
-    if (!user || !name.trim()) return
+    if (!user || !name.trim() || proposing) return
+    // B51: tolak bila pengusul yang sama sudah punya usulan pending
+    // bernama sama (klik ganda / kirim ulang tidak membuat duplikat).
+    const duplicatePending = myProposals.some(
+      (p) => p.status === 'pending' && p.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
+    if (duplicatePending) {
+      setNotice(`Usulan "${name.trim()}" sudah kamu ajukan dan masih menunggu persetujuan admin.`)
+      return
+    }
+    setProposing(true)
+    try {
     // Pilihan avatar dikirim bersama usulan (community_proposals.cover_url,
     // migrasi 031) supaya terbawa saat admin "Setujui & Buat". Salinan
     // lokal tetap disimpan supaya pengusul melihatnya di "Usulan Saya".
@@ -587,6 +632,9 @@ export default function CommunitiesPage() {
       setAvatarUploadUrl(null)
       setAvatarError(null)
       await load()
+    }
+    } finally {
+      setProposing(false)
     }
   }
 
@@ -835,7 +883,7 @@ export default function CommunitiesPage() {
                     <div style={{ minWidth: 0 }}>
                       <p className="discussion-meta">
                         {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
-                        {memberCounts.get(c.id) ?? 0} anggota
+                        {memberCountLabel(c.id)}
                         {c.seeking_mentor ? ' · Mencari pembimbing' : ''}
                       </p>
                       <h3>
@@ -915,7 +963,7 @@ export default function CommunitiesPage() {
                         <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                         <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
                         <p className="muted" style={{ margin: 0 }}>
-                          Mencari pembimbing · {memberCounts.get(c.id) ?? 0} anggota
+                          Mencari pembimbing · {memberCountLabel(c.id)}
                         </p>
                       </div>
                     </div>
@@ -951,7 +999,7 @@ export default function CommunitiesPage() {
                         <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
                         <p className="muted" style={{ margin: 0 }}>
                           Status: {memberRoleLabel(myRoles.get(c.id) ?? 'member')} ·{' '}
-                          {memberCounts.get(c.id) ?? 0} anggota
+                          {memberCountLabel(c.id)}
                         </p>
                       </div>
                     </div>
@@ -997,7 +1045,7 @@ export default function CommunitiesPage() {
                       <div style={{ minWidth: 0 }}>
                         <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                         <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                        <p className="muted" style={{ margin: 0 }}>{memberCounts.get(c.id) ?? 0} anggota</p>
+                        <p className="muted" style={{ margin: 0 }}>{memberCountLabel(c.id)}</p>
                       </div>
                     </div>
                   </Link>
@@ -1047,7 +1095,9 @@ export default function CommunitiesPage() {
                   setAvatarError(null)
                 }}
               />
-              <button type="submit" className="btn btn-primary">Kirim Usulan</button>
+              <button type="submit" className="btn btn-primary" disabled={proposing}>
+                {proposing ? 'Mengirim…' : 'Kirim Usulan'}
+              </button>
             </form>
           </section>
         )}
@@ -1078,7 +1128,7 @@ export default function CommunitiesPage() {
                   <div style={{ minWidth: 0 }}>
                     <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                     <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                    <p className="muted" style={{ margin: 0 }}>{memberCounts.get(c.id) ?? 0} anggota</p>
+                    <p className="muted" style={{ margin: 0 }}>{memberCountLabel(c.id)}</p>
                   </div>
                 </div>
               </Link>
@@ -1122,7 +1172,9 @@ export default function CommunitiesPage() {
                 setAvatarError(null)
               }}
             />
-            <button type="submit" className="btn btn-primary">Kirim Usulan</button>
+            <button type="submit" className="btn btn-primary" disabled={proposing}>
+                {proposing ? 'Mengirim…' : 'Kirim Usulan'}
+              </button>
           </form>
         </section>
       )}

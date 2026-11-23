@@ -14,8 +14,8 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchCourses, fetchRubricForAssignment, fetchRubricScores, saveRubricScores, sendNotification, supabase } from '../lib/supabase'
-import type { Assignment, Course, RubricWithCriteria, Submission } from '../lib/types'
+import { fetchCourses, fetchRubricForAssignment, fetchRubricScores, fetchSubmissionFiles, saveRubricScores, sendNotification, supabase } from '../lib/supabase'
+import type { Assignment, Course, RubricWithCriteria, Submission, SubmissionFile } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 import Icon from '../components/icons'
@@ -89,11 +89,21 @@ export default function GradingQueuePage() {
   const [rubricNote, setRubricNote] = useState<string | null>(null)
   const [tab, setTab] = useState<RecapTab>('queue')
   const [recap, setRecap] = useState<RecapData | null>(null)
+  // B25: semua file lampiran per submission (bukan hanya file_url pertama).
+  const [filesBySubmission, setFilesBySubmission] = useState<Record<string, SubmissionFile[]>>({})
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
+  // B27: filter antrean/rekap + pencarian.
+  const [filterCourses, setFilterCourses] = useState<Course[]>([])
+  const [filterCourse, setFilterCourse] = useState('')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pass' | 'fail'>('all')
+  const [search, setSearch] = useState('')
+  // B26: baris rekap yang sedang diedit nilainya (bukan di antrean).
+  const [editingRow, setEditingRow] = useState<QueueRow | null>(null)
 
   const isAdmin = profile?.role === 'admin'
   const isMentor = profile?.role === 'mentor' || isAdmin
 
-  async function load() {
+  async function load(isCancelled?: () => boolean) {
     if (!user) {
       setLoading(false)
       return
@@ -108,6 +118,7 @@ export default function GradingQueuePage() {
       const mine = isAdmin ? courses : courses.filter((c) => c.mentor_id === currentUser.id)
       const courseById = new Map(mine.map((c) => [c.id, c]))
       const courseIds = mine.map((c) => c.id)
+      if (!isCancelled?.()) setFilterCourses(mine)
       if (courseIds.length === 0) {
         setRows([])
         setRecap(EMPTY_RECAP)
@@ -188,6 +199,34 @@ export default function GradingQueuePage() {
       }
       queue.sort((a, b) => +new Date(a.submission.submitted_at) - +new Date(b.submission.submitted_at))
       setRows(queue)
+      // B25: semua file lampiran tiap submission antrean (pola yang sama
+      // seperti AssignmentPage.loadFilesFor); gagal muat tidak merusak
+      // halaman, tampilan jatuh ke tautan file_url tunggal.
+      void (async () => {
+        const entries = await Promise.all(
+          queue.map(async (row) => {
+            try {
+              return [row.submission.id, await fetchSubmissionFiles(row.submission.id)] as const
+            } catch {
+              return [row.submission.id, []] as const
+            }
+          }),
+        )
+        if (isCancelled?.()) return
+        setFilesBySubmission(Object.fromEntries(entries))
+        const allFiles = entries.flatMap(([, rows]) => rows)
+        const signed = await Promise.all(
+          allFiles.map(async (f) => {
+            try {
+              const { data } = await supabase.storage.from('submission-files').createSignedUrl(f.file_path, 3600)
+              return [f.id, data?.signedUrl ?? ''] as const
+            } catch {
+              return [f.id, ''] as const
+            }
+          }),
+        )
+        if (!isCancelled?.()) setSignedUrls(Object.fromEntries(signed.filter(([, u]) => u)))
+      })()
       // Rekap Nilai — hanya dari submission yang benar-benar sudah dinilai.
       const gradedItems: RecapItem[] = []
       for (const s of gradedSubs) {
@@ -233,7 +272,11 @@ export default function GradingQueuePage() {
   }
 
   useEffect(() => {
-    void load()
+    let cancelled = false
+    void load(() => cancelled)
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.role])
 
@@ -258,10 +301,10 @@ export default function GradingQueuePage() {
     }, 0)
   }
 
-  async function startGrading(row: QueueRow) {
+  async function startGrading(row: QueueRow, prefill?: { score: string; feedback: string }) {
     setGradingId(row.submission.id)
-    setScore('')
-    setFeedback('')
+    setScore(prefill?.score ?? '')
+    setFeedback(prefill?.feedback ?? '')
     setCriterionScores({})
     setRubricNote(null)
     let rubric = rubricByAssignment[row.assignment.id]
@@ -290,8 +333,24 @@ export default function GradingQueuePage() {
     }
   }
 
+  /** B26: buka kembali form penilaian untuk submission yang sudah dinilai
+   *  (baris rekap) — skor + umpan balik lama diisi ulang supaya mentor
+   *  bisa mengoreksi nilai yang salah ketik. */
+  async function startEditingGrade(g: RecapItem) {
+    const row: QueueRow = { submission: g.submission, assignment: g.assignment, course: g.course, studentName: g.studentName }
+    setEditingRow(row)
+    setTab('queue')
+    await startGrading(row, {
+      score: g.submission.score === null ? '' : String(g.submission.score),
+      feedback: g.submission.feedback ?? '',
+    })
+    setNotice(`Mengubah nilai ${g.studentName} untuk "${g.assignment.title}". Simpan untuk menerapkan, atau Batal untuk membatalkan.`)
+  }
+
   async function handleGrade(e: FormEvent, row: QueueRow) {
     e.preventDefault()
+    // B28: kunci ganda — handleGrade tidak boleh jalan dua kali.
+    if (saving) return
     const rubric = rubricByAssignment[row.assignment.id]
     let value: number
     let parsed: { criterion_id: string; score: number }[] = []
@@ -318,38 +377,170 @@ export default function GradingQueuePage() {
         return
       }
     }
-    const { error: updErr } = await supabase
-      .from('submissions')
-      .update({ score: value, feedback: feedback.trim() || null, graded_at: new Date().toISOString() })
-      .eq('id', row.submission.id)
-    if (updErr) {
-      setNotice('Gagal menyimpan nilai. Coba lagi sebentar lagi.')
+    // B28: saving true di AWAL (bukan setelah update selesai) + tombol
+    // submit di-disable selama menyimpan.
+    setSaving(true)
+    try {
+      const { error: updErr } = await supabase
+        .from('submissions')
+        .update({ score: value, feedback: feedback.trim() || null, graded_at: new Date().toISOString() })
+        .eq('id', row.submission.id)
+      if (updErr) {
+        setNotice('Gagal menyimpan nilai. Coba lagi sebentar lagi.')
+        return
+      }
+      let rubricScoresNote = ''
+      if (parsed.length > 0) {
+        try {
+          await saveRubricScores(row.submission.id, parsed)
+        } catch {
+          rubricScoresNote = ' Skor per kriteria gagal disimpan, nilai total tetap tersimpan.'
+        }
+      }
+      // Beri tahu siswa (best-effort; gagal kirim tidak membatalkan nilai).
+      await sendNotification(
+        row.submission.user_id,
+        'grade',
+        `Tugas "${row.assignment.title}" sudah dinilai`,
+        `Nilai kamu: ${value} / ${row.assignment.max_score}.`,
+        { assignment_id: row.assignment.id },
+      ).catch(() => undefined)
+      setNotice(`Submission ${row.studentName} dinilai: ${value}.${rubricScoresNote}`)
+      setGradingId(null)
+      setEditingRow(null)
+      setScore('')
+      setFeedback('')
+      setCriterionScores({})
+      await load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** B27: minta revisi — umpan balik wajib diisi, skor tetap kosong
+   *  sehingga submission tetap di antrean; siswa diberi tahu lewat
+   *  notifikasi. Tidak ada kolom status revisi di skema, jadi permintaan
+   *  revisi ditandai dari feedback yang terisi pada submission yang
+   *  belum dinilai (badge "Revisi diminta" di antrean). */
+  async function handleRequestRevision(row: QueueRow) {
+    if (saving) return
+    if (!feedback.trim()) {
+      setNotice('Tulis umpan balik dulu — siswa perlu tahu apa yang harus direvisi.')
       return
     }
-    let rubricScoresNote = ''
-    if (parsed.length > 0) {
-      try {
-        await saveRubricScores(row.submission.id, parsed)
-      } catch {
-        rubricScoresNote = ' Skor per kriteria gagal disimpan, nilai total tetap tersimpan.'
-      }
-    }
     setSaving(true)
-    // Beri tahu siswa (best-effort; gagal kirim tidak membatalkan nilai).
-    await sendNotification(
-      row.submission.user_id,
-      'grade',
-      `Tugas "${row.assignment.title}" sudah dinilai`,
-      `Nilai kamu: ${value} / ${row.assignment.max_score}.`,
-      { assignment_id: row.assignment.id },
-    ).catch(() => undefined)
-    setNotice(`Submission ${row.studentName} dinilai: ${value}.${rubricScoresNote}`)
-    setGradingId(null)
-    setScore('')
-    setFeedback('')
-    setCriterionScores({})
-    await load()
-    setSaving(false)
+    try {
+      const { error: updErr } = await supabase
+        .from('submissions')
+        .update({ feedback: feedback.trim(), graded_at: null })
+        .eq('id', row.submission.id)
+        .is('score', null)
+      if (updErr) {
+        setNotice('Gagal meminta revisi. Coba lagi sebentar lagi.')
+        return
+      }
+      await sendNotification(
+        row.submission.user_id,
+        'revision',
+        `Tugas "${row.assignment.title}" diminta revisi`,
+        feedback.trim(),
+        { assignment_id: row.assignment.id },
+      ).catch(() => undefined)
+      setNotice(`Revisi diminta dari ${row.studentName} untuk "${row.assignment.title}".`)
+      setGradingId(null)
+      setScore('')
+      setFeedback('')
+      setCriterionScores({})
+      await load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** B25: semua file lampiran satu submission; bila belum ada baris di
+   *  submission_files (pengiriman lama), pakai tautan file_url tunggal. */
+  function renderSubmissionFiles(row: QueueRow) {
+    const rows = filesBySubmission[row.submission.id] ?? []
+    if (rows.length > 0) {
+      return (
+        <ul>
+          {rows.map((f) => (
+            <li key={f.id}>
+              <a
+                href={signedUrls[f.id] ?? supabase.storage.from('submission-files').getPublicUrl(f.file_path).data.publicUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {f.file_name}
+              </a>
+              {f.file_size !== null ? ` (${Math.round(f.file_size / 1024)} KB)` : ''}
+            </li>
+          ))}
+        </ul>
+      )
+    }
+    if (row.submission.file_url) {
+      return <p><a href={row.submission.file_url} target="_blank" rel="noreferrer">Lihat file</a></p>
+    }
+    return null
+  }
+
+  /** Form penilaian satu baris (dipakai antrean dan edit nilai rekap). */
+  function gradingForm(row: QueueRow) {
+    return (
+      <form className="form" onSubmit={(e) => handleGrade(e, row)}>
+        {rubricNote && <p className="muted">{rubricNote}</p>}
+        {(() => {
+          const r = rubricByAssignment[row.assignment.id]
+          if (rubricLoadingId === row.submission.id) {
+            return <p className="muted">Memuat rubrik…</p>
+          }
+          if (r && r.criteria.length > 0) {
+            return (
+              <>
+                <p className="muted">{r.rubric.title}</p>
+                {r.criteria.map((c) => (
+                  <label key={c.id}>
+                    {c.title} (maks. {c.max_score})
+                    <input
+                      type="number"
+                      min={0}
+                      max={c.max_score}
+                      step={1}
+                      value={criterionScores[c.id] ?? ''}
+                      onChange={(e) => setCriterionScores((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                      required
+                    />
+                  </label>
+                ))}
+                <p className="muted">
+                  Total sementara: {Math.min(rubricTotal(row), row.assignment.max_score)} / {row.assignment.max_score}
+                </p>
+              </>
+            )
+          }
+          return (
+            <label>
+              Skor (maks. {row.assignment.max_score})
+              <input type="number" min={0} max={row.assignment.max_score} value={score} onChange={(e) => setScore(e.target.value)} required />
+            </label>
+          )
+        })()}
+        <label>
+          Umpan balik
+          <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3} placeholder="Apa yang bagus, apa yang bisa diperbaiki…" />
+        </label>
+        <div className="form-actions">
+          <button type="submit" className="btn btn-primary btn-small" disabled={saving}>
+            {saving ? 'Menyimpan…' : 'Simpan Nilai'}
+          </button>
+          <button type="button" className="btn btn-secondary btn-small" disabled={saving} onClick={() => void handleRequestRevision(row)}>
+            Minta Revisi
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => { setGradingId(null); setEditingRow(null) }}>Batal</button>
+        </div>
+      </form>
+    )
   }
 
   return (
@@ -374,6 +565,40 @@ export default function GradingQueuePage() {
       </div>
       {notice && <p className="notice-box">{notice}</p>}
       {saving && <p className="muted">Menyimpan nilai…</p>}
+      {/* B27: filter course + pencarian (berlaku di antrean dan rekap);
+          rekap juga bisa disaring lulus / belum lulus. */}
+      <div className="filter-bar">
+        <select
+          value={filterCourse}
+          onChange={(e) => setFilterCourse(e.target.value)}
+          aria-label="Filter course"
+          style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+        >
+          <option value="">Semua course</option>
+          {filterCourses.map((c) => (
+            <option key={c.id} value={c.id}>{c.title}</option>
+          ))}
+        </select>
+        {tab === 'rekap' && (
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as 'all' | 'pass' | 'fail')}
+            aria-label="Filter status nilai"
+            style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+          >
+            <option value="all">Semua status</option>
+            <option value="pass">Lulus (≥70)</option>
+            <option value="fail">Belum lulus (&lt;70)</option>
+          </select>
+        )}
+        <input
+          className="search-input"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari siswa atau tugas…"
+          aria-label="Cari siswa atau tugas"
+        />
+      </div>
       {tab === 'rekap' ? (
         <>
           {!recap ? (
@@ -449,10 +674,22 @@ export default function GradingQueuePage() {
                       <th>Course</th>
                       <th>Nilai</th>
                       <th>Dinilai</th>
+                      <th>Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recap.recent.map((g) => (
+                    {recap.recent
+                      .filter((g) => (filterCourse === '' || g.course.id === filterCourse))
+                      .filter((g) =>
+                        filterStatus === 'all' ||
+                        (filterStatus === 'pass' ? (g.percent ?? 0) >= 70 : (g.percent ?? 0) < 70),
+                      )
+                      .filter((g) => {
+                        const q = search.trim().toLowerCase()
+                        if (!q) return true
+                        return `${g.studentName} ${g.assignment.title} ${g.course.title}`.toLowerCase().includes(q)
+                      })
+                      .map((g) => (
                       <tr key={g.submission.id}>
                         <td>{g.studentName}</td>
                         <td>{g.assignment.title}</td>
@@ -463,6 +700,15 @@ export default function GradingQueuePage() {
                             : `${fmtPct(g.percent)} / 100 (${g.submission.score} / ${g.assignment.max_score})`}
                         </td>
                         <td>{fmtDate(g.submission.graded_at ?? g.submission.submitted_at)}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => void startEditingGrade(g)}
+                          >
+                            Ubah nilai
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -476,6 +722,21 @@ export default function GradingQueuePage() {
       <p className="muted">
         Diurutkan dari yang paling lama dikirim (tertua dulu). {rows.length} submission belum dinilai.
       </p>
+      {/* B26: form ubah nilai untuk baris rekap (bukan bagian antrean). */}
+      {editingRow && (
+        <div className="task-card" style={{ marginBottom: '1rem' }}>
+          <span className="task-icon">
+            <Icon name="fileText" size={24} />
+          </span>
+          <span className="task-body">
+            <h3>Ubah Nilai — {editingRow.assignment.title}</h3>
+            <p>
+              {editingRow.studentName} • {editingRow.course.title} • {fmtDate(editingRow.submission.submitted_at)}
+            </p>
+            {gradingForm(editingRow)}
+          </span>
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="empty-card">
           <span className="empty-card-icon" aria-hidden="true">
@@ -493,7 +754,14 @@ export default function GradingQueuePage() {
         </div>
       ) : (
         <ul className="list">
-          {rows.map((row) => (
+          {rows
+            .filter((row) => filterCourse === '' || row.course.id === filterCourse)
+            .filter((row) => {
+              const q = search.trim().toLowerCase()
+              if (!q) return true
+              return `${row.studentName} ${row.assignment.title} ${row.course.title}`.toLowerCase().includes(q)
+            })
+            .map((row) => (
             <li key={row.submission.id} className="task-card">
               <span className="task-icon">
                 <Icon name="fileText" size={24} />
@@ -503,58 +771,18 @@ export default function GradingQueuePage() {
                 <p>
                   {row.studentName} • {row.course.title} • {fmtDate(row.submission.submitted_at)}
                 </p>
-                <p>{row.submission.content ?? '—'}</p>
-                {row.submission.file_url && (
-                  <p><a href={row.submission.file_url} target="_blank" rel="noreferrer">Lihat file</a></p>
+                {row.submission.feedback && (
+                  <p>
+                    <span style={{ display: 'inline-block', background: '#fff3cd', color: '#7a5b00', padding: '0.2rem 0.5rem', borderRadius: 6, fontSize: '0.85rem', fontWeight: 600 }}>
+                      Revisi diminta
+                    </span>
+                    {' '}{row.submission.feedback}
+                  </p>
                 )}
+                <p>{row.submission.content ?? '—'}</p>
+                {renderSubmissionFiles(row)}
                 {gradingId === row.submission.id ? (
-                  <form className="form" onSubmit={(e) => handleGrade(e, row)}>
-                    {rubricNote && <p className="muted">{rubricNote}</p>}
-                    {(() => {
-                      const r = rubricByAssignment[row.assignment.id]
-                      if (rubricLoadingId === row.submission.id) {
-                        return <p className="muted">Memuat rubrik…</p>
-                      }
-                      if (r && r.criteria.length > 0) {
-                        return (
-                          <>
-                            <p className="muted">{r.rubric.title}</p>
-                            {r.criteria.map((c) => (
-                              <label key={c.id}>
-                                {c.title} (maks. {c.max_score})
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={c.max_score}
-                                  step={1}
-                                  value={criterionScores[c.id] ?? ''}
-                                  onChange={(e) => setCriterionScores((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                                  required
-                                />
-                              </label>
-                            ))}
-                            <p className="muted">
-                              Total sementara: {Math.min(rubricTotal(row), row.assignment.max_score)} / {row.assignment.max_score}
-                            </p>
-                          </>
-                        )
-                      }
-                      return (
-                        <label>
-                          Skor (maks. {row.assignment.max_score})
-                          <input type="number" min={0} max={row.assignment.max_score} value={score} onChange={(e) => setScore(e.target.value)} required />
-                        </label>
-                      )
-                    })()}
-                    <label>
-                      Umpan balik
-                      <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3} placeholder="Apa yang bagus, apa yang bisa diperbaiki…" />
-                    </label>
-                    <div className="form-actions">
-                      <button type="submit" className="btn btn-primary btn-small">Simpan Nilai</button>
-                      <button type="button" className="btn btn-ghost btn-small" onClick={() => setGradingId(null)}>Batal</button>
-                    </div>
-                  </form>
+                  gradingForm(row)
                 ) : (
                   <button type="button" className="btn-mint" onClick={() => void startGrading(row)}>
                     Nilai

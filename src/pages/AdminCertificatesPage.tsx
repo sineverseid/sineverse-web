@@ -186,43 +186,48 @@ export default function AdminCertificatesPage() {
     let cancelled = false
     async function load() {
       try {
-        const courseList = await fetchCourses()
-        // B11: halaman pertama manajemen = 100 baris terbaru (.range);
-        // halaman berikutnya dimuat tombol "Tampilkan lebih banyak".
-        const { data: certData } = await supabase
-          .from('certificates')
-          .select('*')
-          .order('issued_at', { ascending: false })
-          .range(0, 99)
-        const certRows = (certData ?? []) as Certificate[]
-        const { data: enrData } = await supabase.from('enrollments').select('user_id')
-        // BUGFIX 22 Nov 2026: daftar penerima JANGAN diturunkan dari sertifikat
-        // yang sudah ada — dengan 0 sertifikat di DB, dropdown Penerima/Siswa
-        // kosong selamanya dan admin tidak bisa menerbitkan sertifikat pertama.
-        // Ambil langsung semua profil peserta dari tabel profiles.
-        // K19: HANYA siswa — sertifikat Academy dan Event adalah untuk
-        // siswa; mentor tidak boleh muncul sebagai penerima (dulu Mentor Uji
-        // tampil di kedua dropdown).
-        const { data: memberData } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('role', 'siswa')
-          .order('name')
+        // LB7: lima fetch independen dijalankan PARALEL dalam satu batch,
+        // bukan enam await berurutan — itu yang membuat halaman ini duduk
+        // di "Memuat…" 8–10 detik.
+        const [courseList, certData, enrData, memberData, evtData] = await Promise.all([
+          fetchCourses(),
+          // B11: halaman pertama manajemen = 100 baris terbaru (.range);
+          // halaman berikutnya dimuat tombol "Tampilkan lebih banyak".
+          supabase
+            .from('certificates')
+            .select('*')
+            .order('issued_at', { ascending: false })
+            .range(0, 99),
+          supabase.from('enrollments').select('user_id'),
+          // BUGFIX 22 Nov 2026: daftar penerima JANGAN diturunkan dari sertifikat
+          // yang sudah ada — dengan 0 sertifikat di DB, dropdown Penerima/Siswa
+          // kosong selamanya dan admin tidak bisa menerbitkan sertifikat pertama.
+          // Ambil langsung semua profil peserta dari tabel profiles.
+          // K19: HANYA siswa — sertifikat Academy dan Event adalah untuk
+          // siswa; mentor tidak boleh muncul sebagai penerima (dulu Mentor Uji
+          // tampil di kedua dropdown).
+          supabase
+            .from('profiles')
+            .select('id')
+            .eq('role', 'siswa')
+            .order('name'),
+          supabase
+            .from('events')
+            .select('id,title,starts_at')
+            .order('starts_at', { ascending: false }),
+        ])
+        const certRows = (certData.data ?? []) as Certificate[]
+        const evtRows = ((evtData.data ?? []) as EventOption[]).sort((a, b) =>
+          (b.starts_at ?? '').localeCompare(a.starts_at ?? ''),
+        )
         const userIds = [
           ...new Set([
             ...certRows.map((c) => c.user_id),
-            ...((enrData ?? []) as { user_id: string }[]).map((e) => e.user_id),
-            ...((memberData ?? []) as { id: string }[]).map((m) => m.id),
+            ...((enrData.data ?? []) as { user_id: string }[]).map((e) => e.user_id),
+            ...((memberData.data ?? []) as { id: string }[]).map((m) => m.id),
           ]),
         ]
         const namesMap = await fetchProfileNames(userIds)
-        const { data: evtData } = await supabase
-          .from('events')
-          .select('id,title,starts_at')
-          .order('starts_at', { ascending: false })
-        const evtRows = ((evtData ?? []) as EventOption[]).sort((a, b) =>
-          (b.starts_at ?? '').localeCompare(a.starts_at ?? ''),
-        )
         if (cancelled) return
         setCourses(courseList)
         setCertificates(certRows)
@@ -479,15 +484,34 @@ export default function AdminCertificatesPage() {
       setLoadingEligibility(true)
       setEligibility(null)
       try {
+        // LB7: RPS + enrollment + sertifikat course + modul dimuat PARALEL
+        // (sebelumnya empat await berurutan), baru lesson menyusul.
+        const [rpsRes, enrRes, certRes, modsRes] = await Promise.all([
+          supabase
+            .from('rps')
+            .select('weights,passing_grade')
+            .eq('code', 'SVS-SEM1')
+            .maybeSingle(),
+          supabase
+            .from('enrollments')
+            .select('*')
+            .eq('course_id', selectedCourseId),
+          supabase
+            .from('certificates')
+            .select('user_id')
+            .eq('course_id', selectedCourseId)
+            .eq('type', 'course')
+            .eq('status', 'valid'),
+          supabase
+            .from('modules')
+            .select('id')
+            .eq('course_id', selectedCourseId),
+        ])
         // Bobot + ambang lulus dari RPS SVS-SEM1; fallback bila baris hilang.
         let weights: Weights = FALLBACK_WEIGHTS
         let passingGrade = FALLBACK_PASSING
         let weightsSource = 'fallback (baris RPS SVS-SEM1 tidak ditemukan)'
-        const { data: rpsData } = await supabase
-          .from('rps')
-          .select('weights,passing_grade')
-          .eq('code', 'SVS-SEM1')
-          .maybeSingle()
+        const rpsData = rpsRes.data
         const rpsRow = rpsData as unknown as {
           weights?: { pretest: number; posttest: number; tugas_mingguan: number; tugas_akhir: number; diskusi: number }
           passing_grade?: number
@@ -511,30 +535,16 @@ export default function AdminCertificatesPage() {
         if (cancelled) return
         setWeightsNote(weightsSource)
 
-        const { data: enrData } = await supabase
-          .from('enrollments')
-          .select('*')
-          .eq('course_id', selectedCourseId)
-        const enrRows = (enrData ?? []) as Enrollment[]
+        const enrRows = (enrRes.data ?? []) as Enrollment[]
         // K12: hanya sertifikat yang masih VALID yang mengecualikan siswa
         // dari kelayakan — sertifikat yang dicabut boleh diterbitkan ulang.
-        const { data: certData } = await supabase
-          .from('certificates')
-          .select('user_id')
-          .eq('course_id', selectedCourseId)
-          .eq('type', 'course')
-          .eq('status', 'valid')
-        const certified = new Set(((certData ?? []) as { user_id: string }[]).map((c) => c.user_id))
+        const certified = new Set(((certRes.data ?? []) as { user_id: string }[]).map((c) => c.user_id))
         const pending = enrRows.filter((e) => !certified.has(e.user_id))
         if (pending.length === 0) {
           if (!cancelled) setEligibility([])
           return
         }
-        const { data: mods } = await supabase
-          .from('modules')
-          .select('id')
-          .eq('course_id', selectedCourseId)
-        const modRows = (mods ?? []) as Module[]
+        const modRows = (modsRes.data ?? []) as Module[]
         let lessonRows: Lesson[] = []
         if (modRows.length > 0) {
           const { data: lessons } = await supabase
@@ -624,7 +634,7 @@ export default function AdminCertificatesPage() {
       </div>
     )
   }
-  if (loading) return <div className="page"><p className="muted">Memuat…</p></div>
+  if (loading) return <div className="page"><p className="muted">Memuat sertifikat — mengambil daftar course, sertifikat terbit, dan penerima…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
   const courseById = new Map(courses.map((c) => [c.id, c.title]))
@@ -921,7 +931,7 @@ export default function AdminCertificatesPage() {
         <div className="dash-section-head"><h2>Sertifikat Kelulusan Academy</h2></div>
         <p className="muted">
           Terbitkan sertifikat kelulusan Academy (SVS-ACD) untuk siswa yang sudah memegang
-          sertifikat course untuk ke-10 course. Satu siswa hanya punya satu sertifikat Academy;
+          sertifikat course untuk ke-{courses.length} course. Satu siswa hanya punya satu sertifikat Academy;
           bila sudah pernah diterbitkan, nomor serial yang sudah ada akan ditampilkan.
         </p>
         <label>
@@ -940,20 +950,20 @@ export default function AdminCertificatesPage() {
         </label>
         <p className="muted">
           Sertifikat course yang dipegang:{' '}
-          {academyChecking ? 'memeriksa…' : academyCount === null ? '—' : <strong>{academyCount} dari 10 course</strong>}
+          {academyChecking ? 'memeriksa…' : academyCount === null ? '—' : <strong>{academyCount} dari {courses.length} course</strong>}
         </p>
         <p>
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => void handleIssueAcademy()}
-            disabled={academyIssuing || !academyStudentId || academyCount === null || academyCount < 10}
+            disabled={academyIssuing || !academyStudentId || academyCount === null || courses.length === 0 || academyCount < courses.length}
           >
             {academyIssuing ? 'Menerbitkan…' : 'Terbitkan Sertifikat Academy'}
           </button>
         </p>
-        {academyCount !== null && academyCount < 10 && (
-          <p className="muted">Siswa belum memenuhi syarat: baru {academyCount} dari 10 sertifikat course.</p>
+        {academyCount !== null && academyCount < courses.length && (
+          <p className="muted">Siswa belum memenuhi syarat: baru {academyCount} dari {courses.length} sertifikat course.</p>
         )}
         {academyResult && (
           <p className="notice-box">
@@ -1045,7 +1055,7 @@ export default function AdminCertificatesPage() {
           Hanya siswa terdaftar yang belum punya sertifikat course di course ini yang dinilai.
           "Layak" berarti nilai akhir lulus; penerbitan sendiri dilakukan di Tahap 5.
         </p>
-        {loadingEligibility && <p className="muted">Memuat…</p>}
+        {loadingEligibility && <p className="muted">Menghitung kelayakan sertifikat — mengambil nilai, tugas, dan diskusi course ini…</p>}
         {!loadingEligibility && eligibility !== null && eligibility.length === 0 && (
           <p className="empty">Semua siswa terdaftar di course ini sudah punya sertifikat course, atau belum ada siswa terdaftar.</p>
         )}

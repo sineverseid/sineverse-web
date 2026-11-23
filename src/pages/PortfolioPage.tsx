@@ -37,7 +37,7 @@ export default function PortfolioPage() {
   const isAdmin = profile?.role === 'admin'
   const canSeePrivate = isOwner || isAdmin
 
-  const [owner, setOwner] = useState<{ name: string | null; photo_url: string | null } | null>(null)
+  const [owner, setOwner] = useState<{ name: string | null; photo_url: string | null; role: string | null } | null>(null)
   const [ownerFound, setOwnerFound] = useState<boolean | null>(null)
   const [items, setItems] = useState<PortfolioItem[] | null>(null)
   const [inProgress, setInProgress] = useState<string[]>([])
@@ -68,7 +68,7 @@ export default function PortfolioPage() {
             .order('created_at', { ascending: false }),
         ])
         if (!cancelled) {
-          setOwner(prof ? { name: prof.name, photo_url: prof.photo_url } : null)
+          setOwner(prof ? { name: prof.name, photo_url: prof.photo_url, role: prof.role ?? null } : null)
           setOwnerFound(prof !== null)
         }
         if (!prof) {
@@ -208,7 +208,11 @@ export default function PortfolioPage() {
         </p>
       )}
 
-      {canSeePrivate && (
+      {/* LB4: seksi siswa ("Pembelajaran Berjalan", "Sertifikat Saya")
+          hanya untuk pemilik yang memang siswa — mentor/admin tidak
+          punya pembelajaran/sertifikat course, jadi seksinya disembunyikan
+          (bukan tampil kosong). */}
+      {canSeePrivate && owner?.role !== 'mentor' && owner?.role !== 'admin' && (
         <>
           <section className="section">
             <h2>Pembelajaran Berjalan</h2>

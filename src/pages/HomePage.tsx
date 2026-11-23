@@ -27,6 +27,7 @@ import '../index-homepage.css'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
 import { useAuth } from '../context/AuthContext'
+import { activityLabel } from '../lib/activityLabels'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { topRecommendations } from '../lib/recommendations'
 import { courseIllustration, rpsWeekLabel } from '../lib/brand'
@@ -1222,6 +1223,72 @@ function MentorHome(props: {
   async function load() {
     try {
       const mine = courses.filter((c) => c.mentor_id === userId)
+      // LB1: klaim mengampu + office hours TIDAK bergantung pada rantai
+      // statistik course (enrollment → lesson → tugas → antrean) — keduanya
+      // diluncurkan BERSAMAAN dengan rantai itu, bukan sesudahnya.
+      // Sebelumnya ~9 round-trip berjalan berurutan dan Mentor Workspace
+      // stuck di "Memuat…" ±10 detik; kini hanya rantai terpanjang yang
+      // menentukan waktu muat.
+      const claimsP = safe(
+        async () => {
+          const { data } = await supabase
+            .from('course_claims')
+            .select('*')
+            .eq('mentor_id', userId)
+            .order('created_at', { ascending: false })
+          return (data ?? []) as CourseClaim[]
+        },
+        [] as CourseClaim[],
+      )
+      const hoursP = (async () => {
+        const hours = await safe(
+          async () => {
+            const { data } = await supabase
+              .from('office_hours')
+              .select('*')
+              .eq('mentor_id', userId)
+            return (data ?? []) as OfficeHour[]
+          },
+          [] as OfficeHour[],
+        )
+        if (hours.length === 0) return [] as MentorBookingRow[]
+        const bRows = await safe(
+          async () => {
+            const { data } = await supabase
+              .from('office_hour_bookings')
+              .select('*')
+              .in(
+                'office_hour_id',
+                hours.map((h) => h.id),
+              )
+              .eq('status', 'booked')
+            return (data ?? []) as OfficeHourBooking[]
+          },
+          [] as OfficeHourBooking[],
+        )
+        const hourById = new Map(hours.map((h) => [h.id, h]))
+        const now = Date.now()
+        const upcoming = bRows
+          .map((b) => ({ hour: hourById.get(b.office_hour_id), booking: b }))
+          .filter(
+            (
+              x,
+            ): x is { hour: OfficeHour; booking: OfficeHourBooking } =>
+              !!x.hour &&
+              !!x.hour.starts_at &&
+              new Date(x.hour.starts_at).getTime() >= now,
+          )
+          .sort((a, b) => (a.hour.starts_at ?? '').localeCompare(b.hour.starts_at ?? ''))
+          .slice(0, 3)
+        const bNames = await fetchProfileNames(
+          upcoming.map((x) => x.booking.user_id),
+        ).catch(() => new Map<string, string>())
+        return upcoming.map((x) => ({
+          hour: x.hour,
+          booking: x.booking,
+          studentName: bNames.get(x.booking.user_id) ?? 'Siswa',
+        }))
+      })()
       // Semua course mentor dimuat paralel (bukan satu per satu): enrollment,
       // lesson, assignment, dan submission menunggu dinilai diambil dalam
       // query batch, lalu dihitung per course di JS.
@@ -1336,72 +1403,11 @@ function MentorHome(props: {
         setGraded(grdRows.map(toRow).filter((r): r is MentorQueueRow => !!r))
       }
 
-      // Klaim mengampu saya (course_claims).
-      const cl = await safe(
-        async () => {
-          const { data } = await supabase
-            .from('course_claims')
-            .select('*')
-            .eq('mentor_id', userId)
-            .order('created_at', { ascending: false })
-          return (data ?? []) as CourseClaim[]
-        },
-        [] as CourseClaim[],
-      )
+      // Klaim + pesanan mentoring sudah diluncurkan paralel di atas —
+      // tinggal tunggu hasilnya bersamaan di akhir.
+      const [cl, hourBookings] = await Promise.all([claimsP, hoursP])
       setClaims(cl)
-
-      // Pesanan mentoring berikutnya: office hour saya yang sudah dipesan
-      // dan waktunya masih di depan.
-      const hours = await safe(
-        async () => {
-          const { data } = await supabase
-            .from('office_hours')
-            .select('*')
-            .eq('mentor_id', userId)
-          return (data ?? []) as OfficeHour[]
-        },
-        [] as OfficeHour[],
-      )
-      if (hours.length > 0) {
-        const bRows = await safe(
-          async () => {
-            const { data } = await supabase
-              .from('office_hour_bookings')
-              .select('*')
-              .in(
-                'office_hour_id',
-                hours.map((h) => h.id),
-              )
-              .eq('status', 'booked')
-            return (data ?? []) as OfficeHourBooking[]
-          },
-          [] as OfficeHourBooking[],
-        )
-        const hourById = new Map(hours.map((h) => [h.id, h]))
-        const now = Date.now()
-        const upcoming = bRows
-          .map((b) => ({ hour: hourById.get(b.office_hour_id), booking: b }))
-          .filter(
-            (
-              x,
-            ): x is { hour: OfficeHour; booking: OfficeHourBooking } =>
-              !!x.hour &&
-              !!x.hour.starts_at &&
-              new Date(x.hour.starts_at).getTime() >= now,
-          )
-          .sort((a, b) => (a.hour.starts_at ?? '').localeCompare(b.hour.starts_at ?? ''))
-          .slice(0, 3)
-        const bNames = await fetchProfileNames(
-          upcoming.map((x) => x.booking.user_id),
-        ).catch(() => new Map<string, string>())
-        setBookings(
-          upcoming.map((x) => ({
-            hour: x.hour,
-            booking: x.booking,
-            studentName: bNames.get(x.booking.user_id) ?? 'Siswa',
-          })),
-        )
-      }
+      setBookings(hourBookings)
     } catch {
       setError('Gagal memuat Mentor Workspace. Coba muat ulang halaman.')
     } finally {
@@ -1805,6 +1811,8 @@ function AdminHome(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // B65: satu kunci busy per aksi keputusan admin di Beranda.
+  const [busyKey, setBusyKey] = useState<string | null>(null)
   // Statistik platform (data asli): filter periode + ring Progress Academy.
   const [period, setPeriod] = useState<'all' | '7' | '30' | '90'>('all')
   const [profileTimestamps, setProfileTimestamps] = useState<
@@ -1849,8 +1857,11 @@ function AdminHome(props: {
         supabase.from('profiles').select('id,name,role,created_at'),
         tracked(
           'film',
-          async () =>
-            supabase.from('films').select('id', { count: 'exact', head: true }),
+          async () => {
+            const { count, error } = await supabase.from('films').select('id', { count: 'exact', head: true })
+            if (error) throw error
+            return { count }
+          },
           { count: 0 } as { count: number | null },
         ),
         // Enrollment + sertifikat diambil sebagai baris (bukan hitung saja)
@@ -1858,9 +1869,10 @@ function AdminHome(props: {
         tracked(
           'enrollment',
           async () => {
-            const { data } = await supabase
+            const { data, error } = await supabase
               .from('enrollments')
               .select('id,user_id,course_id,enrolled_at')
+            if (error) throw error
             return (data ?? []) as {
               id: string
               user_id: string
@@ -1873,7 +1885,8 @@ function AdminHome(props: {
         tracked(
           'sertifikat',
           async () => {
-            const { data } = await supabase.from('certificates').select('id,issued_at')
+            const { data, error } = await supabase.from('certificates').select('id,issued_at')
+            if (error) throw error
             return (data ?? []) as { id: string; issued_at: string }[]
           },
           [] as { id: string; issued_at: string }[],
@@ -1883,7 +1896,8 @@ function AdminHome(props: {
         tracked(
           'sekolah',
           async () => {
-            const { data } = await supabase.from('schools').select('*').order('name')
+            const { data, error } = await supabase.from('schools').select('*').order('name')
+            if (error) throw error
             return (data ?? []) as School[]
           },
           [] as School[],
@@ -1891,11 +1905,12 @@ function AdminHome(props: {
         tracked(
           'laporan diskusi',
           async () => {
-            const { data } = await supabase
+            const { data, error } = await supabase
               .from('discussion_reports')
               .select('*')
               .eq('status', 'open')
               .order('created_at', { ascending: false })
+            if (error) throw error
             return (data ?? []) as DiscussionReport[]
           },
           [] as DiscussionReport[],
@@ -1903,11 +1918,12 @@ function AdminHome(props: {
         tracked(
           'laporan moderasi',
           async () => {
-            const { data } = await supabase
+            const { data, error } = await supabase
               .from('moderation_reports')
               .select('*')
               .eq('status', 'open')
               .order('created_at', { ascending: false })
+            if (error) throw error
             return (data ?? []) as ModerationReport[]
           },
           [] as ModerationReport[],
@@ -1967,18 +1983,22 @@ function AdminHome(props: {
       // course lesson itu yang dihitung; gagal memuat → null ("—").
       const academy = await tracked('progres academy',
         async () => {
-          const { data: modData } = await supabase
+          // B64: .error tiap sub-query diperiksa — gagal = penanda sumber,
+          // bukan progres 0 yang menyamarkan kegagalan.
+          const { data: modData, error: modErr } = await supabase
             .from('modules')
             .select('id,course_id')
+          if (modErr) throw modErr
           const mods = (modData ?? []) as { id: string; course_id: string }[]
           if (mods.length === 0) return { pct: null, done: 0, total: 0 }
-          const { data: lesData } = await supabase
+          const { data: lesData, error: lesErr } = await supabase
             .from('lessons')
             .select('id,module_id')
             .in(
               'module_id',
               mods.map((m) => m.id),
             )
+          if (lesErr) throw lesErr
           const lessons = (lesData ?? []) as { id: string; module_id: string }[]
           if (lessons.length === 0) return { pct: null, done: 0, total: 0 }
           const modCourse = new Map(mods.map((m) => [m.id, m.course_id]))
@@ -2002,7 +2022,7 @@ function AdminHome(props: {
             total += users.size * (lessonsByCourse.get(cid) ?? 0)
           }
           if (total === 0) return { pct: null, done: 0, total: 0 }
-          const { data: progData } = await supabase
+          const { data: progData, error: progErr } = await supabase
             .from('lesson_progress')
             .select('lesson_id,user_id')
             .eq('status', 'completed')
@@ -2010,6 +2030,7 @@ function AdminHome(props: {
               'lesson_id',
               lessons.map((l) => l.id),
             )
+          if (progErr) throw progErr
           let done = 0
           for (const p of (progData ?? []) as { lesson_id: string; user_id: string }[]) {
             const cid = lessonCourseMap.get(p.lesson_id) ?? ''
@@ -2111,11 +2132,12 @@ function AdminHome(props: {
       // pendaftaran terbaru sebagai gantinya (data asli saja).
       const aRows = await tracked('audit log',
         async () => {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from('audit_log')
             .select('*')
             .order('created_at', { ascending: false })
             .limit(5)
+          if (error) throw error
           return (data ?? []) as AuditLogRow[]
         },
         null as AuditLogRow[] | null,
@@ -2135,11 +2157,12 @@ function AdminHome(props: {
       } else {
         const newest = await tracked('pendaftaran terbaru',
           async () => {
-            const { data } = await supabase
+            const { data, error } = await supabase
               .from('profiles')
               .select('id,name,role,created_at')
               .order('created_at', { ascending: false })
               .limit(5)
+            if (error) throw error
             return (data ?? []) as { id: string; name: string | null; role: string; created_at: string }[]
           },
           [] as { id: string; name: string | null; role: string; created_at: string }[],
@@ -2172,60 +2195,76 @@ function AdminHome(props: {
     decision: 'approved' | 'rejected' | 'revision_required',
     note = '',
   ) {
-    // Hanya status + catatan yang diubah dari client. Trigger
-    // promote_mentor_on_approval di database yang mengubah profiles.role
-    // menjadi 'mentor' saat lamaran disetujui.
+    // B65: tolak pemanggilan kedua selagi satu keputusan masih berjalan.
+    const key = `app-${app.id}-${decision}`
+    if (busyKey) return
+    setBusyKey(key)
     try {
-      await decideMentorApplication(app, decision, note, userId)
-    } catch {
-      setNotice('Gagal menyimpan keputusan. Coba lagi.')
-      return
+      // Hanya status + catatan yang diubah dari client. Trigger
+      // promote_mentor_on_approval di database yang mengubah profiles.role
+      // menjadi 'mentor' saat lamaran disetujui.
+      try {
+        await decideMentorApplication(app, decision, note, userId)
+      } catch {
+        setNotice('Gagal menyimpan keputusan. Coba lagi.')
+        return
+      }
+      await logAudit(
+        decision === 'approved'
+          ? 'mentor_application.approved'
+          : decision === 'rejected'
+            ? 'mentor_application.rejected'
+            : 'mentor_application.revision_required',
+        'mentor_applications',
+        app.id,
+        { user_id: app.user_id },
+      )
+      setNotice(
+        decision === 'approved'
+          ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
+          : decision === 'rejected'
+            ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
+            : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
+      )
+      setAppAction(null)
+      setAppNote('')
+      await load()
+    } finally {
+      setBusyKey(null)
     }
-    await logAudit(
-      decision === 'approved'
-        ? 'mentor_application.approved'
-        : decision === 'rejected'
-          ? 'mentor_application.rejected'
-          : 'mentor_application.revision_required',
-      'mentor_applications',
-      app.id,
-      { user_id: app.user_id },
-    )
-    setNotice(
-      decision === 'approved'
-        ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
-        : decision === 'rejected'
-          ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
-          : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
-    )
-    setAppAction(null)
-    setAppNote('')
-    await load()
   }
 
   async function decideSub(sub: SchoolSubmission, decision: 'approved' | 'rejected', note = '') {
-    // Setujui: sekolah dibuat (bila belum ada yang cocok) lalu ditautkan
-    // ke pengajuan + profil pengaju. Tolak: alasan tersimpan.
+    // B65: kunci busy per baris keputusan.
+    const key = `sub-${sub.id}-${decision}`
+    if (busyKey) return
+    setBusyKey(key)
     try {
-      await decideSchoolSubmission(sub, decision, note, userId)
-    } catch {
-      setNotice('Gagal menyimpan keputusan. Coba lagi.')
-      return
+      // Setujui: sekolah dibuat (bila belum ada yang cocok) lalu ditautkan
+      // ke pengajuan + profil pengaju. Tolak: alasan tersimpan.
+      try {
+        await decideSchoolSubmission(sub, decision, note, userId)
+      } catch {
+        setNotice('Gagal menyimpan keputusan. Coba lagi.')
+        return
+      }
+      await logAudit(
+        decision === 'approved' ? 'school_submission.approved' : 'school_submission.rejected',
+        'school_submissions',
+        sub.id,
+        { user_id: sub.user_id },
+      )
+      setNotice(
+        decision === 'approved'
+          ? 'Pengajuan sekolah disetujui — sekolah ditambahkan dan ditautkan ke pengaju.'
+          : 'Pengajuan sekolah ditolak. Alasan tersimpan dan terlihat oleh pengaju.',
+      )
+      setRejectingSubId(null)
+      setSubNote('')
+      await load()
+    } finally {
+      setBusyKey(null)
     }
-    await logAudit(
-      decision === 'approved' ? 'school_submission.approved' : 'school_submission.rejected',
-      'school_submissions',
-      sub.id,
-      { user_id: sub.user_id },
-    )
-    setNotice(
-      decision === 'approved'
-        ? 'Pengajuan sekolah disetujui — sekolah ditambahkan dan ditautkan ke pengaju.'
-        : 'Pengajuan sekolah ditolak. Alasan tersimpan dan terlihat oleh pengaju.',
-    )
-    setRejectingSubId(null)
-    setSubNote('')
-    await load()
   }
 
   async function handleVerifySchool(school: School, verify: boolean) {
@@ -2549,23 +2588,26 @@ function AdminHome(props: {
                     <button
                       type="button"
                       className="btn btn-primary btn-small"
+                      disabled={busyKey !== null}
                       onClick={() => void decideApp(a, 'approved')}
                     >
-                      Setujui
+                      {busyKey === `app-${a.id}-approved` ? 'Memproses…' : 'Setujui'}
                     </button>{' '}
                     {appAction?.id === a.id && appAction.kind === 'reject' ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Alasan penolakan (wajib)
                           <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pelamar." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'rejected', appNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim() || busyKey !== null} onClick={() => void decideApp(a, 'rejected', appNote)}>{busyKey === `app-${a.id}-rejected` ? 'Memproses…' : 'Konfirmasi Tolak'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
                       </>
                     ) : (
                       <button
                         type="button"
                         className="btn btn-ghost btn-small"
+                        disabled={busyKey !== null}
                         onClick={() => { setAppAction({ id: a.id, kind: 'reject' }); setAppNote('') }}
                       >
                         Tolak
@@ -2573,17 +2615,19 @@ function AdminHome(props: {
                     )}{' '}
                     {appAction?.id === a.id && appAction.kind === 'revision' ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Catatan revisi (wajib)
                           <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis yang perlu diperbaiki pelamar — terlihat oleh pelamar." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'revision_required', appNote)}>Konfirmasi Minta Revisi</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim() || busyKey !== null} onClick={() => void decideApp(a, 'revision_required', appNote)}>{busyKey === `app-${a.id}-revision_required` ? 'Memproses…' : 'Konfirmasi Minta Revisi'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
                       </>
                     ) : (
                       <button
                         type="button"
                         className="btn btn-ghost btn-small"
+                        disabled={busyKey !== null}
                         onClick={() => { setAppAction({ id: a.id, kind: 'revision' }); setAppNote('') }}
                       >
                         Minta Revisi
@@ -2632,23 +2676,26 @@ function AdminHome(props: {
                     <button
                       type="button"
                       className="btn btn-primary btn-small"
+                      disabled={busyKey !== null}
                       onClick={() => void decideSub(s, 'approved')}
                     >
-                      Setujui &amp; Tambah Sekolah
+                      {busyKey === `sub-${s.id}-approved` ? 'Memproses…' : 'Setujui & Tambah Sekolah'}
                     </button>{' '}
                     {rejectingSubId === s.id ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Alasan penolakan (wajib)
                           <textarea value={subNote} onChange={(e) => setSubNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pengaju." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!subNote.trim()} onClick={() => void decideSub(s, 'rejected', subNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!subNote.trim() || busyKey !== null} onClick={() => void decideSub(s, 'rejected', subNote)}>{busyKey === `sub-${s.id}-rejected` ? 'Memproses…' : 'Konfirmasi Tolak'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingSubId(null); setSubNote('') }}>Batal</button>
                       </>
                     ) : (
                       <button
                         type="button"
                         className="btn btn-ghost btn-small"
+                        disabled={busyKey !== null}
                         onClick={() => { setRejectingSubId(s.id); setSubNote('') }}
                       >
                         Tolak
@@ -2794,7 +2841,8 @@ function AdminHome(props: {
                 <p className="discussion-meta">
                   {a.actor} · {fmtDate(a.created_at)}
                 </p>
-                <p>{a.action}</p>
+                {/* LB8: kunci event mentah dipetakan ke label Indonesia. */}
+                <p>{activityLabel(a.action)}</p>
               </li>
             ))}
           </ul>

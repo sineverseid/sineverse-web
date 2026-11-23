@@ -16,7 +16,12 @@ export default function NotificationsPage() {
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!user) return
+    // B39: tamu tidak boleh terjebak "Memuat…" selamanya — loading
+    // dimatikan dan halaman menampilkan ajakan masuk.
+    if (!user) {
+      setLoading(false)
+      return
+    }
     const currentUser = user
     let cancelled = false
     async function load() {
@@ -36,6 +41,16 @@ export default function NotificationsPage() {
   }, [user])
 
   if (loading) return <div className="page"><p className="muted">Memuat notifikasi…</p></div>
+  if (!user) {
+    return (
+      <div className="page">
+        <PageHeader icon="bell" title="Notifikasi" subtitle="Pemberitahuan untuk akunmu." />
+        <p className="empty">
+          <Link to="/login">Masuk</Link> untuk melihat notifikasi.
+        </p>
+      </div>
+    )
+  }
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (items === null) return <div className="page"><h1>Notifikasi</h1><MigrationNotice migration="008" /></div>
 

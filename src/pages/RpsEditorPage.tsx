@@ -3,7 +3,7 @@
 // passing grade, judul, deskripsi. Daftar minggu (20 minggu) ditampilkan
 // read-only — pengeditan minggu per minggu belum disediakan agar JSON
 // minggu tidak rusak dari form.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
@@ -30,6 +30,15 @@ export default function RpsEditorPage() {
   const [wTugasAkhir, setWTugasAkhir] = useState(40)
   const [wDiskusi, setWDiskusi] = useState(10)
   const [passing, setPassing] = useState(70)
+  // LB14: textarea Deskripsi auto-grow (tinggi mengikuti isi, bukan
+  // 3 baris yang memotong teks di balik scrollbar).
+  const descRef = useRef<HTMLTextAreaElement | null>(null)
+  useEffect(() => {
+    const el = descRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.max(el.scrollHeight, 96)}px`
+  }, [desc])
 
   useEffect(() => {
     let cancelled = false
@@ -127,14 +136,16 @@ export default function RpsEditorPage() {
   }
 
   return (
-    <div className="page page-narrow">
+    // LB14: form memakai lebar penuh .page (bukan .page-narrow ~520px) —
+    // textarea dan field tidak lagi terjepit di kolom sempit.
+    <div className="page">
       <h1>Editor RPS — {BRAND.rpsCode}</h1>
       <WorkspaceNav entries={ADMIN_NAV} />
       <p className="muted">Hanya admin yang bisa mengubah RPS. Mentor melihat versi read-only.</p>
       {notice && <p className="notice-box">{notice}</p>}
       <form className="form" onSubmit={handleSave}>
         <label>Judul<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
-        <label>Deskripsi<textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} /></label>
+        <label>Deskripsi<textarea ref={descRef} value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} style={{ overflow: 'hidden', resize: 'none' }} /></label>
         <label>Bobot pretest (%)<input type="number" min={0} max={100} value={wPretest} onChange={(e) => setWPretest(Number(e.target.value))} required /></label>
         <label>Bobot posttest (%)<input type="number" min={0} max={100} value={wPosttest} onChange={(e) => setWPosttest(Number(e.target.value))} required /></label>
         <label>Bobot tugas mingguan (%)<input type="number" min={0} max={100} value={wTugasMingguan} onChange={(e) => setWTugasMingguan(Number(e.target.value))} required /></label>

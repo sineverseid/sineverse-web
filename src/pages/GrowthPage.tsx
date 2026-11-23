@@ -52,6 +52,8 @@ export default function GrowthPage() {
   const [schoolQuery, setSchoolQuery] = useState('')
   const [schoolResults, setSchoolResults] = useState<School[] | null>(null)
   const [schoolSearching, setSchoolSearching] = useState(false)
+  // B58: pesan error pencarian sekolah (tanpanya gagal = "Mencari…" selamanya).
+  const [schoolSearchError, setSchoolSearchError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [coursesError, setCoursesError] = useState(false)
@@ -146,18 +148,29 @@ export default function GrowthPage() {
       return
     }
     setSchoolSearching(true)
+    setSchoolSearchError(false)
     const safe = q.replace(/[%(),]/g, '')
     const t = setTimeout(() => {
-      void supabase
-        .from('schools')
-        .select('id,name,city,is_verified,npsn')
-        .or(`name.ilike.%${safe}%,npsn.eq.${q}`)
-        .order('name')
-        .limit(20)
-        .then(({ data }) => {
+      // B58: tanpa try/catch, query gagal = "Mencari…" selamanya.
+      // (PostgrestFilterBuilder.then mengembalikan PromiseLike tanpa
+      // .catch, jadi dipakai async/await + try/catch.)
+      void (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('schools')
+            .select('id,name,city,is_verified,npsn')
+            .or(`name.ilike.%${safe}%,npsn.eq.${q}`)
+            .order('name')
+            .limit(20)
+          if (error) throw error
           setSchoolResults((data ?? []) as School[])
           setSchoolSearching(false)
-        })
+        } catch {
+          setSchoolResults([])
+          setSchoolSearching(false)
+          setSchoolSearchError(true)
+        }
+      })()
     }, 300)
     return () => clearTimeout(t)
   }, [schoolQuery])
@@ -188,14 +201,16 @@ export default function GrowthPage() {
   // Rekomendasi course, satu logika skor dengan Beranda siswa
   // (lihat src/lib/recommendations.ts). Alasan dan urutannya sama seperti
   // sebelumnya; Growth tidak menampilkan angka skornya.
+  // LB4: mentor tidak direkomendasikan course yang dia ampu sendiri.
+  const isMentor = profile?.role === 'mentor'
   const recommendations = useMemo(
     () =>
       scoreCourses(
-        courses,
+        isMentor ? courses.filter((c) => c.mentor_id !== user?.id) : courses,
         enrolledIds,
         (profile?.interests ?? []).map((s) => s.toLowerCase()).filter(Boolean),
       ).slice(0, 6),
-    [courses, enrolledIds, profile?.interests],
+    [courses, enrolledIds, profile?.interests, isMentor, user?.id],
   )
 
   const openProjects = useMemo(
@@ -378,6 +393,8 @@ export default function GrowthPage() {
             {schoolQuery.trim().length >= 2 ? (
               schoolSearching ? (
                 <p className="muted">Mencari…</p>
+              ) : schoolSearchError ? (
+                <p className="error-box">Pencarian sekolah gagal. Periksa koneksi lalu coba lagi.</p>
               ) : schoolResults && schoolResults.length === 0 ? (
                 <p className="empty">Tidak ada sekolah yang cocok dengan pencarianmu.</p>
               ) : (

@@ -327,7 +327,10 @@ export default function AdminSectionsPage() {
             {modLessons.length === 0 ? (
               <p className="empty">Section ini belum punya lesson.</p>
             ) : (
-              <ul className="discussion-list">
+              // LB15: kartu lesson ringkas — grid 2 kolom, tiap kartu hanya
+              // judul + meta sebaris dan aksi sebaris (bukan kartu tinggi
+              // dengan kontrol menumpuk).
+              <ul className="discussion-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '0.75rem' }}>
                 {modLessons.map((lesson, idx) => (
                   <li key={lesson.id} className="discussion-item">
                     {editingLessonId === lesson.id ? (
@@ -362,24 +365,20 @@ export default function AdminSectionsPage() {
                           {isWelcomeLesson(lesson, modules) && ' (lesson sambutan seed)'}
                         </p>
                         {lesson.video_url && <p className="muted">Video: {lesson.video_url}</p>}
-                        <div className="form-actions">
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
                           <button type="button" className="btn btn-secondary btn-small" onClick={() => startEditLesson(lesson)}>Edit</button>
                           <button type="button" className="btn btn-ghost btn-small" onClick={() => void deleteLesson(lesson)}>Hapus Lesson</button>
-                        </div>
-                        <label>
-                          Pindah section
                           <select
                             value={moveTarget[lesson.id] ?? ''}
                             onChange={(e) => setMoveTarget((prev) => ({ ...prev, [lesson.id]: e.target.value }))}
+                            aria-label="Pindah section"
                             style={{ fontFamily: 'inherit', padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
                           >
-                            <option value="">Pilih section tujuan</option>
+                            <option value="">Pindah section…</option>
                             {modules.filter((m) => m.id !== lesson.module_id).map((m) => (
                               <option key={m.id} value={m.id}>{m.title}</option>
                             ))}
                           </select>
-                        </label>
-                        <div className="form-actions">
                           <button type="button" className="btn btn-ghost btn-small" onClick={() => void moveLesson(lesson)}>Pindah</button>
                         </div>
                       </>

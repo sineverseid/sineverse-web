@@ -188,6 +188,23 @@ export default function QuizPage() {
       </p>
 
       {result && <p className={result.score !== null && result.score >= quiz.passing_score ? 'notice-box' : 'notice-box'}>{result.note}</p>}
+      {/* B24: kerjakan ulang bila percobaan masih tersisa — tanpa ini
+          input terkunci setelah submit pertama dan hanya reload halaman
+          yang bisa mengulang. */}
+      {result && !blocked && enrolled === true && (
+        <p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={() => {
+              setResult(null)
+              setAnswers({})
+            }}
+          >
+            Kerjakan ulang
+          </button>
+        </p>
+      )}
       {blocked && <p className="error-box">Batas percobaan kuis ini sudah tercapai ({maxAttempts} kali).</p>}
 
       {/* K3: "Belum ada soal" hanya tampil untuk yang memang boleh melihat

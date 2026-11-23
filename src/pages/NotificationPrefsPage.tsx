@@ -2,6 +2,7 @@
 // Preferensi hanya dibaca/ditulis oleh pemiliknya sendiri.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fetchNotificationPrefs, saveNotificationPrefs } from '../lib/supabase'
@@ -31,7 +32,12 @@ export default function NotificationPrefsPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (!user) return
+    // B39: tamu tidak boleh terjebak "Memuat…" selamanya — loading
+    // dimatikan dan halaman menampilkan ajakan masuk.
+    if (!user) {
+      setLoading(false)
+      return
+    }
     const currentUser = user
     let cancelled = false
     async function load() {
@@ -77,6 +83,16 @@ export default function NotificationPrefsPage() {
   }
 
   if (loading) return <div className="page"><p className="muted">Memuat pengaturan…</p></div>
+  if (!user) {
+    return (
+      <div className="page page-narrow">
+        <h1>Pengaturan Notifikasi</h1>
+        <p className="empty">
+          <Link to="/login">Masuk</Link> untuk mengatur preferensi notifikasi.
+        </p>
+      </div>
+    )
+  }
   if (loadError) return <div className="page"><h1>Pengaturan Notifikasi</h1><p className="error-box">{loadError}</p></div>
   if (missing) return <div className="page"><h1>Pengaturan Notifikasi</h1><MigrationNotice migration="008" /></div>
 

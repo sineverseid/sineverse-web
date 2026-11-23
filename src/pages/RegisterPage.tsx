@@ -412,7 +412,14 @@ export default function RegisterPage() {
     // Titipkan payload (tanpa kata sandi) untuk diselesaikan setelah masuk:
     // foto file diunggah ke bucket, profil dilengkapi, pengajuan sekolah
     // manual dikirim, lamaran mentor dikirim.
-    savePendingRegistration(payload)
+    // B16-followup: savePendingRegistration kini melempar bila localStorage
+    // gagal — tangkap supaya layar sukses pasca-signup tetap tampil.
+    try {
+      savePendingRegistration(payload)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menyimpan data pendaftaran. Coba lagi.')
+      return
+    }
     setRegisteredRole(payload.role)
     if (needsConfirmation) {
       setRegisteredEmail(cleanEmail)

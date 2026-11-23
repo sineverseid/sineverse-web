@@ -8,7 +8,7 @@
 // satu gagal tidak boleh menenggelamkan lesson.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -53,6 +53,7 @@ function videoEmbed(url: string): { kind: 'youtube' | 'vimeo' | 'link'; embedUrl
 
 export default function LessonDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { user, profile } = useAuth()
 
   const [lesson, setLesson] = useState<Lesson | null>(null)
@@ -509,6 +510,9 @@ export default function LessonDetailPage() {
       await markLessonCompleted(user.id, l.id)
       setStatus('completed')
       setNotice('Lesson ditandai selesai.')
+      // B23: label tombol menjanjikan lanjut — navigasi ke lesson
+      // berikutnya setelah menandai selesai (bila ada).
+      if (next) navigate(`/lesson/${next.id}`)
     } catch {
       setNotice('Gagal menandai lesson selesai. Periksa koneksi lalu coba lagi.')
     } finally {

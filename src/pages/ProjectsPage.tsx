@@ -92,12 +92,19 @@ export default function ProjectsPage() {
     return () => {
       cancelled = true
     }
+    // B45: muat ulang saat auth selesai (user berubah setelah mount) —
+    // dengan deps [] keanggotaan proyek bisa kosong selamanya.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user?.id])
+
+  const [creating, setCreating] = useState(false)
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
-    if (!user || !title.trim()) return
+    if (!user || !title.trim() || creating) return
+    // B59: kunci selama proses — klik ganda membuat proyek duplikat.
+    setCreating(true)
+    try {
     const { data, error: insErr } = await supabase
       .from('projects')
       .insert({
@@ -142,6 +149,9 @@ export default function ProjectsPage() {
     setMemberCounts(counts)
     setMyProjectIds(mine)
     setOwnerNames(await fetchProfileNames(list.map((p) => p.owner_id)))
+    } finally {
+      setCreating(false)
+    }
   }
 
   if (loading) return <div className="page"><p className="muted">Memuat proyek…</p></div>
@@ -173,17 +183,10 @@ export default function ProjectsPage() {
         <ul className="course-list">
           {projects.map((p) => {
             const canSee = p.access_mode !== 'invite_only' || isAdmin || p.owner_id === user?.id || myProjectIds.has(p.id)
-            if (!canSee) {
-              // Proyek undangan saja: judul dan deskripsi tidak boleh bocor.
-              return (
-                <li key={p.id} className="course-card">
-                  <div style={{ padding: '1.1rem 1.25rem' }}>
-                    <h3>Proyek undangan saja</h3>
-                    <p className="muted">Proyek ini hanya bisa diikuti lewat undangan.</p>
-                  </div>
-                </li>
-              )
-            }
+            // B44: proyek undangan saja yang tidak bisa dilihat TIDAK
+            // dirender sama sekali — satu kartu mati per proyek tersembunyi
+            // membocorkan jumlahnya.
+            if (!canSee) return null
             const tpl = templateTitle(p.template)
             return (
               <li key={p.id} className="course-card">
@@ -237,7 +240,9 @@ export default function ProjectsPage() {
                 <option value="invite_only">Undangan saja</option>
               </select>
             </label>
-            <button type="submit" className="btn btn-primary">Buat Proyek</button>
+            <button type="submit" className="btn btn-primary" disabled={creating}>
+              {creating ? 'Membuat…' : 'Buat Proyek'}
+            </button>
           </form>
           <p><Link to="/kru">Cari kru di Crew Finder →</Link></p>
         </section>

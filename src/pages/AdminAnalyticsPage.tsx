@@ -181,7 +181,9 @@ export default function AdminAnalyticsPage() {
     async function load() {
       try {
         // Batch tingkat atas paralel: course + profil + enrollment +
-        // modules + baris RPS + hitung sertifikat.
+        // modules + baris RPS + hitung sertifikat + SEMUA lesson.
+        // LB7: lesson diambil sekaligus di batch atas (bukan menunggu modul
+        // dulu) — satu round-trip lebih sedikit sebelum agregat dihitung.
         const noId = ['00000000-0000-0000-0000-000000000000']
         // B62 (K13): .error tiap batch DIPERIKSA — gagal = error state,
         // bukan agregat 0 + empty state yang menyamarkan kegagalan.
@@ -193,6 +195,7 @@ export default function AdminAnalyticsPage() {
           { data: modRowsRaw, error: modErr },
           { data: rpsRow, error: rpsErr },
           { data: certRowsRaw, error: certErr },
+          { data: lessonRowsRaw, error: lessonErr },
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
@@ -200,6 +203,7 @@ export default function AdminAnalyticsPage() {
           supabase.from('modules').select('id,course_id'),
           supabase.from('rps').select('*').eq('code', BRAND.rpsCode).maybeSingle(),
           supabase.from('certificates').select('id,issued_at'),
+          supabase.from('lessons').select('id,module_id,title'),
         ])
         {
           const failed = (
@@ -209,6 +213,7 @@ export default function AdminAnalyticsPage() {
               ['modul', modErr],
               ['RPS', rpsErr],
               ['sertifikat', certErr],
+              ['lesson', lessonErr],
             ] as const
           )
             .filter(([, e]) => e)
@@ -238,11 +243,6 @@ export default function AdminAnalyticsPage() {
         const pass = rps?.passing_grade ?? PASSING_GRADE
 
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
-        const { data: lessonRowsRaw, error: lessonErr } = await supabase
-          .from('lessons')
-          .select('id,module_id,title')
-          .in('module_id', modRows.length > 0 ? modRows.map((m) => m.id) : noId)
-        if (lessonErr) throw new Error(`Gagal memuat analitik: lesson (${lessonErr.message}).`)
         const lessonRows = (lessonRowsRaw ?? []) as { id: string; module_id: string; title: string }[]
         const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
         const lessonTitle = new Map(lessonRows.map((l) => [l.id, l.title]))
@@ -535,7 +535,7 @@ export default function AdminAnalyticsPage() {
       </div>
     )
   }
-  if (loading) return <div className="page"><p className="muted">Memuat…</p></div>
+  if (loading) return <div className="page"><p className="muted">Memuat analitik — mengambil data course, enrollment, progres, dan nilai…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
   return (

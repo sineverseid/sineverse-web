@@ -37,33 +37,39 @@ export default function AdminAssignmentsPage() {
       try {
         const courses = await fetchCourses()
         const courseById = new Map(courses.map((c) => [c.id, c.title]))
-        const { data: mods } = await supabase.from('modules').select('id,course_id')
+        // B63: .error tiap sub-query diperiksa — gagal = error-box, bukan
+        // "Belum ada tugas" yang menyamarkan kegagalan sebagai daftar kosong.
+        const { data: mods, error: modsErr } = await supabase.from('modules').select('id,course_id')
+        if (modsErr) throw modsErr
         const modRows = (mods ?? []) as Module[]
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
         let lessonRows: Lesson[] = []
         if (modRows.length > 0) {
-          const { data: lessons } = await supabase
+          const { data: lessons, error: lessonsErr } = await supabase
             .from('lessons')
             .select('id,module_id,title')
             .in('module_id', modRows.map((m) => m.id))
+          if (lessonsErr) throw lessonsErr
           lessonRows = (lessons ?? []) as Lesson[]
         }
         const lessonById = new Map(lessonRows.map((l) => [l.id, l]))
         let assignments: Assignment[] = []
         if (lessonRows.length > 0) {
-          const { data: assigns } = await supabase
+          const { data: assigns, error: assignsErr } = await supabase
             .from('assignments')
             .select('*')
             .in('lesson_id', lessonRows.map((l) => l.id))
             .order('created_at', { ascending: false })
+          if (assignsErr) throw assignsErr
           assignments = (assigns ?? []) as Assignment[]
         }
         let submissions: Submission[] = []
         if (assignments.length > 0) {
-          const { data: subs } = await supabase
+          const { data: subs, error: subsErr } = await supabase
             .from('submissions')
             .select('id,assignment_id,score,submitted_at')
             .in('assignment_id', assignments.map((a) => a.id))
+          if (subsErr) throw subsErr
           submissions = (subs ?? []) as Submission[]
         }
         const subsByAssignment = new Map<string, Submission[]>()

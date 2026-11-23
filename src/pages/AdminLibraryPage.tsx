@@ -151,24 +151,40 @@ export default function AdminLibraryPage() {
             {!items || items.length === 0 ? (
               <EmptyState message="Pustaka kosong. Belum ada item Pustaka." />
             ) : (
-              <ul className="discussion-list">
+              // LB13: grid kartu (bukan satu kolom sempit) + thumbnail dari
+              // image_url bila ada; gambar rusak disembunyikan, bukan kotak rusak.
+              <ul className="course-list">
                 {items.map((it) => (
-                  <li key={it.id} className="discussion-item">
-                    <p className="discussion-meta">
-                      {it.category ?? 'Tanpa kategori'}
-                      {it.legal_basis ? ` · ${it.legal_basis}` : ''}
-                    </p>
-                    <h3>
-                      <Link to={`/pustaka/${it.id}`}>{it.title}</Link>
-                    </h3>
-                    {it.attribution && <p className="muted">Atribusi: {it.attribution}</p>}
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      onClick={() => void handleDelete(it.id, it.title)}
-                    >
-                      Hapus
-                    </button>
+                  <li key={it.id} className="course-card">
+                    {it.image_url ? (
+                      <img
+                        src={it.image_url}
+                        alt=""
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none'
+                        }}
+                        style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                      />
+                    ) : null}
+                    <div className="course-card-body">
+                      <p className="muted">
+                        {it.category ?? 'Tanpa kategori'}
+                        {it.legal_basis ? ` · ${it.legal_basis}` : ''}
+                      </p>
+                      <h3>
+                        <Link to={`/pustaka/${it.id}`}>{it.title}</Link>
+                      </h3>
+                      {it.attribution && <p className="muted">Atribusi: {it.attribution}</p>}
+                      <p>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          onClick={() => void handleDelete(it.id, it.title)}
+                        >
+                          Hapus
+                        </button>
+                      </p>
+                    </div>
                   </li>
                 ))}
               </ul>

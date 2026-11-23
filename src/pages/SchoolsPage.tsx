@@ -170,6 +170,9 @@ export default function SchoolsPage() {
   // ATAU bila kabupaten/kota dipilih; tanpa keduanya tidak ada hasil —
   // direktori tidak pernah dimuat utuh di akun mentor. Semua filter
   // digabung (AND): kata kunci + kabupaten/kota.
+  // B53: memilih provinsi saja belum cukup (searchSchools hanya bisa
+  // menyaring per kabupaten/kota) — tampilkan petunjuk di bawah form,
+  // bukan diam.
   useEffect(() => {
     if (!isMentor) return
     const q = schoolQuery.trim()
@@ -266,6 +269,17 @@ export default function SchoolsPage() {
   async function handleCreateClub(e: FormEvent) {
     e.preventDefault()
     if (!user || !clubName.trim()) return
+    // B52: siswa/mentor tanpa sekolah tidak boleh membuat klub "yatim"
+    // (school_id null) yang lalu muncul untuk semua pengguna tanpa sekolah.
+    if (scopedToOwnSchool && !ownSchool) {
+      setNotice('Atur sekolahmu dulu sebelum membuat klub film — klub harus terikat ke sekolahmu.')
+      return
+    }
+    // Admin memilih sekolah lewat select; tanpa pilihan, klub juga yatim.
+    if (!scopedToOwnSchool && !clubSchool) {
+      setNotice('Pilih sekolah untuk klub ini.')
+      return
+    }
     const { error } = await supabase.from('film_clubs').insert({
       // Siswa/mentor membuat klub di sekolahnya sendiri (tanpa pilih
       // sekolah); admin tetap memilih lewat select di form.
@@ -443,6 +457,12 @@ export default function SchoolsPage() {
             />
           </div>
           {schoolSearching && <p className="muted">Mencari sekolah…</p>}
+          {!schoolSearching && searchProvince && !regencyName && schoolQuery.trim().length < 2 && (
+            <p className="muted">
+              Memilih provinsi saja belum cukup untuk mencari — pilih kabupaten/kota atau ketik
+              minimal 2 huruf nama/NPSN sekolah.
+            </p>
+          )}
           {!schoolSearching && (schoolQuery.trim().length >= 2 || regencyName) && (searchResults ?? []).length === 0 && (
             <p className="empty">Tidak ada sekolah terverifikasi yang cocok dengan filter.</p>
           )}
@@ -510,6 +530,10 @@ export default function SchoolsPage() {
 
       {user && (
         <>
+          {/* LB4: form "Buat Klub Film" hanya bila pengguna benar-benar
+              punya sekolah (siswa/mentor tanpa sekolah tidak bisa membuat
+              klub — lihat B52); admin selalu memilih sekolah di form. */}
+          {(!scopedToOwnSchool || ownSchool) ? (
           <section className="section">
             <h2>Buat Klub Film</h2>
             <form className="form" onSubmit={handleCreateClub}>
@@ -521,9 +545,9 @@ export default function SchoolsPage() {
                 <p className="muted">Sekolah: {ownSchool?.name ?? profile?.school ?? '—'}</p>
               ) : (
                 <label>
-                  Sekolah (opsional)
-                  <select value={clubSchool} onChange={(e) => setClubSchool(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-                    <option value="">— Tanpa sekolah tertentu —</option>
+                  Sekolah
+                  <select value={clubSchool} onChange={(e) => setClubSchool(e.target.value)} required style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+                    <option value="">— Pilih sekolah —</option>
                     {schools.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
@@ -537,6 +561,11 @@ export default function SchoolsPage() {
               <button type="submit" className="btn btn-primary">Buat Klub</button>
             </form>
           </section>
+          ) : (
+            <p className="muted">
+              Atur sekolahmu dulu di <Link to="/profil/edit">Edit Profil</Link> sebelum membuat klub film.
+            </p>
+          )}
           {activityClubs.length > 0 ? (
             <section className="section">
               <h2>Tambah Aktivitas Klub</h2>

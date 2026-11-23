@@ -57,8 +57,12 @@ export function EventsPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [startsAt, setStartsAt] = useState('')
-  const [endsAt, setEndsAt] = useState('')
+  // LB9: tanggal + jam dipisah — input type="date" tampil dd/mm/yyyy di
+  // browser berbahasa Indonesia, bukan mm/dd/yyyy seperti datetime-local.
+  const [startDate, setStartDate] = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [endTime, setEndTime] = useState('')
   const [location, setLocation] = useState('')
   const [capacity, setCapacity] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
@@ -81,7 +85,17 @@ export function EventsPage() {
         }
         throw qErr
       }
-      setEvents((data ?? []) as SineEvent[])
+      // B37: acara mendatang dulu (paling dekat dulu); acara yang sudah
+      // lewat diurutkan paling baru dulu di bawahnya, bukan menumpuk di atas.
+      const now = Date.now()
+      const sorted = ((data ?? []) as SineEvent[]).sort((a, b) => {
+        const aPast = a.starts_at ? new Date(a.starts_at).getTime() < now : false
+        const bPast = b.starts_at ? new Date(b.starts_at).getTime() < now : false
+        if (aPast !== bPast) return aPast ? 1 : -1
+        const cmp = (a.starts_at ?? '').localeCompare(b.starts_at ?? '')
+        return aPast ? -cmp : cmp
+      })
+      setEvents(sorted)
     } catch {
       setError('Gagal memuat acara. Coba lagi nanti.')
     } finally {
@@ -122,11 +136,16 @@ export function EventsPage() {
     e.preventDefault()
     if (!user || !title.trim()) return
     const cap = capacity ? Number(capacity) : null
-    if (cap !== null && (Number.isNaN(cap) || cap < 0)) {
-      setFormError('Kapasitas tidak boleh negatif.')
+    // B36: kapasitas 0 ditolak — 0 membuat acara langsung "Penuh" untuk
+    // 0 pendaftar sekalipun; kosong tetap berarti tanpa batas.
+    if (cap !== null && (Number.isNaN(cap) || cap < 1)) {
+      setFormError('Kapasitas minimal 1 (kosong = tanpa batas).')
       return
     }
-    if (startsAt && endsAt && new Date(endsAt) < new Date(startsAt)) {
+    // LB9: tanggal + jam digabung ke ISO (jam kosong = 00:00).
+    const startsIso = startDate ? new Date(`${startDate}T${startTime || '00:00'}`).toISOString() : null
+    const endsIso = endDate ? new Date(`${endDate}T${endTime || '00:00'}`).toISOString() : null
+    if (startsIso && endsIso && new Date(endsIso) < new Date(startsIso)) {
       setFormError('Waktu selesai tidak boleh lebih awal dari waktu mulai.')
       return
     }
@@ -150,8 +169,8 @@ export function EventsPage() {
       title: title.trim(),
       description: description.trim() || null,
       kind: 'internal',
-      starts_at: startsAt ? new Date(startsAt).toISOString() : null,
-      ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+      starts_at: startsIso,
+      ends_at: endsIso,
       location: location.trim() || null,
       capacity: cap,
       poster_url: posterUrl,
@@ -164,8 +183,10 @@ export function EventsPage() {
     setNotice('Acara dibuat. Tambahkan sesi/rundown dari halaman detail acara.')
     setTitle('')
     setDescription('')
-    setStartsAt('')
-    setEndsAt('')
+    setStartDate('')
+    setStartTime('')
+    setEndDate('')
+    setEndTime('')
     setLocation('')
     setCapacity('')
     setPosterFile(null)
@@ -215,12 +236,20 @@ export function EventsPage() {
               <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
             </label>
             <label>
-              Mulai
-              <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+              Tanggal mulai (dd/mm/yyyy)
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </label>
             <label>
-              Selesai
-              <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+              Jam mulai
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            </label>
+            <label>
+              Tanggal selesai (dd/mm/yyyy)
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </label>
+            <label>
+              Jam selesai
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
             </label>
             <label>
               Lokasi
@@ -431,6 +460,14 @@ export function EventDetailPage() {
   const [editOrganizer, setEditOrganizer] = useState('')
   const [editOfficialLink, setEditOfficialLink] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
+  // B34: form tambah sesi/rundown (pemilik/admin) — sebelumnya tidak ada
+  // satu pun insert ke event_sessions di seluruh src/.
+  const [sesTitle, setSesTitle] = useState('')
+  const [sesDescription, setSesDescription] = useState('')
+  const [sesStartsAt, setSesStartsAt] = useState('')
+  const [sesEndsAt, setSesEndsAt] = useState('')
+  const [sesError, setSesError] = useState<string | null>(null)
+  const [sesSaving, setSesSaving] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -502,8 +539,9 @@ export function EventDetailPage() {
     e.preventDefault()
     if (!user || !canEditEvent) return
     const cap = editCapacity ? Number(editCapacity) : null
-    if (cap !== null && (Number.isNaN(cap) || cap < 0)) {
-      setEditError('Kapasitas tidak boleh negatif.')
+    // B36: kapasitas 0 ditolak — sama seperti form buat acara.
+    if (cap !== null && (Number.isNaN(cap) || cap < 1)) {
+      setEditError('Kapasitas minimal 1 (kosong = tanpa batas).')
       return
     }
     if (editStartsAt && editEndsAt && new Date(editEndsAt) < new Date(editStartsAt)) {
@@ -529,6 +567,48 @@ export function EventDetailPage() {
     setEvent({ ...currentEvent, ...patch })
     setEditing(false)
     setNotice('Acara diperbarui.')
+  }
+
+  // B34: tambah satu sesi/rundown ke acara ini (pemilik/admin saja).
+  async function handleAddSession(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !canEditEvent) return
+    if (!sesTitle.trim()) {
+      setSesError('Isi judul sesi dulu.')
+      return
+    }
+    if (sesStartsAt && sesEndsAt && new Date(sesEndsAt) < new Date(sesStartsAt)) {
+      setSesError('Waktu selesai sesi tidak boleh lebih awal dari waktu mulai.')
+      return
+    }
+    setSesError(null)
+    setSesSaving(true)
+    try {
+      const { data, error: insErr } = await supabase
+        .from('event_sessions')
+        .insert({
+          event_id: currentEvent.id,
+          title: sesTitle.trim(),
+          description: sesDescription.trim() || null,
+          starts_at: sesStartsAt ? new Date(sesStartsAt).toISOString() : null,
+          ends_at: sesEndsAt ? new Date(sesEndsAt).toISOString() : null,
+          order_index: sessions.length,
+        })
+        .select()
+        .single()
+      if (insErr) {
+        setSesError(`Gagal menambah sesi: ${insErr.message}`)
+        return
+      }
+      setSessions((prev) => [...prev, data as EventSession])
+      setSesTitle('')
+      setSesDescription('')
+      setSesStartsAt('')
+      setSesEndsAt('')
+      setNotice('Sesi ditambahkan ke rundown acara ini.')
+    } finally {
+      setSesSaving(false)
+    }
   }
 
   async function handleDeleteEvent() {
@@ -688,6 +768,31 @@ export function EventDetailPage() {
               </li>
             ))}
           </ol>
+        )}
+        {canEditEvent && (
+          <form className="form" onSubmit={handleAddSession} style={{ marginTop: '1rem' }}>
+            <h3>Tambah Sesi / Rundown</h3>
+            {sesError && <p className="error-box">{sesError}</p>}
+            <label>
+              Judul sesi
+              <input value={sesTitle} onChange={(e) => setSesTitle(e.target.value)} required placeholder="Mis. Pembukaan & sambutan" />
+            </label>
+            <label>
+              Deskripsi (opsional)
+              <textarea value={sesDescription} onChange={(e) => setSesDescription(e.target.value)} rows={2} />
+            </label>
+            <label>
+              Mulai (opsional)
+              <input type="datetime-local" value={sesStartsAt} onChange={(e) => setSesStartsAt(e.target.value)} />
+            </label>
+            <label>
+              Selesai (opsional)
+              <input type="datetime-local" value={sesEndsAt} onChange={(e) => setSesEndsAt(e.target.value)} />
+            </label>
+            <button type="submit" className="btn btn-primary" disabled={sesSaving}>
+              {sesSaving ? 'Menambahkan…' : 'Tambah Sesi'}
+            </button>
+          </form>
         )}
       </section>
 

@@ -50,10 +50,14 @@ export default function AdminEventsPage() {
 
   async function load() {
     try {
-      const [{ data: ev }, { data: comp }] = await Promise.all([
+      // B63: .error tiap sub-query diperiksa — gagal = error-box, bukan
+      // "Belum ada acara/kompetisi" yang menyamarkan kegagalan.
+      const [{ data: ev, error: evErr }, { data: comp, error: compErr }] = await Promise.all([
         supabase.from('events').select('*').order('starts_at', { ascending: false }),
         supabase.from('competitions').select('*').order('created_at', { ascending: false }),
       ])
+      if (evErr) throw evErr
+      if (compErr) throw compErr
       setEvents((ev ?? []) as SineEvent[])
       setCompetitions((comp ?? []) as Competition[])
     } catch (err) {

@@ -23,12 +23,19 @@ export default function OfficeHoursPage() {
   const [starts, setStarts] = useState('')
   const [ends, setEnds] = useState('')
   const [capacity, setCapacity] = useState('')
+  // B55: kunci klik ganda "Pesan Slot" per sesi (double-click = 2 kursi).
+  const [bookingId, setBookingId] = useState<string | null>(null)
+  // B54: pesan validasi form buat office hour (bukan notice umum).
+  const [formError, setFormError] = useState<string | null>(null)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
 
   async function load() {
     try {
       // office_hours dan bookings independen — dimuat paralel.
+      // B37: acara mendatang dulu — sesi yang sudah lewat tidak lagi
+      // menumpuk di atas; yang akan datang diurutkan paling dekat dulu,
+      // sesi lewat diurutkan paling baru dulu di bawahnya.
       const [{ data, error: qErr }, { data: bData }] = await Promise.all([
         supabase.from('office_hours').select('*').order('starts_at', { ascending: true }),
         supabase.from('office_hour_bookings').select('*').eq('status', 'booked'),
@@ -38,10 +45,20 @@ export default function OfficeHoursPage() {
         else throw qErr
         return
       }
-      setHours((data ?? []) as OfficeHour[])
+      const now = Date.now()
+      const sorted = ((data ?? []) as OfficeHour[]).sort((a, b) => {
+        const aPast = a.starts_at ? new Date(a.starts_at).getTime() < now : false
+        const bPast = b.starts_at ? new Date(b.starts_at).getTime() < now : false
+        if (aPast !== bPast) return aPast ? 1 : -1
+        const cmp = (a.starts_at ?? '').localeCompare(b.starts_at ?? '')
+        return aPast ? -cmp : cmp
+      })
+      setHours(sorted)
       const bRows = (bData ?? []) as OfficeHourBooking[]
       setBookings(bRows)
-      setNames(await fetchProfileNames([...new Set(bRows.map((b) => b.user_id))]))
+      // B56: gagal memuat nama peserta tidak boleh meruntuhkan halaman —
+      // nama fallback "Siswa" dipakai bila lookup gagal.
+      setNames(await fetchProfileNames([...new Set(bRows.map((b) => b.user_id))]).catch(() => new Map()))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat office hours.')
     } finally {
@@ -61,12 +78,24 @@ export default function OfficeHoursPage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!user || !title.trim() || !starts || !ends) return
+    // B54: validasi sama seperti Buat Acara — selesai harus sesudah mulai,
+    // kapasitas bila diisi minimal 1 (kosong = tanpa batas).
+    if (new Date(ends) <= new Date(starts)) {
+      setFormError('Waktu selesai harus sesudah waktu mulai.')
+      return
+    }
+    const cap = capacity ? Number(capacity) : null
+    if (cap !== null && (!Number.isInteger(cap) || cap < 1)) {
+      setFormError('Kapasitas minimal 1 (kosong = tanpa batas).')
+      return
+    }
+    setFormError(null)
     const { error: insErr } = await supabase.from('office_hours').insert({
       mentor_id: user.id,
       title: title.trim(),
       starts_at: new Date(starts).toISOString(),
       ends_at: new Date(ends).toISOString(),
-      capacity: capacity ? Number(capacity) : null,
+      capacity: cap,
     })
     if (insErr) setNotice(insErr.message)
     else {
@@ -80,21 +109,32 @@ export default function OfficeHoursPage() {
   }
 
   async function handleBook(oh: OfficeHour) {
-    if (!user) return
+    // B55: kunci per sesi + cek sudah-terdaftar sebelum insert — klik
+    // ganda tidak lagi memesan dua kursi untuk satu orang.
+    if (!user || bookingId) return
+    if (bookings.some((b) => b.office_hour_id === oh.id && b.user_id === user.id)) {
+      setNotice('Kamu sudah terdaftar di office hour ini.')
+      return
+    }
     const booked = bookings.filter((b) => b.office_hour_id === oh.id).length
     if (oh.capacity !== null && booked >= oh.capacity) {
       setNotice('Pendaftaran ditolak: kapasitas office hour ini sudah penuh.')
       return
     }
-    const { error: insErr } = await supabase.from('office_hour_bookings').insert({
-      office_hour_id: oh.id,
-      user_id: user.id,
-      status: 'booked',
-    })
-    if (insErr) setNotice(insErr.message)
-    else {
-      setNotice('Kamu terdaftar di office hour ini.')
-      await load()
+    setBookingId(oh.id)
+    try {
+      const { error: insErr } = await supabase.from('office_hour_bookings').insert({
+        office_hour_id: oh.id,
+        user_id: user.id,
+        status: 'booked',
+      })
+      if (insErr) setNotice(insErr.message)
+      else {
+        setNotice('Kamu terdaftar di office hour ini.')
+        await load()
+      }
+    } finally {
+      setBookingId(null)
     }
   }
 
@@ -138,8 +178,8 @@ export default function OfficeHoursPage() {
                   <p className="muted">Peserta: {booked.map((b) => names.get(b.user_id) ?? 'Siswa').join(', ')}</p>
                 )}
                 {user && !mine && (
-                  <button type="button" className="btn btn-primary btn-small" onClick={() => void handleBook(oh)} disabled={full}>
-                    {full ? 'Penuh' : 'Pesan Slot'}
+                  <button type="button" className="btn btn-primary btn-small" onClick={() => void handleBook(oh)} disabled={full || bookingId === oh.id}>
+                    {bookingId === oh.id ? 'Memesan…' : full ? 'Penuh' : 'Pesan Slot'}
                   </button>
                 )}
                 {user && mine && (
@@ -156,6 +196,7 @@ export default function OfficeHoursPage() {
         <section className="section">
           <h2>Buat Office Hour</h2>
           <form className="form" onSubmit={handleCreate}>
+            {formError && <p className="error-box">{formError}</p>}
             <label>Judul<input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Mis. Konsultasi naskah" /></label>
             <label>Mulai<input type="datetime-local" value={starts} onChange={(e) => setStarts(e.target.value)} required /></label>
             <label>Selesai<input type="datetime-local" value={ends} onChange={(e) => setEnds(e.target.value)} required /></label>

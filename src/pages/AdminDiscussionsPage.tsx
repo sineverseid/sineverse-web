@@ -47,12 +47,15 @@ export default function AdminDiscussionsPage() {
       }
       const rows = (data ?? []) as AdminDiscussion[]
       setThreads(rows)
+      // B67: daftar mentor untuk dropdown "Ditujukan ke" dimuat TANPA
+      // syarat rows.length > 0 — bila belum ada thread sama sekali, admin
+      // tetap bisa memulai thread privat ke mentor tertentu.
+      const { data: profs } = await mentorsP
+      setMentors(((profs ?? []) as { id: string; name: string | null }[]).map((p) => ({ id: p.id, name: p.name })))
       if (rows.length > 0) {
         const { data: rData } = await supabase.from('admin_discussion_replies').select('*').in('thread_id', rows.map((t) => t.id)).order('created_at', { ascending: true })
         const rRows = (rData ?? []) as AdminDiscussionReply[]
         setReplies(rRows)
-        const { data: profs } = await mentorsP
-        setMentors(((profs ?? []) as { id: string; name: string | null }[]).map((p) => ({ id: p.id, name: p.name })))
         setNames(await fetchProfileNames([
           ...rows.map((t) => t.admin_id),
           ...rows.map((t) => t.mentor_id).filter((x): x is string => !!x),

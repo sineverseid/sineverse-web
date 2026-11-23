@@ -289,17 +289,19 @@ export default function CourseDetailPage() {
           : Promise.resolve(false)
 
         const gradesTask = (async () => {
-          // Nilai per komponen hanya untuk peserta, mentor pengampu, dan
-          // admin; gagal memuat hanya menampilkan notice di bloknya,
-          // tidak pernah merusak halaman course.
+          // B21: Nilai per komponen hanya untuk siswa yang TERDAFTAR di
+          // course ini — fetch memakai user.id, jadi mentor/admin dulu
+          // melihat nilai diri sendiri (kosong). Mentor/admin mendapat
+          // ringkasan kelas (Total Siswa + Tingkat Selesai, stat-grid
+          // di bawah) sebagai gantinya; gagal memuat hanya menampilkan
+          // notice di bloknya, tidak pernah merusak halaman course.
           if (!user) return
           try {
             const [lessons, isEnrolled] = await Promise.all([
               modulesTask,
               enrollmentTask,
             ])
-            const canViewGrades =
-              isEnrolled || c.mentor_id === user.id || profile?.role === 'admin'
+            const canViewGrades = isEnrolled
             if (!canViewGrades) return
             if (lessons.length === 0) {
               if (!cancelled) setGradeComponents(EMPTY_COMPONENTS)
@@ -503,8 +505,10 @@ export default function CourseDetailPage() {
   const isCourseMentor = user !== null && course.mentor_id !== null && course.mentor_id === user.id
   const isOtherMentor =
     profile?.role === 'mentor' && course.mentor_id !== null && course.mentor_id !== user?.id
-  // Blok nilai hanya untuk peserta, mentor pengampu, dan admin.
-  const showGrades = enrolled || isCourseMentor || isAdmin
+  // B21: Blok nilai hanya untuk siswa terdaftar. Mentor pengampu dan
+  // admin melihat ringkasan kelas (Total Siswa + Tingkat Selesai) di
+  // stat-grid, bukan nilai diri sendiri yang kosong.
+  const showGrades = enrolled
   const hasAnyGrade =
     gradeComponents !== null &&
     [
@@ -514,14 +518,16 @@ export default function CourseDetailPage() {
       gradeComponents.finalPractice,
       gradeComponents.discussion,
     ].some((v) => v !== null)
-  // Ringkasan ringkas per section (Stage 1 sudah menampilkan "x/5 selesai"
+  // Ringkasan ringkas per section (Stage 1 sudah menampilkan "x/n selesai"
   // + badge di tiap judul modul; baris ini hanya merangkumnya di satu tempat).
+  // B29: penyebutnya jumlah lesson aktual modul, bukan angka tetap 5.
   const sectionSummaries = modules
     .filter((m) => m.order_index === 1 || m.order_index === 2)
     .map((m) => {
       const done = m.lessons.filter((l) => doneIds.has(l.id)).length
+      const total = m.lessons.length
       const label = m.order_index === 1 ? 'Section 1' : 'Section 2'
-      return `${label}: ${done >= 5 ? 'Selesai' : `${done}/5`}`
+      return `${label}: ${total > 0 && done >= total ? 'Selesai' : `${done}/${total}`}`
     })
   // Hero: cover_url bila ada, kalau tidak ilustrasi RPS, kalau tidak ada
   // keduanya (course di luar urutan RPS) tampilkan fallback gradasi.
@@ -790,7 +796,10 @@ export default function CourseDetailPage() {
           // Orientasi (order_index 0) tampil sebagai grup kecil sendiri.
           const isSection = m.order_index === 1 || m.order_index === 2
           const sectionDone = m.lessons.filter((l) => doneIds.has(l.id)).length
-          const sectionComplete = isSection && sectionDone >= 5
+          // B29: penyebut + ambang selesai memakai jumlah lesson aktual
+          // modul (section 3-lesson dulu tidak pernah bisa "Selesai").
+          const sectionTotal = m.lessons.length
+          const sectionComplete = isSection && sectionTotal > 0 && sectionDone >= sectionTotal
           const groupTitle =
             m.title && m.title.trim()
               ? m.title
@@ -810,7 +819,7 @@ export default function CourseDetailPage() {
                 <>
                   {' · '}
                   <span className="muted">
-                    {sectionDone}/5 selesai
+                    {sectionDone}/{sectionTotal} selesai
                   </span>
                   {sectionComplete && (
                     <>

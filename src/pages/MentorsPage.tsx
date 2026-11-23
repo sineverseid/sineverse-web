@@ -46,7 +46,7 @@ export default function MentorsPage() {
         const [profRes, appsRes, courses, hoursRes] = await Promise.all([
           supabase
             .from('profiles')
-            .select('id,email,name,role,photo_url,phone,city,bio,skills,interests,school,school_id,created_at')
+            .select('id,name,role,photo_url,city,bio,skills,interests,school,school_id,created_at')
             .eq('role', 'mentor')
             .order('name'),
           supabase

@@ -41,25 +41,30 @@ export default function AdminResourcesPage() {
     try {
       const courses = await fetchCourses()
       const courseById = new Map(courses.map((c) => [c.id, c.title]))
-      const { data: mods } = await supabase.from('modules').select('id,course_id')
+      // B63: .error tiap sub-query diperiksa — gagal = error-box, bukan
+      // "Belum ada materi" yang menyamarkan kegagalan sebagai daftar kosong.
+      const { data: mods, error: modsErr } = await supabase.from('modules').select('id,course_id')
+      if (modsErr) throw modsErr
       const modRows = (mods ?? []) as Module[]
       const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
       let lessonRows: Lesson[] = []
       if (modRows.length > 0) {
-        const { data: lessons } = await supabase
+        const { data: lessons, error: lessonsErr } = await supabase
           .from('lessons')
           .select('id,module_id,title')
           .in('module_id', modRows.map((m) => m.id))
+        if (lessonsErr) throw lessonsErr
         lessonRows = (lessons ?? []) as Lesson[]
       }
       const lessonById = new Map(lessonRows.map((l) => [l.id, l]))
       let resources: LessonResource[] = []
       if (lessonRows.length > 0) {
-        const { data: res } = await supabase
+        const { data: res, error: resErr } = await supabase
           .from('lesson_resources')
           .select('*')
           .in('lesson_id', lessonRows.map((l) => l.id))
           .order('created_at', { ascending: false })
+        if (resErr) throw resErr
         resources = (res ?? []) as LessonResource[]
       }
       const out: ResourceRow[] = resources.map((r) => {

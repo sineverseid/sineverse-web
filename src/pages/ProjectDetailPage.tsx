@@ -90,6 +90,9 @@ export default function ProjectDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [joinMsg, setJoinMsg] = useState('')
   const [inviteName, setInviteName] = useState('')
+  // B47: bila nama yang diketik cocok dengan beberapa anggota, tampilkan
+  // daftarnya untuk dipilih.
+  const [inviteMatches, setInviteMatches] = useState<{ id: string; name: string | null }[]>([])
 
   // Ubah proyek (pemilik / admin).
   const [editing, setEditing] = useState(false)
@@ -268,6 +271,21 @@ export default function ProjectDetailPage() {
   }
 
   async function decideRequest(req: ProjectJoinRequest, approve: boolean) {
+    if (approve) {
+      // B46: anggota dimasukkan DULU, baru status diubah ke approved —
+      // bila insert gagal, status tetap pending dan permintaan tidak hilang.
+      const { error: memErr } = await supabase.from('project_members').insert({
+        project_id: currentProject.id,
+        user_id: req.user_id,
+        role: 'member',
+        permissions: {},
+      })
+      if (memErr) {
+        setNotice('Gagal menambahkan anggota. Permintaan tetap menunggu.')
+        await refresh()
+        return
+      }
+    }
     const { error: updErr } = await supabase
       .from('project_join_requests')
       .update({ status: approve ? 'approved' : 'rejected', decided_by: user?.id ?? null })
@@ -276,30 +294,23 @@ export default function ProjectDetailPage() {
       setNotice('Gagal memproses permintaan gabung. Coba lagi.')
       return
     }
-    if (approve) {
-      const { error: memErr } = await supabase.from('project_members').insert({
-        project_id: currentProject.id,
-        user_id: req.user_id,
-        role: 'member',
-        permissions: {},
-      })
-      if (memErr) {
-        setNotice('Gagal menambahkan anggota.')
-        await refresh()
-        return
-      }
-    }
     await refresh()
   }
 
-  async function handleInvite(e: FormEvent) {
-    e.preventDefault()
-    if (!user || !inviteName.trim()) return
-    // Cari anggota berdasarkan nama, tanpa membedakan huruf besar/kecil.
-    const { data } = await supabase.from('profiles').select('id').ilike('name', inviteName.trim()).maybeSingle()
-    const invitee = data as { id: string } | null
-    if (!invitee) {
-      setNotice('Tidak ditemukan anggota dengan nama itu. Pilih salah satu saran atau periksa ejaannya.')
+  async function sendInvite(invitee: { id: string; name: string | null }) {
+    if (!user) return
+    // B47: tolak bila diri sendiri, sudah anggota, atau sudah punya
+    // undangan pending.
+    if (invitee.id === user.id) {
+      setNotice('Kamu tidak bisa mengundang dirimu sendiri.')
+      return
+    }
+    if (members.some((m) => m.user_id === invitee.id)) {
+      setNotice(`${invitee.name ?? 'Anggota'} sudah menjadi anggota proyek ini.`)
+      return
+    }
+    if (invites.some((i) => i.invitee_id === invitee.id && i.status === 'pending')) {
+      setNotice(`${invitee.name ?? 'Anggota'} sudah punya undangan yang masih menunggu jawaban.`)
       return
     }
     const { error: insErr } = await supabase.from('project_invites').insert({
@@ -310,22 +321,44 @@ export default function ProjectDetailPage() {
     })
     if (insErr) setNotice('Gagal mengirim undangan. Coba lagi.')
     else {
-      setNotice(`Undangan terkirim ke ${inviteName.trim()}.`)
+      setNotice(`Undangan terkirim ke ${invitee.name ?? 'anggota'}.`)
       setInviteName('')
+      setInviteMatches([])
       await refresh()
     }
   }
 
-  async function handleInviteResponse(invite: ProjectInvite, accept: boolean) {
-    const { error: updErr } = await supabase
-      .from('project_invites')
-      .update({ status: accept ? 'accepted' : 'declined' })
-      .eq('id', invite.id)
-    if (updErr) {
-      setNotice('Gagal menjawab undangan. Coba lagi.')
+  async function handleInvite(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !inviteName.trim()) return
+    // B47: cari berdasarkan nama (substring, tanpa beda huruf besar/kecil).
+    // Bila nama cocok dengan beberapa anggota, tampilkan daftarnya untuk
+    // dipilih — bukan gagal dengan "Tidak ditemukan anggota".
+    const q = inviteName.trim().replace(/[%_]/g, '')
+    const { data } = await supabase
+      .from('profiles')
+      .select('id,name')
+      .ilike('name', `%${q}%`)
+      .order('name')
+      .limit(10)
+    const matches = (data ?? []) as { id: string; name: string | null }[]
+    if (matches.length === 0) {
+      setInviteMatches([])
+      setNotice('Tidak ditemukan anggota dengan nama itu. Pilih salah satu saran atau periksa ejaannya.')
       return
     }
+    if (matches.length === 1) {
+      await sendInvite(matches[0])
+      return
+    }
+    setInviteMatches(matches)
+    setNotice(`${matches.length} anggota cocok dengan nama itu — pilih salah satu di bawah.`)
+  }
+
+  async function handleInviteResponse(invite: ProjectInvite, accept: boolean) {
     if (accept && user) {
+      // B48: anggota dimasukkan DULU, baru undangan ditandai diterima —
+      // bila insert gagal, undangan tetap pending dan tidak hilang.
       const { error: memErr } = await supabase.from('project_members').insert({
         project_id: currentProject.id,
         user_id: user.id,
@@ -333,10 +366,18 @@ export default function ProjectDetailPage() {
         permissions: {},
       })
       if (memErr) {
-        setNotice('Gagal menambahkan anggota.')
+        setNotice('Gagal menambahkan anggota. Undangan tetap menunggu jawaban.')
         await refresh()
         return
       }
+    }
+    const { error: updErr } = await supabase
+      .from('project_invites')
+      .update({ status: accept ? 'accepted' : 'declined' })
+      .eq('id', invite.id)
+    if (updErr) {
+      setNotice('Gagal menjawab undangan. Coba lagi.')
+      return
     }
     await refresh()
   }
@@ -638,6 +679,21 @@ export default function ProjectDetailPage() {
                   </li>
                 ))}
               </ul>
+            )}
+            {/* B47: nama kembar — tampilkan yang cocok untuk dipilih. */}
+            {inviteMatches.length > 0 && (
+              <div>
+                <p className="muted">Beberapa anggota cocok — pilih salah satu:</p>
+                <ul>
+                  {inviteMatches.map((m) => (
+                    <li key={m.id}>
+                      <button type="button" className="btn btn-secondary btn-small" onClick={() => void sendInvite(m)}>
+                        Undang {m.name ?? 'anggota'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             <button type="submit" className="btn btn-primary">Kirim Undangan</button>
           </form>

@@ -104,6 +104,11 @@ function CommunityAvatarPicker({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
         {COMMUNITY_AVATAR_PRESETS.map((p) => {
           const selected = presetId === p.id && !uploadUrl
+          // LB2: bila nama komunitas belum diketik, communityAvatarLetter
+          // mengembalikan '?' — semua tombol tampil "?" literal. Bila
+          // belum ada huruf, pakai huruf awal label preset supaya tiap
+          // tombol tetap berbeda dan bisa dipilih.
+          const shown = letter === '?' ? p.label.charAt(0).toUpperCase() : letter
           return (
             <button
               key={p.id}
@@ -126,7 +131,7 @@ function CommunityAvatarPicker({
                 outlineOffset: 2,
               }}
             >
-              {letter}
+              {shown}
             </button>
           )
         })}
@@ -182,6 +187,10 @@ export default function CommunityDetailPage() {
   const [body, setBody] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [replyBody, setReplyBody] = useState('')
+  // B60: kunci tombol kirim selama request berjalan (klik ganda =
+  // postingan/balasan ganda).
+  const [posting, setPosting] = useState(false)
+  const [replying, setReplying] = useState(false)
   const [tab, setTab] = useState<'diskusi' | 'pengumuman'>('diskusi')
   // Editor avatar (pembuat/admin): preset atau foto yang diunggah, saling
   // meniadakan. Diisi dari community.cover_url saat komunitas dimuat.
@@ -454,33 +463,43 @@ export default function CommunityDetailPage() {
   async function handlePost(e: FormEvent) {
     e.preventDefault()
     const currentCommunity = community
-    if (!user || !body.trim() || !currentCommunity) return
-    const { error: insErr } = await supabase.from('community_posts').insert({
-      community_id: currentCommunity.id,
-      user_id: user.id,
-      body: body.trim(),
-    })
-    if (insErr) setNotice('Gagal mengirim postingan. Coba lagi nanti.')
-    else {
-      setBody('')
-      await loadPosts(currentCommunity.id)
+    if (!user || !body.trim() || !currentCommunity || posting) return
+    setPosting(true)
+    try {
+      const { error: insErr } = await supabase.from('community_posts').insert({
+        community_id: currentCommunity.id,
+        user_id: user.id,
+        body: body.trim(),
+      })
+      if (insErr) setNotice('Gagal mengirim postingan. Coba lagi nanti.')
+      else {
+        setBody('')
+        await loadPosts(currentCommunity.id)
+      }
+    } finally {
+      setPosting(false)
     }
   }
 
   async function handleReply(e: FormEvent, postId: string) {
     e.preventDefault()
     const currentCommunity = community
-    if (!user || !replyBody.trim() || !currentCommunity) return
-    const { error: insErr } = await supabase.from('community_post_replies').insert({
-      post_id: postId,
-      user_id: user.id,
-      body: replyBody.trim(),
-    })
-    if (insErr) setNotice('Gagal mengirim balasan. Coba lagi nanti.')
-    else {
-      setReplyBody('')
-      setReplyTo(null)
-      await loadPosts(currentCommunity.id)
+    if (!user || !replyBody.trim() || !currentCommunity || replying) return
+    setReplying(true)
+    try {
+      const { error: insErr } = await supabase.from('community_post_replies').insert({
+        post_id: postId,
+        user_id: user.id,
+        body: replyBody.trim(),
+      })
+      if (insErr) setNotice('Gagal mengirim balasan. Coba lagi nanti.')
+      else {
+        setReplyBody('')
+        setReplyTo(null)
+        await loadPosts(currentCommunity.id)
+      }
+    } finally {
+      setReplying(false)
     }
   }
 
@@ -580,8 +599,8 @@ export default function CommunityDetailPage() {
               />
             </label>
             <div className="form-actions">
-              <button type="submit" className="btn btn-primary btn-small">
-                Kirim
+              <button type="submit" className="btn btn-primary btn-small" disabled={replying}>
+                {replying ? 'Mengirim…' : 'Kirim'}
               </button>
               <button
                 type="button"
@@ -668,19 +687,25 @@ export default function CommunityDetailPage() {
 
       <section className="section">
         <h2>Anggota ({members.length})</h2>
-        {members.length === 0 ? (
-          <p className="empty">Belum ada anggota.</p>
+        {/* B41: nama anggota hanya untuk yang boleh membaca feed
+            (anggota/pembuat/admin); non-anggota hanya melihat jumlah. */}
+        {canReadFeed ? (
+          members.length === 0 ? (
+            <p className="empty">Belum ada anggota.</p>
+          ) : (
+            <ul className="discussion-list">
+              {members.map((m) => (
+                <li key={m.user_id} className="discussion-item">
+                  <p>
+                    {m.name}
+                    {m.role === 'mentor' ? ' · Pembimbing' : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )
         ) : (
-          <ul className="discussion-list">
-            {members.map((m) => (
-              <li key={m.user_id} className="discussion-item">
-                <p>
-                  {m.name}
-                  {m.role === 'mentor' ? ' · Pembimbing' : ''}
-                </p>
-              </li>
-            ))}
-          </ul>
+          <p className="muted">Gabung ke komunitas ini untuk melihat daftar anggotanya.</p>
         )}
       </section>
 
@@ -736,7 +761,9 @@ export default function CommunityDetailPage() {
                 Tulis postingan
                 <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} required placeholder="Bagikan kabar, karya, atau ajakan…" />
               </label>
-              <button type="submit" className="btn btn-primary">Kirim Postingan</button>
+              <button type="submit" className="btn btn-primary" disabled={posting}>
+                {posting ? 'Mengirim…' : 'Kirim Postingan'}
+              </button>
             </form>
           )}
           {tab === 'pengumuman' && pinnedPosts.length === 0 ? (

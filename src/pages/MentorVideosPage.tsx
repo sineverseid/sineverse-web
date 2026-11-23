@@ -106,7 +106,9 @@ export default function MentorVideosPage() {
       .eq('id', lesson.id)
     setSaving(false)
     if (updErr) {
-      setError(`Gagal menyimpan video: ${updErr.message}`)
+      // B31: kegagalan simpan tampil sebagai notice inline — daftar video
+      // tetap terlihat, bukan diganti kotak error seluruh halaman.
+      setNotice(`Gagal menyimpan video: ${updErr.message}`)
       return
     }
     setEditingId(null)

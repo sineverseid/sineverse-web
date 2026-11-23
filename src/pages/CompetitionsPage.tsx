@@ -183,7 +183,9 @@ export function CompetitionDetailPage() {
   const [copyright, setCopyright] = useState(false)
   const [usage, setUsage] = useState(false)
   const [scoreInputs, setScoreInputs] = useState<Record<string, string>>({})
-  const [scoreComment, setScoreComment] = useState('')
+  // B50: komentar juri per submission (sebelumnya satu kolom dipakai
+  // bersama semua kiriman).
+  const [scoreComments, setScoreComments] = useState<Record<string, string>>({})
   // Kelola kompetisi (K7): status, kriteria/kategori, panel juri.
   const [judges, setJudges] = useState<{ id: string; judge_id: string }[]>([])
   const [judgeCandidates, setJudgeCandidates] = useState<{ id: string; name: string | null }[]>([])
@@ -311,6 +313,12 @@ export function CompetitionDetailPage() {
       setNotice('Kedua persetujuan wajib dicentang: persetujuan hak cipta dan persetujuan penggunaan karya.')
       return
     }
+    // B49: karya tidak boleh dikirim tanpa tautan (juri tidak punya
+    // apa-apa untuk dinilai).
+    if (!link.trim()) {
+      setNotice('Isi tautan karya terlebih dahulu (tautan film / dokumen).')
+      return
+    }
     const { error: insErr } = await supabase.from('competition_submissions').insert({
       competition_id: currentComp.id,
       user_id: user.id,
@@ -346,7 +354,7 @@ export function CompetitionDetailPage() {
           judge_id: user.id,
           criterion: crit.name,
           score: value,
-          comment: scoreComment.trim() || null,
+          comment: (scoreComments[sub.id] ?? '').trim() || null,
         },
         { onConflict: 'submission_id,judge_id,criterion' },
       )
@@ -682,7 +690,7 @@ export function CompetitionDetailPage() {
           <form className="form" onSubmit={handleSubmit}>
             <label>
               Tautan karya (film / dokumen)
-              <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" />
+              <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" required />
             </label>
             <label>
               Kategori
@@ -739,7 +747,7 @@ export function CompetitionDetailPage() {
                       ))}
                       <label>
                         Komentar juri
-                        <input value={scoreComment} onChange={(e) => setScoreComment(e.target.value)} placeholder="Opsional" />
+                        <input value={scoreComments[s.id] ?? ''} onChange={(e) => setScoreComments((prev) => ({ ...prev, [s.id]: e.target.value }))} placeholder="Opsional" />
                       </label>
                       <button type="submit" className="btn btn-primary btn-small">Simpan Penilaian</button>
                     </form>

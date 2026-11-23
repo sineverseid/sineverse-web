@@ -188,8 +188,10 @@ export default function AdminAcademyAnalyticsPage() {
     async function load() {
       try {
         // Batch tingkat atas paralel: course + profil + enrollment +
-        // modules + submission. Assignments menyusul setelah lesson
-        // diketahui (butuh lesson_id). Pengelompokan dihitung di JS.
+        // modules + submission + SEMUA lesson. Assignments menyusul setelah
+        // lesson diketahui (butuh lesson_id). Pengelompokan dihitung di JS.
+        // LB7: lesson diambil sekaligus di batch atas (bukan menunggu modul
+        // dulu) — satu round-trip lebih sedikit sebelum agregat dihitung.
         const noId = ['00000000-0000-0000-0000-000000000000']
         // B62 (K13): .error tiap batch DIPERIKSA — gagal = error state,
         // bukan agregat 0 + empty state. fetchCourses sudah melempar
@@ -200,6 +202,7 @@ export default function AdminAcademyAnalyticsPage() {
           { data: enrRowsRaw, error: enrErr },
           { data: modRowsRaw, error: modErr },
           { data: subRowsRaw, error: subErr },
+          { data: lessonRowsRaw, error: lessonErr },
         ] = await Promise.all([
           fetchCourses(),
           supabase.from('profiles').select('id,role'),
@@ -208,6 +211,7 @@ export default function AdminAcademyAnalyticsPage() {
           supabase
             .from('submissions')
             .select('id,assignment_id,user_id,score,submitted_at,graded_at,is_late'),
+          supabase.from('lessons').select('id,module_id'),
         ])
         {
           const failed = (
@@ -216,6 +220,7 @@ export default function AdminAcademyAnalyticsPage() {
               ['enrollment', enrErr],
               ['modul', modErr],
               ['submission', subErr],
+              ['lesson', lessonErr],
             ] as const
           )
             .filter(([, e]) => e)
@@ -242,11 +247,6 @@ export default function AdminAcademyAnalyticsPage() {
           is_late: boolean
         }[]
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
-        const { data: lessonRowsRaw, error: lessonErr } = await supabase
-          .from('lessons')
-          .select('id,module_id')
-          .in('module_id', modRows.length > 0 ? modRows.map((m) => m.id) : noId)
-        if (lessonErr) throw new Error(`Gagal memuat analitik akademi: lesson (${lessonErr.message}).`)
         const lessonRows = (lessonRowsRaw ?? []) as { id: string; module_id: string }[]
         const lessonCourse = new Map(lessonRows.map((l) => [l.id, modCourse.get(l.module_id) ?? '']))
         const lessonIds = lessonRows.map((l) => l.id)
@@ -441,7 +441,7 @@ export default function AdminAcademyAnalyticsPage() {
       </div>
     )
   }
-  if (loading) return <div className="page"><p className="muted">Memuat…</p></div>
+  if (loading) return <div className="page"><p className="muted">Memuat analitik akademi — mengambil data submission, enrollment, dan tugas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
   return (

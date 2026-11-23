@@ -48,9 +48,23 @@ export default function FinalProjectsPage() {
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
+    // B38: proyek yang dipublikasikan dimuat untuk SEMUA pengunjung,
+    // termasuk yang logout — sebelumnya `if (!user)` langsung return
+    // sehingga daftar published selalu kosong untuk tamu.
     if (!user) {
-      setLoading(false)
-      return
+      let cancelled = false
+      void (async () => {
+        try {
+          setPublished(await fetchPublishedFinalProjects())
+        } catch {
+          if (!cancelled) setError('Gagal memuat Final Project. Coba lagi.')
+        } finally {
+          if (!cancelled) setLoading(false)
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
     }
     const reviewer = profile?.role === 'mentor' || profile?.role === 'admin'
     let cancelled = false
@@ -163,6 +177,11 @@ export default function FinalProjectsPage() {
           )}
         </section>
       ) : (
+        !user ? (
+        <p className="notice-box">
+          <Link to="/login">Masuk</Link> untuk mendaftarkan Final Project dan melihat proyekmu.
+        </p>
+      ) : (
       <>
       <p className="notice-box">
         {completedCount === null
@@ -211,8 +230,9 @@ export default function FinalProjectsPage() {
         </form>
       </section>
       </>
-      )}
+      ))}
 
+      {user && (
       <section className="section">
         <h2>Proyek Saya ({mine.length})</h2>
         {mine.length === 0 ? (
@@ -230,6 +250,7 @@ export default function FinalProjectsPage() {
           </ul>
         )}
       </section>
+      )}
 
       <section className="section">
         <h2>Proyek yang Dipublikasikan ({published.length})</h2>

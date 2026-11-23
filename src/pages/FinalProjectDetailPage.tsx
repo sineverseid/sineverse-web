@@ -355,6 +355,13 @@ export default function FinalProjectDetailPage() {
   // --- Penilaian & publikasi ----------------------------------------------
   async function handleAssess(decision: 'approved' | 'revision' | 'rejected') {
     if (!user) return
+    // B40: validasi angka yang sama seperti handleAddReview — tanpa ini
+    // "abc" menjadi NaN, addProjectReview gagal, dan keputusan mentor
+    // tidak pernah tersimpan.
+    if (assessScore.trim() !== '' && Number.isNaN(Number(assessScore))) {
+      setNotice('Skor harus berupa angka 0–100.')
+      return
+    }
     const score = assessScore.trim() === '' ? null : Math.max(0, Math.min(100, Number(assessScore)))
     try {
       if (score !== null || assessFeedback.trim()) {

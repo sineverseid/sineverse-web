@@ -8,7 +8,6 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
-import { filmHue } from '../lib/brand'
 import { fmtDate, isMissingTableError, videoEmbed } from '../lib/guarded'
 import { fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { Film, FilmReview } from '../lib/types'
@@ -51,6 +50,8 @@ export default function FilmDetailPage() {
   const [names, setNames] = useState<Map<string, string>>(new Map())
   // Nama penilai bila film ini ditolak admin (011).
   const [reviewerName, setReviewerName] = useState<string | null>(null)
+  // B42: nama sekolah pemilik (hanya ditampilkan bila show_school dicentang).
+  const [ownerSchool, setOwnerSchool] = useState<string | null>(null)
   const [posterBroken, setPosterBroken] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -95,6 +96,29 @@ export default function FilmDetailPage() {
           const f = data as Film
           const rows = (revData ?? []) as FilmReview[]
           setReviews(rows)
+          // B42: nama sekolah pemilik bila show_school dicentang.
+          if (f.show_school) {
+            try {
+              const { data: profRow } = await supabase
+                .from('profiles')
+                .select('school,school_id')
+                .eq('id', f.owner_id)
+                .maybeSingle()
+              const pr = profRow as { school: string | null; school_id: string | null } | null
+              let nm = pr?.school?.trim() || null
+              if (!nm && pr?.school_id) {
+                const { data: sRow } = await supabase
+                  .from('schools')
+                  .select('name')
+                  .eq('id', pr.school_id)
+                  .maybeSingle()
+                nm = (sRow as { name: string } | null)?.name ?? null
+              }
+              if (!cancelled) setOwnerSchool(nm)
+            } catch {
+              if (!cancelled) setOwnerSchool(null)
+            }
+          }
           // Nama penilai (bila ditolak) dan nama pemberi ulasan independen
           // satu sama lain — dimuat paralel.
           const [reviewerNames, reviewNames] = await Promise.all([
@@ -141,7 +165,8 @@ export default function FilmDetailPage() {
     return (
       <div className="page">
         <Link to="/showcase" className="back-link">← Showcase</Link>
-        <h1>{currentFilm.title}</h1>
+        {/* B43: judul film privat/draf tidak boleh bocor ke non-pemilik. */}
+        <h1>Film tidak tersedia</h1>
         <p className="notice-box">
           Film ini masih draft atau dinilai tidak layak tampil. Hanya pemilik dan admin yang bisa melihatnya.
         </p>
@@ -212,6 +237,7 @@ export default function FilmDetailPage() {
       <h1>{currentFilm.title}</h1>
       <p className="muted">
         {currentFilm.description ?? ''} · {filmStatusLabel(currentFilm.status)} · {visibilityLabel(currentFilm.visibility)}
+        {ownerSchool ? ` · ${ownerSchool}` : ''}
         {avg !== null ? ` · Rata-rata ulasan: ${avg.toFixed(1)} / 5 (${reviews.length} ulasan)` : ' · Belum ada ulasan'}
       </p>
       {currentFilm.status === 'rejected' && (isOwner || isAdmin) ? (
@@ -243,9 +269,13 @@ export default function FilmDetailPage() {
           style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }}
         />
       ) : (
-        <div className="film-cover" style={{ background: filmHue(currentFilm.id), borderRadius: 12, marginBottom: '1rem' }} aria-hidden="true">
-          <span className="film-cover-title">{currentFilm.title}</span>
-        </div>
+        // LB3: tanpa poster, placeholder poster yang layak — bukan blok
+        // warna polos dengan judul di dalamnya.
+        <img
+          src="./empty-state-cinema.webp"
+          alt={`Poster ${currentFilm.title} belum tersedia`}
+          style={{ width: '100%', borderRadius: 12, marginBottom: '1rem', aspectRatio: '16/9', objectFit: 'cover' }}
+        />
       )}
       {embed && embed.kind !== 'link' && embed.embedUrl ? (
         <div className="video-wrap">

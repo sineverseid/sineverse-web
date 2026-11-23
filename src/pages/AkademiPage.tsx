@@ -751,11 +751,17 @@ export default function AkademiPage() {
           <EmptyState
             message={
               visibleCourses.length === 0
-                ? isMentor
-                  ? 'Kamu belum mengampu course apa pun.'
-                  : 'Belum ada course yang tersedia.'
+                ? !user
+                  ? // B30: tamu melihat katalog kosong karena RLS, bukan
+                    // karena tidak ada course — ajak masuk, bukan klaim kosong.
+                    'Masuk untuk melihat katalog course.'
+                  : isMentor
+                    ? 'Kamu belum mengampu course apa pun.'
+                    : 'Belum ada course yang tersedia.'
                 : 'Tidak ada course yang cocok dengan pencarian kamu.'
             }
+            actionLabel={!user && visibleCourses.length === 0 ? 'Masuk' : undefined}
+            actionTo={!user && visibleCourses.length === 0 ? '/login' : undefined}
           />
         ) : (
           <div className="course-list">

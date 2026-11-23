@@ -165,6 +165,15 @@ export default function AdminPage() {
   const [newCourseTitle, setNewCourseTitle] = useState('')
   const [newCourseDesc, setNewCourseDesc] = useState('')
   const [newCourseCategory, setNewCourseCategory] = useState('')
+  // LB10: Buat Course kini punya mentor + level; setelah dibuat, admin
+  // langsung diarahkan ke Course Builder course itu (bukan form minimal
+  // yang berhenti di "tanpa mentor").
+  const [newCourseMentor, setNewCourseMentor] = useState('')
+  const [newCourseLevel, setNewCourseLevel] = useState('')
+  const [createdCourseId, setCreatedCourseId] = useState<string | null>(null)
+  // B65: satu kunci busy per aksi keputusan — tombol dinonaktifkan selama
+  // proses supaya klik ganda tidak menjalankan aksi dua kali.
+  const [busyKey, setBusyKey] = useState<string | null>(null)
   const [assignCourse, setAssignCourse] = useState('')
   const [assignMentor, setAssignMentor] = useState('')
   const [mentors, setMentors] = useState<{ id: string; name: string | null }[]>([])
@@ -377,58 +386,74 @@ export default function AdminPage() {
     note = '',
   ) {
     if (!user) return
-    // Hanya status + catatan yang diubah dari client. Trigger
-    // promote_mentor_on_approval di database yang mengubah profiles.role
-    // menjadi 'mentor' saat lamaran disetujui.
+    // B65: tolak pemanggilan kedua selagi satu keputusan masih berjalan.
+    const key = `app-${app.id}-${decision}`
+    if (busyKey) return
+    setBusyKey(key)
     try {
-      await decideMentorApplication(app, decision, note, user.id)
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Gagal menyimpan keputusan. Coba lagi.')
-      return
+      // Hanya status + catatan yang diubah dari client. Trigger
+      // promote_mentor_on_approval di database yang mengubah profiles.role
+      // menjadi 'mentor' saat lamaran disetujui.
+      try {
+        await decideMentorApplication(app, decision, note, user.id)
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Gagal menyimpan keputusan. Coba lagi.')
+        return
+      }
+      const action =
+        decision === 'approved'
+          ? 'mentor_application.approved'
+          : decision === 'rejected'
+            ? 'mentor_application.rejected'
+            : 'mentor_application.revision_required'
+      await logAudit(action, 'mentor_applications', app.id, { user_id: app.user_id })
+      setNotice(
+        decision === 'approved'
+          ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
+          : decision === 'rejected'
+            ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
+            : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
+      )
+      setAppAction(null)
+      setAppNote('')
+      await load()
+    } finally {
+      setBusyKey(null)
     }
-    const action =
-      decision === 'approved'
-        ? 'mentor_application.approved'
-        : decision === 'rejected'
-          ? 'mentor_application.rejected'
-          : 'mentor_application.revision_required'
-    await logAudit(action, 'mentor_applications', app.id, { user_id: app.user_id })
-    setNotice(
-      decision === 'approved'
-        ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
-        : decision === 'rejected'
-          ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
-          : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
-    )
-    setAppAction(null)
-    setAppNote('')
-    await load()
   }
 
   async function decideSub(sub: SchoolSubmission, decision: 'approved' | 'rejected', note = '') {
     if (!user) return
-    // Setujui: sekolah dibuat (bila belum ada yang cocok) lalu ditautkan
-    // ke pengajuan + profil pengaju. Tolak: alasan tersimpan.
+    // B65: kunci busy per baris keputusan.
+    const key = `sub-${sub.id}-${decision}`
+    if (busyKey) return
+    setBusyKey(key)
     try {
-      await decideSchoolSubmission(sub, decision, note, user.id)
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Gagal menyimpan keputusan. Coba lagi.')
-      return
+      // Setujui: sekolah dibuat (bila belum ada yang cocok) lalu ditautkan
+      // ke pengajuan + profil pengaju. Tolak: alasan tersimpan.
+      try {
+        await decideSchoolSubmission(sub, decision, note, user.id)
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : 'Gagal menyimpan keputusan. Coba lagi.')
+        return
+      }
+      await logAudit(
+        decision === 'approved' ? 'school_submission.approved' : 'school_submission.rejected',
+        'school_submissions',
+        sub.id,
+        { user_id: sub.user_id },
+      )
+      setNotice(
+        decision === 'approved'
+          ? 'Pengajuan sekolah disetujui — sekolah ditambahkan dan ditautkan ke pengaju.'
+          : 'Pengajuan sekolah ditolak. Alasan tersimpan dan terlihat oleh pengaju.',
+      )
+      setRejectingSubId(null)
+      setSubNote('')
+      await load()
+    } finally {
+      setBusyKey(null)
     }
-    await logAudit(
-      decision === 'approved' ? 'school_submission.approved' : 'school_submission.rejected',
-      'school_submissions',
-      sub.id,
-      { user_id: sub.user_id },
-    )
-    setNotice(
-      decision === 'approved'
-        ? 'Pengajuan sekolah disetujui — sekolah ditambahkan dan ditautkan ke pengaju.'
-        : 'Pengajuan sekolah ditolak. Alasan tersimpan dan terlihat oleh pengaju.',
-    )
-    setRejectingSubId(null)
-    setSubNote('')
-    await load()
   }
 
   /**
@@ -455,62 +480,70 @@ export default function AdminPage() {
   }
 
   async function decideClaim(claim: CourseClaim, approve: boolean, note?: string) {
-    const reason = (note ?? '').trim()
-    const { error: updErr } = await supabase
-      .from('course_claims')
-      .update({
-        status: approve ? 'approved' : 'rejected',
-        decided_by: user?.id ?? null,
-        // Alasan penolakan tersimpan (migrasi 022) dan terlihat oleh mentor.
-        decision_note: approve ? null : (reason || null),
-      })
-      .eq('id', claim.id)
-    if (updErr) {
-      setNotice(updErr.message)
-      return
-    }
-    await logAudit(approve ? 'course_claim.approved' : 'course_claim.rejected', 'course_claims', claim.id, { course_id: claim.course_id, mentor_id: claim.mentor_id })
-    if (approve) {
-      // Belt-and-braces di samping trigger migrasi 022: tetapkan mentor
-      // langsung dari client juga — tapi dengan dua syarat yang sama
-      // seperti trigger: pengaju harus ber-peran mentor, dan course
-      // masih tanpa mentor (update bersyarat .is('mentor_id', null)).
-      // Notifikasi persetujuan + notifikasi waitlist dikirim oleh
-      // trigger database, jadi client TIDAK mengirimnya lagi
-      // (menghindari notifikasi ganda).
-      const course = courses.find((x) => x.id === claim.course_id)
-      const isMentorClaim = mentors.some((m) => m.id === claim.mentor_id)
-      if (course && isMentorClaim && !course.mentor_id) {
-        const { error: assignErr } = await supabase
-          .from('courses')
-          .update({ mentor_id: claim.mentor_id })
-          .eq('id', claim.course_id)
-          .is('mentor_id', null)
-        if (assignErr) {
-          setNotice(`Klaim disetujui, tetapi penetapan mentor gagal: ${assignErr.message}. Tetapkan manual di "Pembagian Mentor Kurikulum" di bawah.`)
-        } else {
-          invalidateCatalogCache()
-          setNotice('Klaim mengampu disetujui. Mentor otomatis ditetapkan untuk course ini.')
-        }
-      } else if (course?.mentor_id) {
-        setNotice('Klaim disetujui, tetapi course ini sudah memiliki mentor — penetapan tidak diubah.')
-      } else {
-        setNotice('Klaim disetujui, tetapi pengaju bukan mentor — course tetap tanpa mentor.')
+    // B65: kunci busy per baris klaim.
+    const key = `claim-${claim.id}-${approve ? 'approved' : 'rejected'}`
+    if (busyKey) return
+    setBusyKey(key)
+    try {
+      const reason = (note ?? '').trim()
+      const { error: updErr } = await supabase
+        .from('course_claims')
+        .update({
+          status: approve ? 'approved' : 'rejected',
+          decided_by: user?.id ?? null,
+          // Alasan penolakan tersimpan (migrasi 022) dan terlihat oleh mentor.
+          decision_note: approve ? null : (reason || null),
+        })
+        .eq('id', claim.id)
+      if (updErr) {
+        setNotice(updErr.message)
+        return
       }
-    } else {
-      // Penolakan tidak disentuh trigger: client yang memberi tahu mentor.
-      await sendNotification(
-        claim.mentor_id,
-        'claim_rejected',
-        'Pengajuan mengampu ditolak',
-        reason ? `Alasan: ${reason}` : 'Pengajuan mengampu kamu ditolak admin.',
-        { course_id: claim.course_id, claim_id: claim.id },
-      ).catch(() => undefined)
-      setNotice('Klaim mengampu ditolak.' + (reason ? ' Alasan tersimpan dan terlihat oleh mentor.' : ''))
+      await logAudit(approve ? 'course_claim.approved' : 'course_claim.rejected', 'course_claims', claim.id, { course_id: claim.course_id, mentor_id: claim.mentor_id })
+      if (approve) {
+        // Belt-and-braces di samping trigger migrasi 022: tetapkan mentor
+        // langsung dari client juga — tapi dengan dua syarat yang sama
+        // seperti trigger: pengaju harus ber-peran mentor, dan course
+        // masih tanpa mentor (update bersyarat .is('mentor_id', null)).
+        // Notifikasi persetujuan + notifikasi waitlist dikirim oleh
+        // trigger database, jadi client TIDAK mengirimnya lagi
+        // (menghindari notifikasi ganda).
+        const course = courses.find((x) => x.id === claim.course_id)
+        const isMentorClaim = mentors.some((m) => m.id === claim.mentor_id)
+        if (course && isMentorClaim && !course.mentor_id) {
+          const { error: assignErr } = await supabase
+            .from('courses')
+            .update({ mentor_id: claim.mentor_id })
+            .eq('id', claim.course_id)
+            .is('mentor_id', null)
+          if (assignErr) {
+            setNotice(`Klaim disetujui, tetapi penetapan mentor gagal: ${assignErr.message}. Tetapkan manual di "Pembagian Mentor Kurikulum" di bawah.`)
+          } else {
+            invalidateCatalogCache()
+            setNotice('Klaim mengampu disetujui. Mentor otomatis ditetapkan untuk course ini.')
+          }
+        } else if (course?.mentor_id) {
+          setNotice('Klaim disetujui, tetapi course ini sudah memiliki mentor — penetapan tidak diubah.')
+        } else {
+          setNotice('Klaim disetujui, tetapi pengaju bukan mentor — course tetap tanpa mentor.')
+        }
+      } else {
+        // Penolakan tidak disentuh trigger: client yang memberi tahu mentor.
+        await sendNotification(
+          claim.mentor_id,
+          'claim_rejected',
+          'Pengajuan mengampu ditolak',
+          reason ? `Alasan: ${reason}` : 'Pengajuan mengampu kamu ditolak admin.',
+          { course_id: claim.course_id, claim_id: claim.id },
+        ).catch(() => undefined)
+        setNotice('Klaim mengampu ditolak.' + (reason ? ' Alasan tersimpan dan terlihat oleh mentor.' : ''))
+      }
+      setRejectingClaimId(null)
+      setRejectReason('')
+      await load()
+    } finally {
+      setBusyKey(null)
     }
-    setRejectingClaimId(null)
-    setRejectReason('')
-    await load()
   }
 
   async function handleAssignMentor(e: FormEvent) {
@@ -538,19 +571,31 @@ export default function AdminPage() {
   async function handleCreateCourse(e: FormEvent) {
     e.preventDefault()
     if (!newCourseTitle.trim()) return
-    const { error: insErr } = await supabase.from('courses').insert({
+    // LB10: mentor + level ikut tersimpan saat buat (bukan lagi "tanpa
+    // mentor" saja); durasi tidak ada kolomnya di tabel courses — isi
+    // konten/durasi diatur dari Course Builder setelah course dibuat.
+    const { data, error: insErr } = await supabase.from('courses').insert({
       title: newCourseTitle.trim(),
       description: newCourseDesc.trim() || null,
       category: newCourseCategory.trim() || null,
-      mentor_id: null,
-    })
+      mentor_id: newCourseMentor || null,
+      level: newCourseLevel || null,
+    }).select('id').single()
     if (insErr) setNotice(insErr.message)
     else {
       invalidateCatalogCache()
-      setNotice('Course baru dibuat (tanpa mentor — mentor bisa mengajukan lewat "Ajukan untuk Mengampu").')
+      const newId = (data as { id: string } | null)?.id ?? null
+      setCreatedCourseId(newId)
+      setNotice(
+        newCourseMentor
+          ? 'Course baru dibuat dengan mentor. Lengkapi section, lesson, dan durasi dari Course Builder.'
+          : 'Course baru dibuat (tanpa mentor — mentor bisa mengajukan lewat "Ajukan untuk Mengampu"). Lengkapi konten dari Course Builder.',
+      )
       setNewCourseTitle('')
       setNewCourseDesc('')
       setNewCourseCategory('')
+      setNewCourseMentor('')
+      setNewCourseLevel('')
       await load()
     }
   }
@@ -662,11 +707,19 @@ export default function AdminPage() {
   }
 
   async function handleDeleteAnnouncement(id: string) {
-    const { error: delErr } = await supabase.from('announcements').delete().eq('id', id)
-    if (delErr) setNotice(delErr.message)
-    else {
-      setNotice('Pengumuman dihapus.')
-      await load()
+    // B65: kunci busy per pengumuman.
+    const key = `ann-${id}`
+    if (busyKey) return
+    setBusyKey(key)
+    try {
+      const { error: delErr } = await supabase.from('announcements').delete().eq('id', id)
+      if (delErr) setNotice(delErr.message)
+      else {
+        setNotice('Pengumuman dihapus.')
+        await load()
+      }
+    } finally {
+      setBusyKey(null)
     }
   }
 
@@ -710,6 +763,10 @@ export default function AdminPage() {
           <Link to="/admin/sertifikat" className="btn btn-secondary">Sertifikat</Link>
           <Link to="/admin/materi" className="btn btn-secondary">Materi</Link>
           <Link to="/admin/analitik" className="btn btn-secondary">Analitik</Link>
+          {/* LB12: tombol ke-8 "Analitik Akademi" (halaman yang SUDAH ADA di
+              /admin/analitik-akademi) — 8 tombol = baris 3,3,2 di grid 3 kolom,
+              tidak ada lagi tombol sendirian selebar penuh di baris terakhir. */}
+          <Link to="/admin/analitik-akademi" className="btn btn-secondary">Analitik Akademi</Link>
         </div>
       </section>
 
@@ -757,30 +814,33 @@ export default function AdminPage() {
                 </div>
                 {a.status === 'pending' && (
                   <div className="form-actions">
-                    <button type="button" className="btn btn-primary btn-small" onClick={() => void decideApp(a, 'approved')}>Setujui</button>{' '}
+                    <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null} onClick={() => void decideApp(a, 'approved')}>{busyKey === `app-${a.id}-approved` ? 'Memproses…' : 'Setujui'}</button>{' '}
                     {appAction?.id === a.id && appAction.kind === 'reject' ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri
+                            (flex 1 1 100%) supaya tidak terjepit di samping tombol. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Alasan penolakan (wajib)
                           <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pelamar." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'rejected', appNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim() || busyKey !== null} onClick={() => void decideApp(a, 'rejected', appNote)}>{busyKey === `app-${a.id}-rejected` ? 'Memproses…' : 'Konfirmasi Tolak'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
                       </>
                     ) : (
-                      <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction({ id: a.id, kind: 'reject' }); setAppNote('') }}>Tolak</button>
+                      <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => { setAppAction({ id: a.id, kind: 'reject' }); setAppNote('') }}>Tolak</button>
                     )}{' '}
                     {appAction?.id === a.id && appAction.kind === 'revision' ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Catatan revisi (wajib)
                           <textarea value={appNote} onChange={(e) => setAppNote(e.target.value)} rows={2} placeholder="Tulis yang perlu diperbaiki pelamar — terlihat oleh pelamar." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim()} onClick={() => void decideApp(a, 'revision_required', appNote)}>Konfirmasi Minta Revisi</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!appNote.trim() || busyKey !== null} onClick={() => void decideApp(a, 'revision_required', appNote)}>{busyKey === `app-${a.id}-revision_required` ? 'Memproses…' : 'Konfirmasi Minta Revisi'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction(null); setAppNote('') }}>Batal</button>
                       </>
                     ) : (
-                      <button type="button" className="btn btn-ghost btn-small" onClick={() => { setAppAction({ id: a.id, kind: 'revision' }); setAppNote('') }}>Minta Revisi</button>
+                      <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => { setAppAction({ id: a.id, kind: 'revision' }); setAppNote('') }}>Minta Revisi</button>
                     )}
                   </div>
                 )}
@@ -813,18 +873,19 @@ export default function AdminPage() {
                 )}
                 {s.status === 'pending' && (
                   <div className="form-actions">
-                    <button type="button" className="btn btn-primary btn-small" onClick={() => void decideSub(s, 'approved')}>Setujui &amp; Tambah Sekolah</button>{' '}
+                    <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null} onClick={() => void decideSub(s, 'approved')}>{busyKey === `sub-${s.id}-approved` ? 'Memproses…' : 'Setujui & Tambah Sekolah'}</button>{' '}
                     {rejectingSubId === s.id ? (
                       <>
-                        <label>
+                        {/* B70: label textarea mengambil baris penuh sendiri. */}
+                        <label style={{ flex: '1 1 100%' }}>
                           Alasan penolakan (wajib)
                           <textarea value={subNote} onChange={(e) => setSubNote(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh pengaju." />
                         </label>{' '}
-                        <button type="button" className="btn btn-primary btn-small" disabled={!subNote.trim()} onClick={() => void decideSub(s, 'rejected', subNote)}>Konfirmasi Tolak</button>{' '}
+                        <button type="button" className="btn btn-primary btn-small" disabled={!subNote.trim() || busyKey !== null} onClick={() => void decideSub(s, 'rejected', subNote)}>{busyKey === `sub-${s.id}-rejected` ? 'Memproses…' : 'Konfirmasi Tolak'}</button>{' '}
                         <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingSubId(null); setSubNote('') }}>Batal</button>
                       </>
                     ) : (
-                      <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingSubId(s.id); setSubNote('') }}>Tolak</button>
+                      <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => { setRejectingSubId(s.id); setSubNote('') }}>Tolak</button>
                     )}
                   </div>
                 )}
@@ -837,7 +898,7 @@ export default function AdminPage() {
       <section className="section">
         <div className="dash-section-head"><h2>Klaim Mengampu ({claims.filter((c) => c.status === 'pending').length} pending)</h2></div>
         {claims.filter((c) => c.status === 'pending').length === 0 ? <p className="empty">Tidak ada klaim mengampu yang menunggu.</p> : (
-          <ul>
+          <ul className="list">
             {claims.filter((c) => c.status === 'pending').map((c) => {
               const claimedCourse = courses.find((x) => x.id === c.course_id)
               const isMentorClaim = mentors.some((m) => m.id === c.mentor_id)
@@ -850,18 +911,19 @@ export default function AdminPage() {
                   {c.decision_note && <span className="muted">(sebelumnya ditolak: {c.decision_note})</span>}
                 </p>
                 <div className="form-actions">
-                  <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, true)}>Setujui</button>
+                  <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null} onClick={() => void decideClaim(c, true)}>{busyKey === `claim-${c.id}-approved` ? 'Memproses…' : 'Setujui'}</button>
                   {rejectingClaimId === c.id ? (
                     <>
-                      <label>
+                      {/* B70: label textarea mengambil baris penuh sendiri. */}
+                      <label style={{ flex: '1 1 100%' }}>
                         Alasan penolakan
                         <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={2} placeholder="Tulis alasan penolakan — terlihat oleh mentor." />
                       </label>
-                      <button type="button" className="btn btn-primary btn-small" onClick={() => void decideClaim(c, false, rejectReason)}>Konfirmasi Tolak</button>
+                      <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null} onClick={() => void decideClaim(c, false, rejectReason)}>{busyKey === `claim-${c.id}-rejected` ? 'Memproses…' : 'Konfirmasi Tolak'}</button>
                       <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(null); setRejectReason('') }}>Batal</button>
                     </>
                   ) : (
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => { setRejectingClaimId(c.id); setRejectReason('') }}>Tolak</button>
+                    <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => { setRejectingClaimId(c.id); setRejectReason('') }}>Tolak</button>
                   )}
                 </div>
               </li>
@@ -872,7 +934,7 @@ export default function AdminPage() {
         {claims.filter((c) => c.status !== 'pending').length > 0 && (
           <>
             <h3>Riwayat Keputusan Klaim</h3>
-            <ul>
+            <ul className="list">
               {claims.filter((c) => c.status !== 'pending').map((c) => (
                 <li key={c.id}>
                   {courses.find((x) => x.id === c.course_id)?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}: {' '}
@@ -909,7 +971,30 @@ export default function AdminPage() {
           <label>Judul course baru<input value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} required /></label>
           <label>Deskripsi<textarea value={newCourseDesc} onChange={(e) => setNewCourseDesc(e.target.value)} rows={2} /></label>
           <label>Kategori<input value={newCourseCategory} onChange={(e) => setNewCourseCategory(e.target.value)} placeholder="Mis. Penyutradaraan" /></label>
-          <button type="submit" className="btn btn-primary">Buat Course (tanpa mentor)</button>
+          {/* LB10: mentor + level langsung di form buat course. */}
+          <label>
+            Mentor (kosong = tanpa mentor)
+            <select value={newCourseMentor} onChange={(e) => setNewCourseMentor(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+              <option value="">— Tanpa mentor —</option>
+              {mentors.map((m) => <option key={m.id} value={m.id}>{m.name ?? 'Mentor'}</option>)}
+            </select>
+          </label>
+          <label>
+            Level
+            <select value={newCourseLevel} onChange={(e) => setNewCourseLevel(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+              <option value="">— Semua level —</option>
+              <option value="Pemula">Pemula</option>
+              <option value="Menengah">Menengah</option>
+              <option value="Lanjutan">Lanjutan</option>
+            </select>
+          </label>
+          <button type="submit" className="btn btn-primary">Buat Course</button>
+          {createdCourseId && (
+            <p className="notice-box">
+              Course dibuat. Lengkapi section, lesson, dan kontennya di{' '}
+              <Link to={`/mentor/course/${createdCourseId}`}>Course Builder →</Link>
+            </p>
+          )}
         </form>
       </section>
 
@@ -996,7 +1081,7 @@ export default function AdminPage() {
       <section className="section">
         <div className="dash-section-head"><h2>Usulan Komunitas ({proposals.length} pending)</h2></div>
         {proposals.length === 0 ? <p className="empty">Tidak ada usulan komunitas yang menunggu.</p> : (
-          <ul>
+          <ul className="list">
             {proposals.map((p) => (
               <li key={p.id}>
                 <strong>{p.name}</strong> — {p.description ?? ''} (pengusul: {names.get(p.proposer_id) ?? '—'})
@@ -1051,11 +1136,12 @@ export default function AdminPage() {
           )}
           <button type="submit" className="btn btn-primary">Buat Pengumuman</button>
         </form>
-        <ul>
+        <ul className="list">
           {announcements.map((a) => (
             <li key={a.id}>
-              {a.title} ({a.scope}){' '}
-              <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleDeleteAnnouncement(a.id)}>Hapus</button>
+              {/* B75: scope mentah ("platform"/"course") dipetakan ke label. */}
+              {a.title} ({a.scope === 'platform' ? 'Platform (semua pengguna)' : a.scope === 'course' ? 'Course tertentu' : a.scope}){' '}
+              <button type="button" className="btn btn-ghost btn-small" disabled={busyKey === `ann-${a.id}`} onClick={() => void handleDeleteAnnouncement(a.id)}>{busyKey === `ann-${a.id}` ? 'Menghapus…' : 'Hapus'}</button>
             </li>
           ))}
         </ul>
@@ -1082,7 +1168,7 @@ export default function AdminPage() {
         )}
         <div className="dash-section-head" style={{ marginTop: '1rem' }}><h2>Beban Mentor</h2></div>
         {mentorLoad.length === 0 ? <p className="empty">Belum ada mentor.</p> : (
-          <ul>
+          <ul className="list">
             {mentorLoad.map((m) => (
               <li key={m.name}>{m.name} — {m.courses} course · {m.pending} submission menunggu penilaian</li>
             ))}

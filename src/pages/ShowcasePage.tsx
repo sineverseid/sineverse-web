@@ -23,7 +23,6 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
-import { filmHue } from '../lib/brand'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
 import type { Film } from '../lib/types'
@@ -66,6 +65,11 @@ export default function ShowcasePage() {
   const [rejectReason, setRejectReason] = useState('')
   const [rejectError, setRejectError] = useState<string | null>(null)
   const [brokenPosters, setBrokenPosters] = useState<Set<string>>(new Set())
+  // B42: nama sekolah pemilik film (film_id → nama), hanya untuk film
+  // yang show_school-nya dicentang.
+  const [ownerSchools, setOwnerSchools] = useState<Map<string, string>>(new Map())
+  // B59: kunci selama publikasi — klik ganda membuat film duplikat.
+  const [publishing, setPublishing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -96,6 +100,44 @@ export default function ShowcasePage() {
         return
       }
       setFilms((data ?? []) as Film[])
+      // B42: nama sekolah pemilik untuk film yang show_school-nya
+      // dicentang — profil dulu (school teks / school_id), lalu nama
+      // sekolah referensi bila hanya school_id yang terisi.
+      const withSchool = ((data ?? []) as Film[]).filter((f) => f.show_school)
+      if (withSchool.length > 0) {
+        try {
+          const ownerIds = [...new Set(withSchool.map((f) => f.owner_id))]
+          const { data: profRows } = await supabase
+            .from('profiles')
+            .select('id,school,school_id')
+            .in('id', ownerIds)
+          const profMap = new Map(
+            ((profRows ?? []) as { id: string; school: string | null; school_id: string | null }[]).map((p) => [p.id, p]),
+          )
+          const schoolIds = [
+            ...new Set(
+              [...profMap.values()].map((p) => p.school_id).filter((id): id is string => !!id),
+            ),
+          ]
+          const schoolNames = new Map<string, string>()
+          if (schoolIds.length > 0) {
+            const { data: sRows } = await supabase.from('schools').select('id,name').in('id', schoolIds)
+            for (const s of (sRows ?? []) as { id: string; name: string }[]) schoolNames.set(s.id, s.name)
+          }
+          const m = new Map<string, string>()
+          for (const f of withSchool) {
+            const pr = profMap.get(f.owner_id)
+            const nm = pr?.school?.trim() || (pr?.school_id ? schoolNames.get(pr.school_id) : undefined)
+            if (nm) m.set(f.id, nm)
+          }
+          setOwnerSchools(m)
+        } catch {
+          // Nama sekolah gagal dimuat: galeri tetap tampil tanpa nama sekolah.
+          setOwnerSchools(new Map())
+        }
+      } else {
+        setOwnerSchools(new Map())
+      }
       // Film saya dan antrean admin independen: paralel. Nama penilai dan
       // nama pemilik antrean baru bisa dicari setelah kedua daftar ada,
       // jadi keduanya ikut paralel di batch kedua.
@@ -143,13 +185,16 @@ export default function ShowcasePage() {
 
   async function handlePublish(e: FormEvent) {
     e.preventDefault()
-    if (!user || !title.trim()) return
+    if (!user || !title.trim() || publishing) return
     // Poster film WAJIB: anggota memakai poster mereka sendiri, bukan ilustrasi.
     if (!posterFile) {
       setPosterError('Unggah poster filmmu sendiri (gambar). Poster wajib diisi.')
       return
     }
     setPosterError(null)
+    // B59: kunci selama proses — klik ganda membuat film duplikat.
+    setPublishing(true)
+    try {
     const posterUrl = await uploadToBucket(
       'film-posters',
       `${user.id}/${Date.now()}-${posterFile.name}`,
@@ -184,6 +229,9 @@ export default function ShowcasePage() {
       if (posterPreview) URL.revokeObjectURL(posterPreview)
       setPosterPreview(null)
       await load()
+    }
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -414,12 +462,20 @@ export default function ShowcasePage() {
                       style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
                     />
                   ) : (
-                    <div className="film-cover" style={{ background: filmHue(f.id) }} aria-hidden="true">
-                      <span className="film-cover-title">{f.title}</span>
-                    </div>
+                    // LB3: film tanpa poster (mis. seed lama) memakai
+                    // placeholder poster yang layak — bukan blok warna
+                    // polos dengan judul di dalamnya + judul ganda di bawah.
+                    <img
+                      src="./empty-state-cinema.webp"
+                      alt={`Poster ${f.title} belum tersedia`}
+                      style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover' }}
+                    />
                   )}
                   <div className="course-card-body">
                     <h3 style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{f.title}</h3>
+                    {ownerSchools.get(f.id) && (
+                      <p className="muted" style={{ margin: '0 0 0.25rem' }}>{ownerSchools.get(f.id)}</p>
+                    )}
                     <p style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{f.description ?? ''}</p>
                   </div>
                 </Link>
@@ -478,12 +534,16 @@ export default function ShowcasePage() {
                 <option value="private">Privat, hanya kamu (dan admin) yang melihat</option>
               </select>
             </label>
-            <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
-              <input type="checkbox" checked={showSchool} onChange={(e) => setShowSchool(e.target.checked)} />
-              Tampilkan nama sekolah pada film ini
-            </label>
-            <button type="submit" className="btn btn-primary">
-              Kirim untuk Dinilai
+            {/* LB4: checkbox sekolah hanya bila pengguna benar-benar punya
+                sekolah (mentor/admin tanpa sekolah tidak melihatnya). */}
+            {(profile?.school?.trim() || profile?.school_id) && (
+              <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                <input type="checkbox" checked={showSchool} onChange={(e) => setShowSchool(e.target.checked)} />
+                Tampilkan nama sekolah pada film ini
+              </label>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={publishing}>
+              {publishing ? 'Mengirim…' : 'Kirim untuk Dinilai'}
             </button>
           </form>
           {myFilms.length > 0 && (

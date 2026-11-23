@@ -338,6 +338,22 @@ export function ExamPage() {
           {result.serial && <Link to="/sertifikat">Lihat Sertifikat Saya</Link>}
         </p>
       )}
+      {/* B24: kerjakan ulang bila percobaan masih tersisa dan belum lulus —
+          tanpa ini input terkunci setelah submit pertama. */}
+      {result && !blocked && !passed && enrolled !== false && !isAdmin && !isCourseMentor && (
+        <p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={() => {
+              setResult(null)
+              setAnswers({})
+            }}
+          >
+            Kerjakan ulang
+          </button>
+        </p>
+      )}
       {blocked && <p className="error-box">Batas percobaan ujian ini sudah tercapai ({exam.max_attempts} kali).</p>}
       {/* K5/K3: "Belum ada soal" hanya untuk yang boleh melihat soal
           (admin / mentor course / siswa terdaftar — atau ujian tanpa

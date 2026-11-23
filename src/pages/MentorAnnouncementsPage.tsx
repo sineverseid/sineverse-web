@@ -77,7 +77,8 @@ export default function MentorAnnouncementsPage() {
     })
     setSaving(false)
     if (insErr) {
-      setError(`Gagal mengirim pengumuman: ${insErr.message}`)
+      // B31: kegagalan kirim tampil sebagai notice inline, daftar tetap terlihat.
+      setNotice(`Gagal mengirim pengumuman: ${insErr.message}`)
       return
     }
     setNotice('Pengumuman terkirim ke siswa course itu.')
@@ -92,7 +93,8 @@ export default function MentorAnnouncementsPage() {
     if (!window.confirm(`Hapus pengumuman "${a.title}"?`)) return
     const { error: delErr } = await supabase.from('course_announcements').delete().eq('id', a.id)
     if (delErr) {
-      setError(`Gagal menghapus pengumuman: ${delErr.message}`)
+      // B31: kegagalan hapus tampil sebagai notice inline, daftar tetap terlihat.
+      setNotice(`Gagal menghapus pengumuman: ${delErr.message}`)
       return
     }
     setNotice(`Pengumuman "${a.title}" dihapus.`)

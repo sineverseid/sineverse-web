@@ -34,6 +34,9 @@ export default function AdminEnrollmentsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // B65: kunci busy per baris waitlist — klik ganda "Terima" tidak
+  // membuat dua baris enrollment.
+  const [acceptingId, setAcceptingId] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -99,24 +102,30 @@ export default function AdminEnrollmentsPage() {
   }
 
   async function acceptWaitlist(row: WaitlistRow) {
-    const name = names.get(row.user_id) ?? 'Pendaftar ini'
-    const { error: insErr } = await supabase.from('enrollments').insert({
-      user_id: row.user_id,
-      course_id: row.course_id,
-    })
-    if (insErr) {
-      // Baris waitlist sengaja TIDAK dihapus bila insert gagal.
-      setNotice(`Gagal menerima ${name}: ${insErr.message}. Pendaftar tetap ada di waitlist.`)
-      return
-    }
-    const { error: delErr } = await supabase.from('waitlist').delete().eq('id', row.id)
-    if (delErr) {
-      setNotice(`${name} sudah terdaftar, tetapi baris waitlist gagal dihapus: ${delErr.message}. Hapus manual bila perlu.`)
+    if (acceptingId) return
+    setAcceptingId(row.id)
+    try {
+      const name = names.get(row.user_id) ?? 'Pendaftar ini'
+      const { error: insErr } = await supabase.from('enrollments').insert({
+        user_id: row.user_id,
+        course_id: row.course_id,
+      })
+      if (insErr) {
+        // Baris waitlist sengaja TIDAK dihapus bila insert gagal.
+        setNotice(`Gagal menerima ${name}: ${insErr.message}. Pendaftar tetap ada di waitlist.`)
+        return
+      }
+      const { error: delErr } = await supabase.from('waitlist').delete().eq('id', row.id)
+      if (delErr) {
+        setNotice(`${name} sudah terdaftar, tetapi baris waitlist gagal dihapus: ${delErr.message}. Hapus manual bila perlu.`)
+        await load()
+        return
+      }
+      setNotice(`${name} diterima dan terdaftar di course.`)
       await load()
-      return
+    } finally {
+      setAcceptingId(null)
     }
-    setNotice(`${name} diterima dan terdaftar di course.`)
-    await load()
   }
 
   return (
@@ -196,8 +205,8 @@ export default function AdminEnrollmentsPage() {
               <li key={w.id} className="discussion-item">
                 <p><strong>{names.get(w.user_id) ?? 'Pendaftar'}</strong></p>
                 <p className="muted">Mendaftar: {formatDate(w.created_at)}</p>
-                <button type="button" className="btn btn-primary btn-small" onClick={() => void acceptWaitlist(w)}>
-                  Terima
+                <button type="button" className="btn btn-primary btn-small" disabled={acceptingId === w.id} onClick={() => void acceptWaitlist(w)}>
+                  {acceptingId === w.id ? 'Memproses…' : 'Terima'}
                 </button>
               </li>
             ))}

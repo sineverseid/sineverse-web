@@ -125,8 +125,10 @@ export default function CrewFinderPage() {
     return () => {
       cancelled = true
     }
+    // B45: muat ulang saat auth selesai (user berubah setelah mount) —
+    // dengan deps [] myProjects bisa kosong selamanya.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user?.id])
 
   // Kabupaten/kota mengikuti provinsi yang dipilih (pola yang sama
   // seperti formulir pendaftaran + filter sekolah admin). Ganti

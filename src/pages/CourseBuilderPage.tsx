@@ -19,6 +19,31 @@ interface RubricDraftCriterion {
   max_score: number
 }
 
+/** Baris soal kuis/ujian untuk edit mentor/admin — diambil langsung dari
+ *  tabel (bukan RPC siswa), jadi correct_answer ikut tersedia. */
+interface QuestionRow {
+  id: string
+  quiz_id?: string
+  exam_id?: string
+  kind: 'mc' | 'true_false' | 'short'
+  question: string
+  options: string[] | null
+  correct_answer: string | null
+  explanation: string | null
+  order_index: number
+}
+
+type EditingKind = 'module' | 'lesson' | 'assignment' | 'quiz' | 'quizQuestion' | 'exam' | 'examQuestion'
+
+/** Ubah ISO timestamptz ke nilai input datetime-local (waktu lokal). */
+function toLocalInput(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function CourseBuilderPage() {
   const { id } = useParams<{ id: string }>()
   const { user, profile } = useAuth()
@@ -71,6 +96,19 @@ export default function CourseBuilderPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [exams, setExams] = useState<CompetencyExam[]>([])
+  const [quizQuestions, setQuizQuestions] = useState<QuestionRow[]>([])
+  const [examQuestions, setExamQuestions] = useState<QuestionRow[]>([])
+  // B32: edit inline per item (modul, lesson, tugas, kuis, soal kuis,
+  // ujian, soal ujian) + hapus dengan konfirmasi.
+  const [editing, setEditing] = useState<{ kind: EditingKind; id: string } | null>(null)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [draftText, setDraftText] = useState('')
+  const [draftUrl, setDraftUrl] = useState('')
+  const [draftNum, setDraftNum] = useState('')
+  const [draftNum2, setDraftNum2] = useState('')
+  const [draftAnswer, setDraftAnswer] = useState('')
+  const [draftExpl, setDraftExpl] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [liveClasses, setLiveClasses] = useState<LiveClass[]>([])
   const [lcTitle, setLcTitle] = useState('')
   const [lcScheduled, setLcScheduled] = useState('')
@@ -128,6 +166,19 @@ export default function CourseBuilderPage() {
     if (aData !== null) setAssignments((aData ?? []) as Assignment[])
     setExams((eData ?? []) as CompetencyExam[])
     setLiveClasses(lcData)
+    // Soal kuis + soal ujian dimuat setelah kuis/ujian diketahui (butuh id).
+    const quizIds = ((qData ?? quizzes) as Quiz[]).map((q) => q.id)
+    const examIds = ((eData ?? []) as CompetencyExam[]).map((x) => x.id)
+    const [qqData, eqData] = await Promise.all([
+      quizIds.length > 0
+        ? supabase.from('quiz_questions').select('*').in('quiz_id', quizIds).then((r) => r.data)
+        : Promise.resolve(null),
+      examIds.length > 0
+        ? supabase.from('exam_questions').select('*').in('exam_id', examIds).then((r) => r.data)
+        : Promise.resolve(null),
+    ])
+    if (qqData !== null) setQuizQuestions((qqData ?? []) as QuestionRow[])
+    if (eqData !== null) setExamQuestions((eqData ?? []) as QuestionRow[])
   }
 
   useEffect(() => {
@@ -422,6 +473,7 @@ export default function CourseBuilderPage() {
       setQqAnswer('')
       setQqExpl('')
       ok('Soal kuis ditambahkan. Jawaban benar hanya terlihat oleh pengajar course / admin — tidak pernah dikirim ke siswa.')
+      await refresh(currentCourse.id)
     }
   }
 
@@ -472,6 +524,7 @@ export default function CourseBuilderPage() {
       setEqAnswer('')
       setEqExpl('')
       ok('Soal ujian ditambahkan.')
+      await refresh(currentCourse.id)
     }
   }
 
@@ -512,6 +565,205 @@ export default function CourseBuilderPage() {
     }
   }
 
+  // --- B32: edit/hapus per item -------------------------------------------
+  // Satu state `editing` + draft field dipakai semua jenis item; simpan
+  // dan hapus di bawah memakai tabel + patch yang sesuai jenisnya.
+
+  function startEdit(kind: EditingKind, id: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string }) {
+    setEditing({ kind, id })
+    setDraftTitle(init.title ?? '')
+    setDraftText(init.text ?? '')
+    setDraftUrl(init.url ?? '')
+    setDraftNum(init.num ?? '')
+    setDraftNum2(init.num2 ?? '')
+    setDraftAnswer(init.answer ?? '')
+    setDraftExpl(init.expl ?? '')
+    setNotice(null)
+  }
+
+  async function saveEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editing) return
+    const { kind, id } = editing
+    const title = draftTitle.trim()
+    if ((kind === 'module' || kind === 'lesson' || kind === 'assignment' || kind === 'quiz' || kind === 'exam') && !title) {
+      setNotice('Judul tidak boleh kosong.')
+      return
+    }
+    if (kind === 'quizQuestion' || kind === 'examQuestion') {
+      if (!draftText.trim()) {
+        setNotice('Pertanyaan tidak boleh kosong.')
+        return
+      }
+      if (!draftAnswer.trim()) {
+        setNotice('Jawaban benar tidak boleh kosong.')
+        return
+      }
+    }
+    let table = ''
+    let patch: Record<string, unknown> = {}
+    let doneMsg = ''
+    if (kind === 'module') {
+      table = 'modules'
+      patch = { title }
+      doneMsg = 'Judul modul disimpan.'
+    } else if (kind === 'lesson') {
+      table = 'lessons'
+      patch = { title, video_url: draftUrl.trim() || null, content: draftText.trim() || null }
+      doneMsg = 'Lesson disimpan.'
+    } else if (kind === 'assignment') {
+      table = 'assignments'
+      patch = {
+        title,
+        description: draftText.trim() || null,
+        max_score: draftNum ? Number(draftNum) : 100,
+        due_date: draftNum2 ? new Date(draftNum2).toISOString() : null,
+      }
+      doneMsg = 'Tugas disimpan.'
+    } else if (kind === 'quiz') {
+      table = 'quizzes'
+      patch = { title, passing_score: draftNum ? Number(draftNum) : 70 }
+      doneMsg = 'Kuis disimpan.'
+    } else if (kind === 'quizQuestion') {
+      table = 'quiz_questions'
+      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null }
+      doneMsg = 'Soal kuis disimpan.'
+    } else if (kind === 'exam') {
+      table = 'competency_exams'
+      patch = {
+        title,
+        description: draftText.trim() || null,
+        passing_score: draftNum ? Number(draftNum) : 70,
+        max_attempts: draftNum2 ? Number(draftNum2) : null,
+      }
+      doneMsg = 'Ujian disimpan.'
+    } else {
+      table = 'exam_questions'
+      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null }
+      doneMsg = 'Soal ujian disimpan.'
+    }
+    const { error: updErr } = await supabase.from(table).update(patch).eq('id', id)
+    if (updErr) {
+      fail(updErr)
+      return
+    }
+    invalidateCatalogCache()
+    setEditing(null)
+    ok(doneMsg)
+    await refresh(currentCourse.id)
+  }
+
+  async function deleteItem(table: string, id: string, label: string) {
+    if (!window.confirm(`Hapus ${label}? Tindakan ini tidak bisa dibatalkan.`)) return
+    if (deletingId) return
+    setDeletingId(id)
+    try {
+      const { error: delErr } = await supabase.from(table).delete().eq('id', id)
+      if (delErr) {
+        fail(delErr)
+        return
+      }
+      invalidateCatalogCache()
+      ok(`${label} dihapus.`)
+      await refresh(currentCourse.id)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  /** Form edit inline yang dipakai semua jenis item (field disesuaikan). */
+  function editForm(kind: EditingKind) {
+    const isQuestion = kind === 'quizQuestion' || kind === 'examQuestion'
+    return (
+      <form
+        className="form"
+        onSubmit={(e) => void saveEdit(e)}
+        style={{ marginTop: '0.5rem' }}
+      >
+        {isQuestion ? (
+          <>
+            <label>
+              Pertanyaan
+              <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={2} required />
+            </label>
+            <label>
+              Jawaban benar (hanya pengajar yang melihat)
+              <input value={draftAnswer} onChange={(e) => setDraftAnswer(e.target.value)} required />
+            </label>
+            <label>
+              Penjelasan
+              <input value={draftExpl} onChange={(e) => setDraftExpl(e.target.value)} />
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              Judul
+              <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} required />
+            </label>
+            {kind === 'lesson' && (
+              <>
+                <label>
+                  URL video (opsional)
+                  <input value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} placeholder="https://…" />
+                </label>
+                <label>
+                  Isi bacaan
+                  <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={3} />
+                </label>
+              </>
+            )}
+            {(kind === 'assignment' || kind === 'exam') && (
+              <label>
+                Deskripsi
+                <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={2} />
+              </label>
+            )}
+            {kind === 'assignment' && (
+              <>
+                <label>
+                  Nilai maks.
+                  <input type="number" min={1} value={draftNum} onChange={(e) => setDraftNum(e.target.value)} required />
+                </label>
+                <label>
+                  Tenggat (opsional)
+                  <input type="datetime-local" value={draftNum2} onChange={(e) => setDraftNum2(e.target.value)} />
+                </label>
+              </>
+            )}
+            {(kind === 'quiz' || kind === 'exam') && (
+              <label>
+                Nilai lulus
+                <input type="number" min={0} max={100} value={draftNum} onChange={(e) => setDraftNum(e.target.value)} required />
+              </label>
+            )}
+            {kind === 'exam' && (
+              <label>
+                Maks. percobaan (kosong = tanpa batas)
+                <input type="number" min={1} value={draftNum2} onChange={(e) => setDraftNum2(e.target.value)} />
+              </label>
+            )}
+          </>
+        )}
+        <div className="form-actions">
+          <button type="submit" className="btn btn-primary btn-small">Simpan</button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => setEditing(null)}>Batal</button>
+        </div>
+      </form>
+    )
+  }
+
+  function editDeleteButtons(kind: EditingKind, id: string, label: string, table: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string }) {
+    return (
+      <>
+        <button type="button" className="btn btn-secondary btn-small" onClick={() => startEdit(kind, id, init)}>Edit</button>{' '}
+        <button type="button" className="btn btn-ghost btn-small" disabled={deletingId === id} onClick={() => void deleteItem(table, id, label)}>
+          {deletingId === id ? 'Menghapus…' : 'Hapus'}
+        </button>
+      </>
+    )
+  }
+
   const rubricAssignment = assignments.find((a) => a.id === rubAsg)
   const rubricTotalMax = rubCriteria.reduce(
     (s, c) => s + (Number.isInteger(c.max_score) && c.max_score > 0 ? c.max_score : 0),
@@ -539,9 +791,17 @@ export default function CourseBuilderPage() {
           <ul>
             {modules.map((m) => (
               <li key={m.id}>
-                <strong>{m.title}</strong>
+                <strong>{m.title}</strong>{' '}
+                {editDeleteButtons('module', m.id, `modul "${m.title}"`, 'modules', { title: m.title })}
+                {editing?.kind === 'module' && editing.id === m.id && editForm('module')}
                 <ul>
-                  {(lessonsByModule[m.id] ?? []).map((l) => <li key={l.id}>{l.title}</li>)}
+                  {(lessonsByModule[m.id] ?? []).map((l) => (
+                    <li key={l.id}>
+                      {l.title}{' '}
+                      {editDeleteButtons('lesson', l.id, `lesson "${l.title}"`, 'lessons', { title: l.title, text: l.content ?? '', url: l.video_url ?? '' })}
+                      {editing?.kind === 'lesson' && editing.id === l.id && editForm('lesson')}
+                    </li>
+                  ))}
                 </ul>
               </li>
             ))}
@@ -684,6 +944,21 @@ export default function CourseBuilderPage() {
           <label>Tenggat (opsional)<input type="datetime-local" value={asgDue} onChange={(e) => setAsgDue(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Buat Tugas</button>
         </form>
+        {assignments.length > 0 && (
+          <>
+            <h3>Tugas yang Sudah Dibuat</h3>
+            <ul>
+              {assignments.map((a) => (
+                <li key={a.id}>
+                  <strong>{a.title}</strong> — maks. {a.max_score}
+                  {a.due_date ? ` · tenggat ${new Date(a.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}{' '}
+                  {editDeleteButtons('assignment', a.id, `tugas "${a.title}"`, 'assignments', { title: a.title, text: a.description ?? '', num: String(a.max_score), num2: toLocalInput(a.due_date) })}
+                  {editing?.kind === 'assignment' && editing.id === a.id && editForm('assignment')}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="section">
@@ -808,6 +1083,31 @@ export default function CourseBuilderPage() {
           <label>Penjelasan (ditampilkan ke siswa setelah menjawab)<input value={qqExpl} onChange={(e) => setQqExpl(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Tambah Soal Kuis</button>
         </form>
+        {quizzes.length > 0 && (
+          <>
+            <h3>Kuis yang Sudah Dibuat</h3>
+            <ul>
+              {quizzes.map((q) => (
+                <li key={q.id}>
+                  <strong>{q.title}</strong> ({q.kind === 'pretest' ? 'Pretest' : q.kind === 'posttest' ? 'Posttest' : 'Kuis'}) · lulus {q.passing_score}{' '}
+                  {editDeleteButtons('quiz', q.id, `kuis "${q.title}"`, 'quizzes', { title: q.title, num: String(q.passing_score) })}
+                  {editing?.kind === 'quiz' && editing.id === q.id && editForm('quiz')}
+                  {quizQuestions.filter((qq) => qq.quiz_id === q.id).length > 0 && (
+                    <ul>
+                      {quizQuestions.filter((qq) => qq.quiz_id === q.id).map((qq) => (
+                        <li key={qq.id}>
+                          {qq.question}{' '}
+                          {editDeleteButtons('quizQuestion', qq.id, 'soal kuis ini', 'quiz_questions', { text: qq.question, answer: qq.correct_answer ?? '', expl: qq.explanation ?? '' })}
+                          {editing?.kind === 'quizQuestion' && editing.id === qq.id && editForm('quizQuestion')}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="section">
@@ -843,6 +1143,32 @@ export default function CourseBuilderPage() {
           <label>Penjelasan<input value={eqExpl} onChange={(e) => setEqExpl(e.target.value)} /></label>
           <button type="submit" className="btn btn-primary">Tambah Soal Ujian</button>
         </form>
+        {exams.length > 0 && (
+          <>
+            <h3>Ujian yang Sudah Dibuat</h3>
+            <ul>
+              {exams.map((x) => (
+                <li key={x.id}>
+                  <strong>{x.title}</strong> · lulus {x.passing_score}
+                  {x.max_attempts ? ` · maks. ${x.max_attempts} percobaan` : ''}{' '}
+                  {editDeleteButtons('exam', x.id, `ujian "${x.title}"`, 'competency_exams', { title: x.title, text: x.description ?? '', num: String(x.passing_score), num2: x.max_attempts ? String(x.max_attempts) : '' })}
+                  {editing?.kind === 'exam' && editing.id === x.id && editForm('exam')}
+                  {examQuestions.filter((eq) => eq.exam_id === x.id).length > 0 && (
+                    <ul>
+                      {examQuestions.filter((eq) => eq.exam_id === x.id).map((eq) => (
+                        <li key={eq.id}>
+                          {eq.question}{' '}
+                          {editDeleteButtons('examQuestion', eq.id, 'soal ujian ini', 'exam_questions', { text: eq.question, answer: eq.correct_answer ?? '', expl: eq.explanation ?? '' })}
+                          {editing?.kind === 'examQuestion' && editing.id === eq.id && editForm('examQuestion')}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="section">

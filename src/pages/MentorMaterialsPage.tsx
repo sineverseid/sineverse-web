@@ -154,7 +154,9 @@ export default function MentorMaterialsPage() {
       .eq('id', id)
     setSaving(false)
     if (updErr) {
-      setError(`Gagal menyimpan materi: ${updErr.message}`)
+      // B31: kegagalan simpan tampil sebagai notice inline — daftar materi
+      // tetap terlihat, bukan diganti kotak error seluruh halaman.
+      setNotice(`Gagal menyimpan materi: ${updErr.message}`)
       return
     }
     setEditingId(null)
@@ -168,7 +170,8 @@ export default function MentorMaterialsPage() {
     if (!window.confirm(`Hapus materi "${r.title}"?`)) return
     const { error: delErr } = await supabase.from('lesson_resources').delete().eq('id', r.id)
     if (delErr) {
-      setError(`Gagal menghapus materi: ${delErr.message}`)
+      // B31: kegagalan hapus tampil sebagai notice inline, daftar tetap terlihat.
+      setNotice(`Gagal menghapus materi: ${delErr.message}`)
       return
     }
     setNotice(`Materi "${r.title}" dihapus.`)

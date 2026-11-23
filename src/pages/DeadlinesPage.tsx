@@ -35,12 +35,19 @@ export default function DeadlinesPage() {
   const { user } = useAuth()
   const [rows, setRows] = useState<DeadlineRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // B39: tamu (belum login) sebelumnya terjebak "Memuat…" selamanya.
+  const [needsLogin, setNeedsLogin] = useState(false)
   const [tab, setTab] = useState<'aktif' | 'riwayat'>('aktif')
 
   useEffect(() => {
     let cancelled = false
     async function load() {
-      if (!user) return
+      // B39: tanpa user, hentikan loading dan tampilkan ajakan masuk.
+      if (!user) {
+        setNeedsLogin(true)
+        return
+      }
+      setNeedsLogin(false)
       try {
         const [enrollments, courses, submissions] = await Promise.all([
           fetchEnrollments(user.id),
@@ -53,10 +60,15 @@ export default function DeadlinesPage() {
 
         // Lesson semua course yang diambil, diambil paralel (bukan satu per
         // satu) supaya halaman tenggat tidak lama memuat.
+        // B57: satu course yang gagal dimuat tidak boleh mematikan semua
+        // tenggat — course gagal dilewati (lesson kosong) dan dicatat.
         const lessonsPerCourse = await Promise.all(
           enrollments.map(async (en) => ({
             courseId: en.course_id,
-            lessons: await fetchCourseLessons(en.course_id),
+            lessons: await fetchCourseLessons(en.course_id).catch((err) => {
+              console.warn(`Gagal memuat lesson course ${en.course_id}:`, err)
+              return [] as Awaited<ReturnType<typeof fetchCourseLessons>>
+            }),
           })),
         )
         const allLessonIds = lessonsPerCourse.flatMap((x) => x.lessons.map((l) => l.id))
@@ -99,6 +111,21 @@ export default function DeadlinesPage() {
       cancelled = true
     }
   }, [user])
+
+  if (needsLogin) {
+    return (
+      <div className="page">
+        <PageHeader
+          icon="clock"
+          title="Tenggat Saya"
+          subtitle="Tugas dari course yang kamu ikuti, diurutkan dari tenggat terdekat."
+        />
+        <p className="empty">
+          Masuk dulu untuk melihat tenggat tugasmu. <Link to="/login">Masuk →</Link>
+        </p>
+      </div>
+    )
+  }
 
   if (!rows) {
     if (error) return <div className="page"><p className="error-box">{error}</p></div>
