@@ -205,7 +205,8 @@ export default function LessonDetailPage() {
             if (course && course.mentor_id === user.id) {
               allowed = true
             } else if (course && !course.mentor_id) {
-              // Master Prompt §3: siswa belum boleh memulai course sebelum
+              // Master Prompt 
+              3: siswa belum boleh memulai course sebelum
               // mentor ditetapkan — berlaku juga untuk akses langsung via URL,
               // bukan hanya lewat tautan lesson di halaman course.
               setLockedReason('Course ini belum memiliki mentor — lesson belum bisa dimulai.')
@@ -801,6 +802,17 @@ export default function LessonDetailPage() {
                       <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
                     </div>
                   ) : null}
+                  {r.kind === 'video' && r.url ? (
+                  <div>
+                    <video controls preload="metadata" src={r.url} style={{ maxWidth: '100%' }} />
+                  </div>
+                ) : null}
+                  {r.kind === 'pdf' && r.url ? (
+                  <div>
+                    <iframe src={r.url} title={r.title} style={{ width: '100%', height: 480, border: 0 }} />
+                    <p className="muted">Bila PDF tidak tampil, buka lewat tautan di atas.</p>
+                  </div>
+                ) : null}
                 </li>
               )
             })}
