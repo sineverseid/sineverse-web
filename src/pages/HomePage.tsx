@@ -29,6 +29,8 @@ import type { IconName } from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import { activityLabel } from '../lib/activityLabels'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
+import { fetchMentorGroupSummary } from '../lib/mentorGroup'
+import type { MentorGroupSummary } from '../lib/mentorGroup'
 import { topRecommendations } from '../lib/recommendations'
 import { courseIllustration, rpsWeekLabel } from '../lib/brand'
 import { countEnrollments, countUsersByRole, formatCountId } from '../lib/counts'
@@ -1217,6 +1219,9 @@ function MentorHome(props: {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [claimingId, setClaimingId] = useState<string | null>(null)
+  // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
+  const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
+  const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
 
   async function load() {
     try {
@@ -1417,6 +1422,21 @@ function MentorHome(props: {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, courses])
+  // Ringkasan grup mentor dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
+  useEffect(() => {
+    let cancelled = false
+    fetchMentorGroupSummary(userId)
+      .then((s) => {
+        if (!cancelled) setGroupSummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setGroupSummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   async function handleClaim(courseId: string) {
     if (claimingId) return
@@ -1528,6 +1548,43 @@ function MentorHome(props: {
             <Link to="/mentor/penilaian">Buka antrean →</Link>
           </div>
         </div>
+      </section>
+
+      {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
+          admin + mentor; ringkasan unread + pesan terakhir. */}
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Ruang Komunikasi Mentor</h2>
+        </div>
+        {groupSummaryFailed ? (
+          <p className="muted">
+            Ringkasan grup belum bisa dimuat — grup chat mentor belum aktif di server.
+          </p>
+        ) : !groupSummary ? (
+          <p className="muted">Memuat ringkasan grup…</p>
+        ) : (
+          <>
+            <p>
+              {groupSummary.unread > 0
+                ? `${groupSummary.unread} pesan belum dibaca.`
+                : 'Semua pesan sudah dibaca.'}
+            </p>
+            {groupSummary.latest ? (
+              <p className="muted">
+                Terakhir dari {groupSummary.latest.senderName} ·{' '}
+                {fmtDate(groupSummary.latest.createdAt)}: {groupSummary.latest.body.slice(0, 120)}
+                {groupSummary.latest.body.length > 120 ? '…' : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada pesan di grup.</p>
+            )}
+          </>
+        )}
+        <p>
+          <Link to="/komunitas-mentor" className="btn btn-primary">
+            Buka Ruang Komunikasi Mentor
+          </Link>
+        </p>
       </section>
 
       <section className="section">
@@ -1822,6 +1879,9 @@ function AdminHome(props: {
     done: number
     total: number
   } | null>(null)
+  // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
+  const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
+  const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
 
   async function load() {
     try {
@@ -2187,6 +2247,21 @@ function AdminHome(props: {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Ringkasan grup mentor dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
+  useEffect(() => {
+    let cancelled = false
+    fetchMentorGroupSummary(userId)
+      .then((s) => {
+        if (!cancelled) setGroupSummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setGroupSummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   async function decideApp(
     app: MentorApplication,
@@ -2413,7 +2488,44 @@ function AdminHome(props: {
         </p>
       )}
 
-      <section className="section" aria-label="Statistik platform">
+            {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
+          admin + mentor; ringkasan unread + pesan terakhir. */}
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Ruang Komunikasi Mentor</h2>
+        </div>
+        {groupSummaryFailed ? (
+          <p className="muted">
+            Ringkasan grup belum bisa dimuat — grup chat mentor belum aktif di server.
+          </p>
+        ) : !groupSummary ? (
+          <p className="muted">Memuat ringkasan grup…</p>
+        ) : (
+          <>
+            <p>
+              {groupSummary.unread > 0
+                ? `${groupSummary.unread} pesan belum dibaca.`
+                : 'Semua pesan sudah dibaca.'}
+            </p>
+            {groupSummary.latest ? (
+              <p className="muted">
+                Terakhir dari {groupSummary.latest.senderName} ·{' '}
+                {fmtDate(groupSummary.latest.createdAt)}: {groupSummary.latest.body.slice(0, 120)}
+                {groupSummary.latest.body.length > 120 ? '…' : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada pesan di grup.</p>
+            )}
+          </>
+        )}
+        <p>
+          <Link to="/komunitas-mentor" className="btn btn-primary">
+            Buka Ruang Komunikasi Mentor
+          </Link>
+        </p>
+      </section>
+
+<section className="section" aria-label="Statistik platform">
         <div className="dash-section-head">
           <h2>Statistik Platform</h2>
         </div>
