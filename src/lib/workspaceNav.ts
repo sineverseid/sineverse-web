@@ -32,6 +32,7 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin/acara', label: 'Acara & Festival', icon: 'event' },
   { to: '/admin/pustaka', label: 'Pustaka', icon: 'library' },
   { to: '/admin/moderasi', label: 'Moderasi', icon: 'admin' },
+  { to: '/admin/tiket', label: 'Tiket Bantuan', icon: 'message' },
   { to: '/admin/diskusi-mentor', label: 'Diskusi Mentor', icon: 'message' },
   { to: '/admin/rps', label: 'Editor RPS', icon: 'rps' },
   { to: '/admin/sections', label: 'Section & Lesson', icon: 'academy' },
