@@ -382,10 +382,21 @@ export async function enrollInCourse(userId: string, courseId: string): Promise<
   // Defense in depth (migrasi 022): admin tidak boleh mengambil course.
   // Penegakan sebenarnya ada di RLS; ini hanya gagal cepat dengan pesan jelas.
   await assertNotAdmin(userId)
+  // B10 (audit 23 Nov 2026): idempotent — sudah terdaftar dianggap sukses,
+  // bukan error unique-violation mentah ke UI.
+  const existing = await fetchEnrollment(userId, courseId)
+  if (existing) return
   const { error } = await supabase
     .from('enrollments')
-    .insert({ user_id: userId, course_id: courseId })
-  if (error) throw error
+    .upsert({ user_id: userId, course_id: courseId }, { onConflict: 'user_id,course_id' })
+  if (error) {
+    // Balapan dengan tab lain: baris sudah masuk duluan.
+    if (String(error.message ?? '').toLowerCase().includes('duplicate')) {
+      const raced = await fetchEnrollment(userId, courseId)
+      if (raced) return
+    }
+    throw error
+  }
 }
 
 export async function fetchLessonProgress(userId: string): Promise<LessonProgress[]> {
@@ -413,6 +424,9 @@ export async function fetchLessonProgressFor(
 
 /** Mark a lesson as started (in_progress, records started_at when the column exists). */
 export async function markLessonStarted(userId: string, lessonId: string): Promise<void> {
+  // B20 (audit 23 Nov 2026): sama seperti markLessonCompleted — admin
+  // tidak boleh mencatat progres (migrasi 022).
+  await assertNotAdmin(userId)
   const existing = await fetchLessonProgressFor(userId, lessonId)
   if (existing && existing.status !== 'not_started') return
   const row: Record<string, unknown> = {
@@ -460,11 +474,24 @@ export async function markLessonCompleted(userId: string, lessonId: string): Pro
 // Fails gracefully (returns false) when the table does not exist yet.
 // ---------------------------------------------------------------------------
 
+/**
+ * B11 (audit 23 Nov 2026): "sudah bergabung" bukan lagi kegagalan — dicek
+ * dulu lewat fetchWaitlistEntry dan dianggap sukses (true); false hanya
+ * untuk kegagalan nyata. Tanda tangan boolean dipertahankan supaya pemanggil
+ * (CourseDetailPage) tidak berubah.
+ */
 export async function joinWaitlist(userId: string, courseId: string): Promise<boolean> {
+  if (await fetchWaitlistEntry(userId, courseId)) return true
   const { error } = await supabase
     .from('waitlist')
     .insert({ user_id: userId, course_id: courseId })
-  if (error) return false
+  if (error) {
+    // Balapan dengan tab lain: baris sudah masuk duluan.
+    if (String(error.message ?? '').toLowerCase().includes('duplicate')) {
+      if (await fetchWaitlistEntry(userId, courseId)) return true
+    }
+    return false
+  }
   return true
 }
 
@@ -562,41 +589,29 @@ export interface RubricCriterionInput {
  * Simpan rubrik sebuah tugas: satu baris assignment_rubrics per tugas
  * (upsert), lalu ganti seluruh kriterianya (hapus yang lama, masukkan yang
  * baru sesuai urutan). Kriteria berjudul kosong dibuang.
- * Mengembalikan rubrik + kriteria yang tersimpan.
+ * B6 (audit 23 Nov 2026): seluruh simpan berjalan dalam SATU transaksi
+ * lewat RPC save_rubric (migrasi 039) — bila insert kriteria gagal, rubrik
+ * lama tetap utuh. Mengembalikan rubrik + kriteria yang tersimpan.
  */
 export async function saveRubric(
   assignmentId: string,
   title: string,
   criteria: RubricCriterionInput[],
 ): Promise<RubricWithCriteria> {
-  const { data, error } = await supabase
-    .from('assignment_rubrics')
-    .upsert(
-      { assignment_id: assignmentId, title: title.trim() || 'Rubrik Penilaian' },
-      { onConflict: 'assignment_id' },
-    )
-    .select()
-    .single()
-  if (error) throw error
-  const rubric = data as AssignmentRubric
-  const { error: delErr } = await supabase
-    .from('rubric_criteria')
-    .delete()
-    .eq('rubric_id', rubric.id)
-  if (delErr) throw delErr
   const rows = criteria
     .filter((c) => c.title.trim())
     .map((c, i) => ({
-      rubric_id: rubric.id,
       title: c.title.trim(),
       description: c.description?.trim() || null,
       max_score: Math.max(1, Math.round(c.max_score)),
       order_index: i,
     }))
-  if (rows.length > 0) {
-    const { error: insErr } = await supabase.from('rubric_criteria').insert(rows)
-    if (insErr) throw insErr
-  }
+  const { error } = await supabase.rpc('save_rubric', {
+    p_assignment_id: assignmentId,
+    p_title: title.trim() || 'Rubrik Penilaian',
+    p_criteria: rows,
+  })
+  if (error) throw error
   const saved = await fetchRubricForAssignment(assignmentId)
   if (!saved) throw new Error('Rubrik gagal disimpan.')
   return saved
@@ -613,17 +628,51 @@ export async function fetchRubricScores(submissionId: string): Promise<RubricSco
   return (data ?? []) as RubricScore[]
 }
 
-/** Simpan skor per kriteria (upsert per pasangan submission + kriteria). */
+/**
+ * Simpan skor per kriteria (upsert per pasangan submission + kriteria).
+ * B13 (audit 23 Nov 2026): setiap skor divalidasi terhadap kriteria milik
+ * rubrik tugas submission ini — criterion_id harus ada di rubrik itu dan
+ * 0 <= score <= max_score. Penegakan yang sama ada di DB (trigger migrasi
+ * 040); batas atas tidak bisa berupa CHECK karena CHECK tidak boleh membaca
+ * tabel lain.
+ */
 export async function saveRubricScores(
   submissionId: string,
   scores: { criterion_id: string; score: number }[],
 ): Promise<void> {
   if (scores.length === 0) return
+  const { data: subRow, error: subErr } = await supabase
+    .from('submissions')
+    .select('assignment_id')
+    .eq('id', submissionId)
+    .maybeSingle()
+  if (subErr) throw subErr
+  const assignmentId = (subRow as { assignment_id?: string } | null)?.assignment_id
+  if (!assignmentId) throw new Error('Submission tidak ditemukan.')
+  const rubric = await fetchRubricForAssignment(assignmentId)
+  if (!rubric) throw new Error('Tugas ini belum punya rubrik.')
+  const maxByCriterion = new Map(
+    rubric.criteria.map((c) => [c.id, c.max_score]),
+  )
+  for (const s of scores) {
+    const max = maxByCriterion.get(s.criterion_id)
+    if (max === undefined) {
+      throw new Error('Kriteria penilaian tidak ditemukan untuk tugas ini.')
+    }
+    if (
+      typeof s.score !== 'number' ||
+      !Number.isFinite(s.score) ||
+      s.score < 0 ||
+      s.score > max
+    ) {
+      throw new Error(`Skor harus berupa angka 0–${max}.`)
+    }
+  }
   const { error } = await supabase.from('rubric_scores').upsert(
     scores.map((s) => ({
       submission_id: submissionId,
       criterion_id: s.criterion_id,
-      score: s.score,
+      score: Math.round(s.score),
     })),
     { onConflict: 'submission_id,criterion_id' },
   )
@@ -984,7 +1033,12 @@ export async function fetchLiveClasses(courseId: string): Promise<LiveClass[]> {
   return (data ?? []) as LiveClass[]
 }
 
-/** Jadwalkan satu kelas live (mentor course / admin). */
+/**
+ * Jadwalkan satu kelas live (mentor course / admin).
+ * B19 (audit 23 Nov 2026): judul kosong, scheduled_at null/masa lalu, dan
+ * meet_url bukan URL http(s) ditolak di sini — sebelum baris sampah sampai
+ * ke siswa terdaftar.
+ */
 export async function createLiveClass(input: {
   courseId: string
   title: string
@@ -992,13 +1046,37 @@ export async function createLiveClass(input: {
   meetUrl: string | null
   createdBy: string
 }): Promise<LiveClass> {
+  const title = input.title.trim()
+  if (!title) throw new Error('Judul kelas live tidak boleh kosong.')
+  if (!input.scheduledAt) {
+    throw new Error('Jadwal kelas live harus diisi.')
+  }
+  const scheduled = new Date(input.scheduledAt)
+  if (Number.isNaN(scheduled.getTime())) {
+    throw new Error('Jadwal kelas live tidak valid.')
+  }
+  if (scheduled.getTime() <= Date.now()) {
+    throw new Error('Jadwal kelas live harus di masa depan.')
+  }
+  const meetUrl = input.meetUrl?.trim() || null
+  if (meetUrl) {
+    let parsed: URL
+    try {
+      parsed = new URL(meetUrl)
+    } catch {
+      throw new Error('Tautan Meet harus berupa URL yang valid (http:// atau https://).')
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Tautan Meet harus berupa URL http:// atau https://.')
+    }
+  }
   const { data, error } = await supabase
     .from('live_classes')
     .insert({
       course_id: input.courseId,
-      title: input.title,
-      scheduled_at: input.scheduledAt,
-      meet_url: input.meetUrl,
+      title,
+      scheduled_at: scheduled.toISOString(),
+      meet_url: meetUrl,
       created_by: input.createdBy,
     })
     .select('*')
@@ -1217,6 +1295,12 @@ export async function fetchSchoolSubmissions(): Promise<SchoolSubmission[]> {
 
 /**
  * Putuskan pengajuan sekolah (admin).
+ * B3+B4 (audit 23 Nov 2026): seluruh keputusan berjalan dalam SATU
+ * transaksi lewat RPC decide_school_submission (migrasi 038) — guard
+ * status='pending' (admin kedua tidak bisa me-reject yang sudah approved),
+ * kode wilayah dikonversi ke NAMA referensi sebelum pencocokan duplikat
+ * dan insert sekolah baru (schools.regency menyimpan nama, bukan kode),
+ * lalu submission + profil pengaju di-update dalam transaksi yang sama.
  * Setujui: pakai sekolah yang cocok bila sudah ada (NPSN sama, atau nama
  * yang sama di provinsi+kabupaten yang sama), kalau tidak ada buat sekolah
  * baru terverifikasi; tautkan pengajuan + profil pengaju ke sekolah itu.
@@ -1229,86 +1313,15 @@ export async function decideSchoolSubmission(
   note: string,
   adminId: string,
 ): Promise<string | null> {
-  const now = new Date().toISOString()
-  if (decision === 'rejected') {
-    const { error } = await supabase
-      .from('school_submissions')
-      .update({
-        status: 'rejected',
-        decision_note: note.trim() || null,
-        decided_by: adminId,
-        decided_at: now,
-      })
-      .eq('id', submission.id)
-    if (error) throw error
-    return null
-  }
-
-  // Cari sekolah yang cocok dulu — jangan buat duplikat.
-  let schoolId: string | null = null
-  if (submission.npsn) {
-    const { data } = await supabase
-      .from('schools')
-      .select('id')
-      .eq('npsn', submission.npsn)
-      .maybeSingle()
-    schoolId = (data as { id: string } | null)?.id ?? null
-  }
-  if (!schoolId) {
-    const { data } = await supabase
-      .from('schools')
-      .select('id')
-      .ilike('name', submission.name.trim())
-      .eq('province', submission.province)
-      .eq('regency', submission.regency)
-      .maybeSingle()
-    schoolId = (data as { id: string } | null)?.id ?? null
-  }
-  if (!schoolId) {
-    // Nama kabupaten/kota untuk kolom city (teks bebas lama di schools).
-    let city: string | null = null
-    if (submission.regency) {
-      const { data } = await supabase
-        .from('ref_regencies')
-        .select('name')
-        .eq('code', submission.regency)
-        .maybeSingle()
-      city = (data as { name: string } | null)?.name ?? null
-    }
-    const { data, error } = await supabase
-      .from('schools')
-      .insert({
-        name: submission.name.trim(),
-        npsn: submission.npsn || null,
-        province: submission.province,
-        regency: submission.regency,
-        city,
-        is_verified: true,
-        created_by: adminId,
-      })
-      .select('id')
-      .single()
-    if (error) throw error
-    schoolId = (data as { id: string }).id
-    invalidateCatalogCache()
-  }
-  const { error: subErr } = await supabase
-    .from('school_submissions')
-    .update({
-      status: 'approved',
-      school_id: schoolId,
-      decision_note: note.trim() || null,
-      decided_by: adminId,
-      decided_at: now,
-    })
-    .eq('id', submission.id)
-  if (subErr) throw subErr
-  const { error: profErr } = await supabase
-    .from('profiles')
-    .update({ school_id: schoolId })
-    .eq('id', submission.user_id)
-  if (profErr) throw profErr
-  return schoolId
+  const { data, error } = await supabase.rpc('decide_school_submission', {
+    p_submission_id: submission.id,
+    p_decision: decision,
+    p_note: note.trim() || null,
+    p_admin_id: adminId,
+  })
+  if (error) throw error
+  invalidateCatalogCache()
+  return (data as string | null) ?? null
 }
 
 /** Semua lamaran mentor (admin; semua status, terbaru dulu). */
@@ -1328,11 +1341,14 @@ export async function fetchMentorApplications(): Promise<MentorApplication[]> {
  * Putuskan lamaran mentor (admin): Setujui / Tolak / Minta Revisi.
  * Alasan/catatan wajib diisi pemanggil untuk tolak/revisi. Persetujuan
  * mengaktifkan peran mentor lewat trigger database (008) — client tidak
- * pernah mengubah profiles.role sendiri. Persetujuan juga menyalin
- * afiliasi lamaran (migrasi 033) ke profiles.school pelamar bila terisi,
- * supaya tampil di direktori mentor dan profilnya; penyalinan ini
- * best-effort (status lamaran sudah tersimpan — kegagalannya tidak
- * membatalkan persetujuan).
+ * pernah mengubah profiles.role sendiri.
+ * B2 (audit 23 Nov 2026): update dikunci ke status='pending' — lamaran yang
+ * sudah diputuskan tidak bisa diputuskan ulang (menolak mentor yang sudah
+ * disetujui tidak lagi lolos diam-diam); bila tidak ada baris yang berubah,
+ * status sebenarnya dibaca dan dilaporkan.
+ * B15 (audit 23 Nov 2026): penyalinan afiliasi lamaran ke profiles.school
+ * kini dilakukan trigger DB yang sama (migrasi 044, dalam transaksi
+ * approval) — bukan lagi best-effort client-side di sini.
  */
 export async function decideMentorApplication(
   app: MentorApplication,
@@ -1340,7 +1356,7 @@ export async function decideMentorApplication(
   note: string,
   adminId: string,
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('mentor_applications')
     .update({
       status: decision,
@@ -1349,16 +1365,21 @@ export async function decideMentorApplication(
       decided_at: new Date().toISOString(),
     })
     .eq('id', app.id)
+    .eq('status', 'pending')
+    .select('id')
   if (error) throw error
-  if (decision === 'approved' && app.affiliation?.trim()) {
-    // profiles_admin_all mengizinkan admin mengubah profil pelamar;
-    // ini hanya menyentuh kolom school (bukan role — guard 008 tidak
-    // terpicu karena role tidak berubah).
-    const { error: profErr } = await supabase
-      .from('profiles')
-      .update({ school: app.affiliation.trim() })
-      .eq('id', app.user_id)
-    if (profErr) console.warn('Gagal menyalin afiliasi mentor ke profil:', profErr.message)
+  if (!data || data.length === 0) {
+    const { data: current } = await supabase
+      .from('mentor_applications')
+      .select('status')
+      .eq('id', app.id)
+      .maybeSingle()
+    const status = (current as { status?: string } | null)?.status
+    throw new Error(
+      status
+        ? `Lamaran ini sudah diputuskan (${status}) dan tidak dapat diputuskan ulang.`
+        : 'Lamaran tidak ditemukan.',
+    )
   }
 }
 

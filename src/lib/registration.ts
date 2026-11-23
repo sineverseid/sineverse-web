@@ -71,8 +71,14 @@ export function savePendingRegistration(payload: RegistrationPayload): void {
   try {
     localStorage.setItem(keyFor(payload.email), JSON.stringify(payload))
   } catch {
-    // localStorage penuh (foto besar) — foto sudah diperkecil sebelum
-    // sampai ke sini; pengguna bisa melengkapi profil nanti.
+    // B16 (audit 23 Nov 2026): kegagalan penyimpanan TIDAK lagi ditelan —
+    // bila payload tidak tersimpan, penyelesaian setelah verifikasi tidak
+    // akan menemukan apa pun dan pendaftaran selesai tanpa pesan. Lempar
+    // supaya pemanggil (RegisterPage) menampilkan error dan pengguna bisa
+    // mencoba lagi (mis. tanpa foto besar) — jangan lanjut seolah sukses.
+    throw new Error(
+      'Data pendaftaran tidak dapat disimpan di perangkat ini (penyimpanan penuh atau diblokir). Coba lagi tanpa foto profil, atau kosongkan ruang penyimpanan browser.',
+    )
   }
 }
 

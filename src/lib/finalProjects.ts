@@ -272,10 +272,56 @@ export async function createFinalProject(input: {
   return data as FinalProject
 }
 
+/**
+ * B1 (audit 23 Nov 2026): transisi ke 'published'/'approved' hanya boleh
+ * dilakukan mentor pendamping proyek atau admin, dan hanya dari status
+ * sebelumnya yang wajar (approved hanya dari submitted/under_review/
+ * revision; published hanya dari approved — publikasi Showcase sendiri
+ * lewat RPC publish_final_project, bukan fungsi ini). RLS
+ * final_projects_update_member_mentor memang mengizinkan member update,
+ * jadi gate ini adalah penegakan di aplikasi; transisi lain (draft,
+ * in_progress, submitted, dst.) tetap seperti sebelumnya.
+ */
 export async function updateProjectStatus(
   projectId: string,
   status: FinalProjectStatus,
 ): Promise<void> {
+  if (status === 'published' || status === 'approved') {
+    const project = await fetchFinalProject(projectId)
+    if (!project) {
+      throw new Error('Proyek tidak ditemukan atau tidak dapat diakses.')
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      throw new Error('Kamu harus masuk untuk mengubah status proyek.')
+    }
+    const isMentor = project.mentor_id !== null && project.mentor_id === user.id
+    let isAdmin = false
+    if (!isMentor) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle()
+      isAdmin = (profile as { role?: string } | null)?.role === 'admin'
+    }
+    if (!isMentor && !isAdmin) {
+      throw new Error(
+        'Hanya mentor pendamping atau admin yang dapat menyetujui atau mempublikasikan proyek.',
+      )
+    }
+    const allowedFrom: Record<'approved' | 'published', FinalProjectStatus[]> = {
+      approved: ['submitted', 'under_review', 'revision'],
+      published: ['approved'],
+    }
+    if (!allowedFrom[status].includes(project.status)) {
+      throw new Error(
+        `Proyek berstatus "${FINAL_PROJECT_STATUS_LABEL[project.status]}" tidak dapat diubah menjadi "${FINAL_PROJECT_STATUS_LABEL[status]}".`,
+      )
+    }
+  }
   const { error } = await supabase
     .from('final_projects')
     .update({ status, updated_at: new Date().toISOString() })
@@ -310,9 +356,12 @@ export async function addProjectMember(
   userId: string,
   role: string | null,
 ): Promise<FinalProjectMember> {
+  // B12 (audit 23 Nov 2026): upsert per unique(project_id, user_id)
+  // (migrasi 016) — anggota yang sudah ada dikembalikan tanpa error
+  // unique-violation mentah ke UI.
   const { data, error } = await supabase
     .from('final_project_members')
-    .insert({ project_id: projectId, user_id: userId, role: role?.trim() || null })
+    .upsert({ project_id: projectId, user_id: userId, role: role?.trim() || null }, { onConflict: 'project_id,user_id' })
     .select()
     .single()
   if (error) throw error
@@ -417,20 +466,63 @@ export async function deleteProjectFile(fileId: string): Promise<void> {
   if (error) throw error
 }
 
+/**
+ * B14 (audit 23 Nov 2026): skor harus angka 0–100 (CHECK yang sama sudah
+ * ada di DB sejak migrasi 016); hanya mentor pendamping proyek — atau admin,
+ * sesuai kebijakan RLS final_project_reviews_insert_mentor — yang boleh
+ * me-review, dan reviewer harus akun yang sedang masuk; satu review per
+ * (project_id, reviewer_id) via upsert (unique index migrasi 041; kebijakan
+ * update mentor di migrasi 042 *_rls.sql). Skor pecahan dibulatkan karena
+ * kolom score bertipe int.
+ */
 export async function addProjectReview(input: {
   projectId: string
   reviewerId: string
   score: number | null
   feedback: string | null
 }): Promise<FinalProjectReview> {
+  if (input.score !== null && input.score !== undefined) {
+    if (
+      typeof input.score !== 'number' ||
+      !Number.isFinite(input.score) ||
+      input.score < 0 ||
+      input.score > 100
+    ) {
+      throw new Error('Skor harus berupa angka 0–100.')
+    }
+  }
+  const project = await fetchFinalProject(input.projectId)
+  if (!project) {
+    throw new Error('Proyek tidak ditemukan atau tidak dapat diakses.')
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user || user.id !== input.reviewerId) {
+    throw new Error('Penilaian hanya dapat dikirim oleh akun yang sedang masuk.')
+  }
+  const isMentor = project.mentor_id !== null && project.mentor_id === input.reviewerId
+  if (!isMentor) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', input.reviewerId)
+      .maybeSingle()
+    if ((profile as { role?: string } | null)?.role !== 'admin') {
+      throw new Error('Hanya mentor pendamping proyek (atau admin) yang dapat memberi penilaian.')
+    }
+  }
   const { data, error } = await supabase
     .from('final_project_reviews')
-    .insert({
-      project_id: input.projectId,
-      reviewer_id: input.reviewerId,
-      score: input.score,
-      feedback: input.feedback?.trim() || null,
-    })
+    .upsert(
+      {
+        project_id: input.projectId,
+        reviewer_id: input.reviewerId,
+        score: input.score === null || input.score === undefined ? null : Math.round(input.score),
+        feedback: input.feedback?.trim() || null,
+      },
+      { onConflict: 'project_id,reviewer_id' },
+    )
     .select()
     .single()
   if (error) throw error

@@ -3,23 +3,30 @@
 // Those migrations are written but NOT applied live yet (only 001–002 +
 // 12 tables exist in Supabase). A query against a missing table must never
 // crash the page: detect it, and show the honest empty state instead.
-// PostgREST reports a missing table as code PGRST205 ("Could not find the
-// table … in the schema cache") or Postgres 42P01; an RPC that does not
-// exist yet reports PGRST202 / 42883. All are treated as "missing".
+//
+// B9 (audit 23 Nov 2026): deteksi ini DULU terlalu lebar —
+// `text.includes('does not exist')` juga cocok dengan "column X does not
+// exist", "function does not exist", "bucket does not exist", dan
+// 'schema cache' menelan error cache lain. Sekarang hanya pola spesifik:
+// PostgREST PGRST205 ("Could not find the table … in the schema cache"),
+// Postgres 42P01 (undefined_table) / 42883 (undefined_function), pesan
+// "could not find the table", dan `relation "…" does not exist`.
+// Sengaja TIDAK lagi mencakup PGRST202 / "could not find the function":
+// pemanggil yang memang butuh toleransi RPC belum ada (QuizPage,
+// ExamsPage) sudah memeriksa PGRST202 sendiri di call-site; pemanggil
+// lain (fetchQuizQuestions, sendNotification, checkUsernameAvailable)
+// kini melempar bila RPC-nya belum diterapkan, bukan diam-diam
+// mengembalikan null/true — itu perilaku yang diinginkan B9, dan migrasi
+// terkait sudah live.
 
 export function isMissingTableError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { code?: string; message?: string; details?: string }
   const code = String(e.code ?? '')
-  if (code === 'PGRST205' || code === 'PGRST202' || code === '42P01' || code === '42883') return true
+  if (code === 'PGRST205' || code === '42P01' || code === '42883') return true
   const text = `${e.message ?? ''} ${e.details ?? ''}`.toLowerCase()
-  return (
-    text.includes('could not find the table') ||
-    text.includes('does not exist') ||
-    text.includes('relation') && text.includes('does not exist') ||
-    text.includes('could not find the function') ||
-    text.includes('schema cache')
-  )
+  if (text.includes('could not find the table')) return true
+  return /relation\s+"[^"]+"\s+does not exist/.test(text)
 }
 
 /** Honest message used by every 003–008 feature while its table is absent. */
