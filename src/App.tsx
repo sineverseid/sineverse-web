@@ -50,6 +50,7 @@ const FinalProjectsPage = lazy(() => import('./pages/FinalProjectsPage'))
 const GradebookPage = lazy(() => import('./pages/GradebookPage'))
 const GradingQueuePage = lazy(() => import('./pages/GradingQueuePage'))
 const GrowthPage = lazy(() => import('./pages/GrowthPage'))
+const HelpCenterPage = lazy(() => import('./pages/HelpCenterPage'))
 const IssueCourseCertificatePage = lazy(() => import('./pages/IssueCourseCertificatePage'))
 const LessonDetailPage = lazy(() => import('./pages/LessonDetailPage'))
 const LibraryDetailPage = lazy(() => import('./pages/LibraryPage').then((m) => ({ default: m.LibraryDetailPage })))
@@ -114,6 +115,8 @@ export default function App() {
             <Route path="tentang" element={<AboutPage section="tentang" />} />
             <Route path="privasi" element={<AboutPage section="privasi" />} />
             <Route path="syarat" element={<AboutPage section="syarat" />} />
+            {/* Pusat Bantuan / SINEBOT (Tahap 2) — publik, bukan Protected. */}
+            <Route path="bantuan" element={<HelpCenterPage />} />
             {/* Halaman perkenalan fitur (publik) — tepat di atas rute fitur. */}
             <Route path="akademi/perkenalan" element={<IntroAcademyPage />} />
             <Route path="akademi" element={<AkademiPage />} />
