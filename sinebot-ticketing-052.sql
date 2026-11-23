@@ -810,8 +810,8 @@ begin
 end;
 $$;
 comment on function public.admin_set_ticket_priority(uuid, text) is 'Admin-only ticket priority change. Closed tickets reject. Logs sinebot_ticket_priority_changed with old/new priority and notifies the owner (sinebot_ticket_update).';
-revoke execute on function public.admin_set_ticket_priority(uuid, uuid) from public, anon;
-grant execute on function public.admin_set_ticket_priority(uuid, uuid) to authenticated;
+revoke execute on function public.admin_set_ticket_priority(uuid, text) from public, anon;
+grant execute on function public.admin_set_ticket_priority(uuid, text) to authenticated;
 
 -- Daftar semua admin (untuk dropdown assign di panel admin). Guard is_admin().
 -- name = coalesce(profiles.name, 'Admin') — profiles TIDAK punya kolom
