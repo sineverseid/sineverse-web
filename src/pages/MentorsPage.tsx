@@ -5,7 +5,6 @@
 // (tanpa email, telepon, atau alamat).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
 import { fetchCourses, supabase } from '../lib/supabase'
 import type { Course, OfficeHour, Profile } from '../lib/types'
 import Icon from '../components/icons'
@@ -19,7 +18,6 @@ interface MentorRow {
 }
 
 export default function MentorsPage() {
-  const { user, profile } = useAuth()
   const [rows, setRows] = useState<MentorRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -141,15 +139,6 @@ export default function MentorsPage() {
       />
       {loading && <p className="muted">Memuat mentor…</p>}
       {error && <p className="error-box">{error}</p>}
-      {/* Jalan masuk lamaran mentor (migrasi 027): siswa yang sudah login
-          mendaftar lewat halaman Mentor Workspace (#/mentor). */}
-      {user && profile?.role === 'siswa' && (
-        <p>
-          <Link to="/mentor" className="btn btn-primary">
-            Gabung sebagai Mentor
-          </Link>
-        </p>
-      )}
       {!loading && !error && rows !== null && rows.length === 0 && (
         <EmptyState
           message={
