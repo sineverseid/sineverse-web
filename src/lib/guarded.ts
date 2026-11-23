@@ -48,6 +48,13 @@ export function fmtDateOnly(value: string | null | undefined): string {
   return d.toLocaleDateString('id-ID', { dateStyle: 'medium' })
 }
 
+/** Ukuran file: di bawah 1 KB tampil sebagai byte ("140 B"), bukan "0 KB". */
+export function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 /** Serial helpers — SVS-CRS / SVS-EXM / SVS-KRY + year + zero-padded sequence. */
 export function nextSerial(prefix: 'SVS-CRS' | 'SVS-EXM' | 'SVS-KRY', existingCount: number): string {
   const year = new Date().getFullYear()
