@@ -18,7 +18,9 @@ import type { SinebotQuality } from '../lib/sinebotAdmin'
 
 function formatPct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return 'Belum ada data'
-  return `${Math.round(value * 100) / 100}%`
+  // RPC mengembalikan fraksi (0.8 = 80%); bila sudah persen (>1) dipakai apa adanya.
+  const pct = value > 1 ? value : value * 100
+  return `${Math.round(pct)}%`
 }
 
 export default function AdminSinebotQualityTab() {

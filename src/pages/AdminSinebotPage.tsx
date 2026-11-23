@@ -417,7 +417,10 @@ function ConversationsTab() {
           </button>
           <h3>{selected.title || 'Percakapan baru'}</h3>
           <p className="muted">
-            {ownerLabel(selected)} · {roleLabel(selected.role_context)} · {conversationStatusLabel(selected.status)} ·{' '}
+            {ownerLabel(selected)}
+            {roleLabel(selected.role_context) !== ownerLabel(selected) ? ` · ${roleLabel(selected.role_context)}` : ''}
+            {' · '}
+            {conversationStatusLabel(selected.status)} ·{' '}
             {fmtDate(selected.created_at)}
           </p>
           {messagesLoading ? (

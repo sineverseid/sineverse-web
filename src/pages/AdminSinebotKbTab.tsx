@@ -279,6 +279,7 @@ function KbSection({ kind, busyKey, setBusyKey }: KbSectionProps) {
           : `${title} tersimpan.`,
       )
       await loadList()
+      await refreshHistoryIfOpen(savedId)
     } catch (err) {
       // Termasuk error validasi client-side dari lib (judul/isi kosong,
       // audience kosong) — tampil inline, tanpa menembak RPC.
@@ -297,10 +298,26 @@ function KbSection({ kind, busyKey, setBusyKey }: KbSectionProps) {
       await setKbStatus(kind, id, next)
       setNotice(`Status diubah menjadi "${kbStatusLabel(next)}".`)
       await loadList()
+      await refreshHistoryIfOpen(id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Status gagal diubah. Coba lagi.')
     } finally {
       setBusyKey(null)
+    }
+  }
+
+  // Muat ulang riwayat bila panel riwayat baris ini sedang terbuka
+  // (dipakai setelah simpan/ubah status supaya tidak basi sampai reload).
+  async function refreshHistoryIfOpen(id: string) {
+    if (historyId !== id) return
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      setHistory(await listKbHistory(kind, id, 10))
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Riwayat tidak bisa dimuat.')
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
