@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext'
 import Icon from './icons'
 import {
   SinebotError,
+  createConversation,
   deleteConversation,
   getMessages,
   listConversations,
@@ -20,7 +21,7 @@ import {
   sinebotAdminMailto,
   submitFeedback,
 } from '../lib/sinebot'
-import type { SinebotConversation, SinebotSource } from '../lib/sinebot'
+import type { SinebotConversation, SinebotRole, SinebotSource } from '../lib/sinebot'
 
 const QUICK_PROMPTS = [
   'Cara ikut kelas',
@@ -48,7 +49,7 @@ function localId(prefix: string): string {
 }
 
 export default function SinebotChat({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [view, setView] = useState<'chat' | 'history'>('chat')
   const [conversations, setConversations] = useState<SinebotConversation[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -193,7 +194,22 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
     }
     setMessages((prev) => [...prev, userMsg])
     try {
-      const reply = await sendMessage(user ? activeId : null, question)
+      // Pengguna login TANPA percakapan aktif (mis. riwayat kosong) harus
+      // dibuatkan percakapannya dulu: Edge Function menolak conversation_id
+      // null untuk pengguna login (400). Sebelum perbaikan ini, pesan
+      // pertama pengguna login selalu gagal dengan error generik (temuan
+      // verifikasi live Tahap 2, 23 Nov 2026). Tamu tetap memakai null —
+      // percakapannya dibuat oleh Edge Function.
+      let convId = activeId
+      if (user && !convId) {
+        const created = await createConversation(
+          (profile?.role as SinebotRole | undefined) ?? 'siswa',
+          question.slice(0, 60),
+        )
+        convId = created.id
+        setActiveId(created.id)
+      }
+      const reply = await sendMessage(user ? convId : null, question)
       if (user && reply.conversation_id) {
         // Ambil ulang pesan tersimpan supaya jawaban AI punya id asli
         // (dibutuhkan tombol feedback) dan riwayat ikut terbarui. Bila
