@@ -11,7 +11,7 @@ import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
-import { fmtDate, fmtDateOnly } from '../lib/guarded'
+import { fmtDate, fmtDateOnly, fmtSize } from '../lib/guarded'
 import {
   FILE_KIND_LABEL,
   FINAL_PROJECT_STEPS,
@@ -729,7 +729,7 @@ export default function FinalProjectDetailPage() {
                     {' · '}{FILE_KIND_LABEL[f.kind]}
                     {' · '}{nameOf(f.uploaded_by)}
                     {' · '}{fmtDate(f.uploaded_at)}
-                    {f.file_size ? ` · ${(f.file_size / 1024).toFixed(0)} KB` : ''}
+                    {f.file_size ? ` · ${fmtSize(f.file_size)}` : ''}
                     {canEdit ? (
                       <>
                         {' '}

@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fmtDate } from '../lib/guarded'
+import { fmtDate, fmtSize } from '../lib/guarded'
 import { fetchCourses, fetchRubricForAssignment, fetchRubricScores, fetchSubmissionFiles, saveRubricScores, sendNotification, supabase } from '../lib/supabase'
 import type { Assignment, Course, RubricWithCriteria, Submission, SubmissionFile } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -473,7 +473,7 @@ export default function GradingQueuePage() {
               >
                 {f.file_name}
               </a>
-              {f.file_size !== null ? ` (${Math.round(f.file_size / 1024)} KB)` : ''}
+              {f.file_size !== null ? ` (${fmtSize(f.file_size)})` : ''}
             </li>
           ))}
         </ul>

@@ -7,18 +7,12 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fmtDate } from '../lib/guarded'
+import { fmtDate, fmtSize } from '../lib/guarded'
 import { fetchEnrollment, fetchSubmissions, supabase, uploadToBucket, addSubmissionFiles, fetchRubricForAssignment, fetchSubmissionFiles } from '../lib/supabase'
 import type { Assignment, RubricWithCriteria, Submission, SubmissionFile } from '../lib/types'
 
 type AssignmentRow = Assignment & { due_date?: string | null; rubric?: string | null }
 type SubmissionRow = Submission & { is_draft?: boolean | null; version?: number | null; is_late?: boolean | null }
-
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 export default function AssignmentPage() {
   const { id } = useParams<{ id: string }>()
