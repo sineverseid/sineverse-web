@@ -1,4 +1,4 @@
-// SINEVERSE, Halaman lesson: strip WATCH → READ → CHECK → DO,
+// SINEVERSE, Halaman lesson: strip Tonton → Baca → Cek → Kerjakan,
 // embed video (YouTube/Vimeo) atau kartu tautan eksternal, navigasi
 // prev/next, "Tandai Selesai", dan diskusi lesson (baca + kirim, balasan
 // bersarang via parent_id).
@@ -699,10 +699,11 @@ export default function LessonDetailPage() {
       </p>
 
       <ol className="flow-strip" aria-label="Alur belajar">
-        <li className={watchDone ? 'flow-done' : ''} title="Tonton">WATCH</li>
-        <li className={readDone ? 'flow-done' : ''} title="Baca">READ</li>
-        <li className={checkDone ? 'flow-done' : ''} title="Cek Pemahaman">CHECK</li>
-        <li className={doDone ? 'flow-done' : ''} title="Kerjakan">DO</li>
+        {/* LC6: label langkah berbahasa Indonesia. */}
+        <li className={watchDone ? 'flow-done' : ''} title="Tonton">Tonton</li>
+        <li className={readDone ? 'flow-done' : ''} title="Baca">Baca</li>
+        <li className={checkDone ? 'flow-done' : ''} title="Cek Pemahaman">Cek</li>
+        <li className={doDone ? 'flow-done' : ''} title="Kerjakan">Kerjakan</li>
       </ol>
 
       <section className="section" aria-label="Pretest">
@@ -820,7 +821,7 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Cek pemahaman">
-        <h2>CHECK, Kuis</h2>
+        <h2>Cek, Kuis</h2>
         {quizError ? (
           <p className="error-box">{quizError}</p>
         ) : plainQuizzes.length === 0 ? (
@@ -831,7 +832,7 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Tugas">
-        <h2>DO, Tugas</h2>
+        <h2>Kerjakan, Tugas</h2>
         {assignError ? (
           <p className="error-box">{assignError}</p>
         ) : assignments.length === 0 ? (
@@ -877,13 +878,15 @@ export default function LessonDetailPage() {
         </section>
       )}
 
+      {/* P36: tombol nav berbagi lebar secara fleksibel — sebelumnya
+          masing-masing maxWidth 45vw + gap bisa overflow layar sempit. */}
       <nav className="lesson-nav" aria-label="Navigasi lesson">
         {prev ? (
           <Link
             to={`/lesson/${prev.id}`}
             className="btn btn-secondary lesson-nav-title"
             title={prev.title}
-            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '45vw', minWidth: 0 }}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 0', minWidth: 0 }}
           >
             ← {prev.title}
           </Link>
@@ -895,7 +898,7 @@ export default function LessonDetailPage() {
             to={`/lesson/${next.id}`}
             className="btn btn-secondary lesson-nav-title"
             title={next.title}
-            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '45vw', minWidth: 0 }}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 0', minWidth: 0 }}
           >
             {next.title} →
           </Link>
@@ -940,7 +943,9 @@ export default function LessonDetailPage() {
                 </p>
                 <p>{d.body}</p>
                 <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
-                  {user && (
+                  {/* P27: admin mode pantau tidak ikut "Bermanfaat"/"Laporkan" —
+                      sama seperti form balas/kirim yang disembunyikan untuk admin. */}
+                  {user && !isAdmin && (
                     <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(d.id)}>
                       Bermanfaat ({helpfulCounts[d.id] ?? 0})
                     </button>
@@ -963,13 +968,13 @@ export default function LessonDetailPage() {
                       Tandai Selesai
                     </button>
                   )}
-                  {user && reportingId !== d.id && (
+                  {user && !isAdmin && reportingId !== d.id && (
                     <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(d.id)}>
                       Laporkan
                     </button>
                   )}
                 </div>
-                {user && reportingId === d.id && reportForm(d.id)}
+                {user && !isAdmin && reportingId === d.id && reportForm(d.id)}
                 <ul className="discussion-replies">
                   {replies(d.id).map((r) => (
                     <li key={r.id}>
@@ -981,7 +986,7 @@ export default function LessonDetailPage() {
                       </p>
                       <p>{r.body}</p>
                       <div className="form-actions">
-                        {user && (
+                        {user && !isAdmin && (
                           <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
                             Bermanfaat ({helpfulCounts[r.id] ?? 0})
                           </button>
@@ -1004,13 +1009,13 @@ export default function LessonDetailPage() {
                             Terima sebagai Jawaban
                           </button>
                         )}
-                        {user && reportingId !== r.id && (
+                        {user && !isAdmin && reportingId !== r.id && (
                           <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
                             Laporkan
                           </button>
                         )}
                       </div>
-                      {user && reportingId === r.id && reportForm(r.id)}
+                      {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
                     </li>
                   ))}
                 </ul>

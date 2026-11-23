@@ -70,6 +70,8 @@ export default function MentorPage() {
   const [myApplication, setMyApplication] = useState<MentorApplication | null>(null)
   const [applying, setApplying] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  // P25: guard pengiriman klaim — tanpa ini klik ganda menyisipkan klaim duplikat.
+  const [claimBusy, setClaimBusy] = useState(false)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
   const isAdmin = profile?.role === 'admin'
@@ -179,40 +181,47 @@ export default function MentorPage() {
   }, [user, profile?.role])
 
   async function handleClaim(courseId: string) {
-    if (!user) return
+    if (!user || claimBusy) return
     // K2: guard mentor-only — admin memantau saja, tidak mengklaim course.
     if (profile?.role !== 'mentor') {
       setNotice('Hanya mentor yang bisa mengajukan untuk mengampu course. Admin memantau lewat halaman ini.')
       return
     }
-    // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
-    // sama dikembalikan ke 'pending', bukan insert duplikat.
-    const existing = claims.find((cl) => cl.course_id === courseId)
-    if (existing?.status === 'rejected') {
-      const { error: updErr } = await supabase.from('course_claims')
-        .update({ status: 'pending' })
-        .eq('id', existing.id)
-      if (updErr) {
-        setNotice('Gagal mengirim ulang pengajuan. Coba lagi sebentar lagi.')
-        return
+    setClaimBusy(true)
+    try {
+      // Klaim yang ditolak boleh diajukan ulang (migrasi 022): baris yang
+      // sama dikembalikan ke 'pending', bukan insert duplikat.
+      const existing = claims.find((cl) => cl.course_id === courseId)
+      if (existing?.status === 'rejected') {
+        // P24: pengajuan ulang membersihkan decision_note — kalau tidak,
+        // badge "Menunggu" yang baru tetap menampilkan alasan penolakan lama.
+        const { error: updErr } = await supabase.from('course_claims')
+          .update({ status: 'pending', decision_note: null })
+          .eq('id', existing.id)
+        if (updErr) {
+          setNotice('Gagal mengirim ulang pengajuan. Coba lagi sebentar lagi.')
+          return
+        }
+        setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
+      } else {
+        const { error: insErr } = await supabase.from('course_claims').insert({
+          course_id: courseId,
+          mentor_id: user.id,
+          status: 'pending',
+        })
+        if (insErr) {
+          setNotice(/duplicate|unique|23505/i.test(insErr.message)
+            ? 'Pengajuan kamu masih menunggu persetujuan.'
+            : 'Gagal mengirim pengajuan. Coba lagi sebentar lagi.')
+          return
+        }
+        setNotice('Pengajuan mengampu terkirim. Setelah disetujui admin, kamu otomatis menjadi mentor course itu.')
       }
-      setNotice('Pengajuan mengampu dikirim ulang. Admin akan meninjau kembali.')
-    } else {
-      const { error: insErr } = await supabase.from('course_claims').insert({
-        course_id: courseId,
-        mentor_id: user.id,
-        status: 'pending',
-      })
-      if (insErr) {
-        setNotice(/duplicate|unique|23505/i.test(insErr.message)
-          ? 'Pengajuan kamu masih menunggu persetujuan.'
-          : 'Gagal mengirim pengajuan. Coba lagi sebentar lagi.')
-        return
-      }
-      setNotice('Pengajuan mengampu terkirim. Setelah disetujui admin, kamu otomatis menjadi mentor course itu.')
+      const { data } = await supabase.from('course_claims').select('*').eq('mentor_id', user.id).order('created_at', { ascending: false })
+      setClaims((data ?? []) as CourseClaim[])
+    } finally {
+      setClaimBusy(false)
     }
-    const { data } = await supabase.from('course_claims').select('*').eq('mentor_id', user.id).order('created_at', { ascending: false })
-    setClaims((data ?? []) as CourseClaim[])
   }
 
   async function handleApply(values: MentorApplicationInput) {
@@ -234,6 +243,8 @@ export default function MentorPage() {
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
   const courseById = new Map(allCourses.map((c) => [c.id, c]))
+  // LC1: hanya pengajuan berstatus menunggu yang dihitung di label tab.
+  const pendingClaims = claims.filter((cl) => cl.status === 'pending').length
 
   return (
     <div className="page">
@@ -322,7 +333,9 @@ export default function MentorPage() {
                 Diampu ({rows.length})
               </button>
               <button type="button" className={`pill-tab${tab === 'pengajuan' ? ' active' : ''}`} onClick={() => setTab('pengajuan')}>
-                Pengajuan ({claims.length})
+                {/* LC1: angka tab hanya menghitung pengajuan yang benar-benar
+                    menunggu — lamaran yang sudah disetujui bukan "pengajuan". */}
+                Pengajuan{pendingClaims > 0 ? ` (${pendingClaims})` : ''}
               </button>
             </div>
             {tab === 'diampu' && (
@@ -375,15 +388,18 @@ export default function MentorPage() {
                             <h3>{course?.title ?? 'Course'}</h3>
                             <p>
                               Diajukan {fmtDate(cl.created_at)}
-                              {cl.decision_note ? ` • ${cl.decision_note}` : ''}
+                              {/* P24: alasan penolakan hanya relevan selama statusnya
+                                  ditolak — pengajuan yang sudah dikirim ulang
+                                  (pending) tidak membawa alasan lama. */}
+                              {cl.status === 'rejected' && cl.decision_note ? ` • ${cl.decision_note}` : ''}
                             </p>
                             <p>
                               <span className={claimBadgeClass(cl.status)}>{claimLabel(cl.status)}</span>
                               {cl.status === 'rejected' && (
                                 <>
                                   {' '}
-                                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(cl.course_id)}>
-                                    Ajukan Lagi
+                                  <button type="button" className="btn btn-ghost btn-small" disabled={claimBusy} onClick={() => void handleClaim(cl.course_id)}>
+                                    {claimBusy ? 'Mengirim…' : 'Ajukan Lagi'}
                                   </button>
                                 </>
                               )}
@@ -407,7 +423,9 @@ export default function MentorPage() {
               <Link to="/mentor/rubrik" className="btn btn-secondary">Rubrik</Link>
               <Link to="/mentor/pengumuman" className="btn btn-secondary">Pengumuman</Link>
               <Link to="/jam-kantor" className="btn btn-secondary">Office Hours</Link>
-              <Link to="/rps" className="btn btn-ghost">Lihat RPS (read-only)</Link>
+              {/* LC1: samakan gaya — sebelumnya btn-ghost (outline terang) di
+                  antara tombol navy gelap. */}
+              <Link to="/rps" className="btn btn-secondary">Lihat RPS (read-only)</Link>
             </div>
           </section>
 
@@ -430,16 +448,16 @@ export default function MentorPage() {
                         claim.status === 'rejected' ? (
                           <span>
                             <span className="muted">Pengajuan: Ditolak{claim.decision_note ? `: ${claim.decision_note}` : ''}</span>{' '}
-                            <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>
-                              Ajukan Lagi
+                            <button type="button" className="btn btn-ghost btn-small" disabled={claimBusy} onClick={() => void handleClaim(c.id)}>
+                              {claimBusy ? 'Mengirim…' : 'Ajukan Lagi'}
                             </button>
                           </span>
                         ) : (
                           <span className="chip">{claim.status === 'approved' ? 'Disetujui' : 'Menunggu persetujuan'}</span>
                         )
                       ) : (
-                        <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleClaim(c.id)}>
-                          Ajukan
+                        <button type="button" className="btn btn-ghost btn-small" disabled={claimBusy} onClick={() => void handleClaim(c.id)}>
+                          {claimBusy ? 'Mengirim…' : 'Ajukan'}
                         </button>
                       )}
                     </li>

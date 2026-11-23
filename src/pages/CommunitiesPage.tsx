@@ -243,6 +243,8 @@ export default function CommunitiesPage() {
   const [myRoles, setMyRoles] = useState<Map<string, string>>(new Map())
   // Mentor: community yang sedang mencari pembimbing (011).
   const [seeking, setSeeking] = useState<Community[]>([])
+  // P44: kegagalan memuat daftar seeking ditampilkan sebagai error, bukan daftar kosong.
+  const [seekingError, setSeekingError] = useState<string | null>(null)
   const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map())
   const [proposals, setProposals] = useState<CommunityProposal[]>([])
   const [proposalNames, setProposalNames] = useState<Map<string, string>>(new Map())
@@ -422,11 +424,16 @@ export default function CommunitiesPage() {
       ])
       // Mentor: community yang sedang mencari pembimbing (011) dan belum
       // diikuti mentor ini. Bila kolom seeking_mentor belum ada (migrasi
-      // 011 belum diterapkan), query gagal, tampilkan daftar kosong,
-      // bukan crash.
+      // 011 belum diterapkan), query gagal — tampilkan pesan error, bukan
+      // daftar kosong yang menyamarkan kegagalan (P44).
       if (isMentor) {
-        if (seekRes.error) setSeeking([])
-        else setSeeking(((seekRes.data ?? []) as Community[]).filter((c) => !mineSet.has(c.id)))
+        if (seekRes.error) {
+          setSeeking([])
+          setSeekingError('Daftar komunitas yang mencari pembimbing gagal dimuat. Coba muat ulang halaman ini.')
+        } else {
+          setSeeking(((seekRes.data ?? []) as Community[]).filter((c) => !mineSet.has(c.id)))
+          setSeekingError(null)
+        }
       } else {
         setSeeking([])
       }
@@ -950,7 +957,9 @@ export default function CommunitiesPage() {
             Komunitas yang sedang membutuhkan pembimbing. Jadi pembimbing berarti kamu membimbing
             diskusi dan karya anggota komunitas itu.
           </p>
-          {seeking.length === 0 ? (
+          {seekingError ? (
+            <p className="error-box">{seekingError}</p>
+          ) : seeking.length === 0 ? (
             <p className="empty">Tidak ada komunitas yang sedang mencari pembimbing saat ini.</p>
           ) : (
             <ul className="course-list">

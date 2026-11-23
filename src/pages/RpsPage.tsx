@@ -115,8 +115,8 @@ export default function RpsPage() {
       {rps?.description && <p>{rps.description}</p>}
       {!rps && (
         <p className="notice-box">
-          Baris RPS {BRAND.rpsCode} belum tersedia di database Supabase. Tampilan 20 minggu di
-          bawah disusun otomatis dari 10 course Semester 1 yang sudah ada di Akademi (2 minggu
+          Baris RPS {BRAND.rpsCode} belum tersedia di database Supabase. Tampilan {weeks.length} minggu di
+          bawah disusun otomatis dari {weeks.length / 2} course Semester 1 yang sudah ada di Akademi (2 minggu
           per course).
         </p>
       )}
@@ -142,7 +142,8 @@ export default function RpsPage() {
         </ul>
       </section>
       <section className="section">
-        <h2>Rencana 20 Minggu</h2>
+        {/* P67: judul memakai jumlah minggu sebenarnya, bukan hardcode "20". */}
+        <h2>Rencana {weeks.length} Minggu</h2>
         {weeks.length === 0 ? (
           <p className="empty">Belum ada rincian minggu untuk RPS ini.</p>
         ) : (

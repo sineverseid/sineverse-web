@@ -135,6 +135,9 @@ export default function AdminCertificatesPage() {
   const [courses, setCourses] = useState<Course[]>([])
   const [selectedCourseId, setSelectedCourseId] = useState('')
   const [certificates, setCertificates] = useState<Certificate[]>([])
+  // P70: total sertifikat di database (count query) — certificates.length
+  // hanya menghitung jendela yang sudah dimuat (maks. 100 per halaman).
+  const [certificatesTotal, setCertificatesTotal] = useState(0)
   const [names, setNames] = useState<Map<string, string>>(new Map())
   const [eligibility, setEligibility] = useState<EligibilityRow[] | null>(null)
   const [weightsNote, setWeightsNote] = useState('')
@@ -190,7 +193,7 @@ export default function AdminCertificatesPage() {
         // LB7: lima fetch independen dijalankan PARALEL dalam satu batch,
         // bukan enam await berurutan — itu yang membuat halaman ini duduk
         // di "Memuat…" 8–10 detik.
-        const [courseList, certData, enrData, memberData, evtData] = await Promise.all([
+        const [courseList, certData, enrData, memberData, evtData, certCount] = await Promise.all([
           fetchCourses(),
           // B11: halaman pertama manajemen = 100 baris terbaru (.range);
           // halaman berikutnya dimuat tombol "Tampilkan lebih banyak".
@@ -216,6 +219,9 @@ export default function AdminCertificatesPage() {
             .from('events')
             .select('id,title,starts_at')
             .order('starts_at', { ascending: false }),
+          // P70: total sertifikat (count query ringan, pola yang sama
+          // dipakai EventsAnalytics untuk registrasi/submission).
+          supabase.from('certificates').select('id', { count: 'exact', head: true }),
         ])
         const certRows = (certData.data ?? []) as Certificate[]
         const evtRows = ((evtData.data ?? []) as EventOption[]).sort((a, b) =>
@@ -232,6 +238,7 @@ export default function AdminCertificatesPage() {
         if (cancelled) return
         setCourses(courseList)
         setCertificates(certRows)
+        setCertificatesTotal(certCount.count ?? certRows.length)
         setMgmtPage(1)
         setMgmtHasMore(certRows.length === 100)
         setNames(namesMap)
@@ -285,13 +292,14 @@ export default function AdminCertificatesPage() {
 
   async function refreshCertificates() {
     // Muat ulang jendela yang sudah dimuat (halaman 1..mgmtPage).
-    const { data: certData } = await supabase
+    const { data: certData, count: certCount } = await supabase
       .from('certificates')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('issued_at', { ascending: false })
       .range(0, mgmtPage * 100 - 1)
     const certRows = (certData ?? []) as Certificate[]
     setCertificates(certRows)
+    setCertificatesTotal(certCount ?? certRows.length)
     setMgmtHasMore(certRows.length === mgmtPage * 100)
     // Sama seperti load(): penerima diambil dari profiles, bukan dari sertifikat.
     // K19: hanya siswa (sertifikat Academy/Event bukan untuk mentor).
@@ -382,11 +390,17 @@ export default function AdminCertificatesPage() {
   }
 
   async function handleConfirmRevoke(certId: string) {
+    // P60: pencabutan tanpa alasan dilarang — audit log dan halaman
+    // verifikasi harus mencatat alasannya.
+    if (!revokeReason.trim()) {
+      setMgmtError('Isi alasan pencabutan dulu — alasan wajib dicatat di audit log.')
+      return
+    }
     setMgmtError(null)
     setMgmtNotice(null)
     setMgmtBusy(true)
     try {
-      await revokeCertificate(certId, revokeReason.trim() || null)
+      await revokeCertificate(certId, revokeReason.trim())
       setRevokeConfirmId(null)
       setRevokeReason('')
       setMgmtNotice('Sertifikat dicabut. QR lama tetap mengarah ke halaman verifikasi yang kini menampilkan status REVOKED.')
@@ -667,7 +681,10 @@ export default function AdminCertificatesPage() {
         subtitle="Daftar sertifikat yang sudah terbit, manajemen sertifikat (cari, filter, cabut, aktifkan, riwayat), kelayakan sertifikat course, dan penerbitan sertifikat apresiasi mentor, kelulusan Academy, dan event. Sertifikat course diterbitkan di Tahap 5."
       />
       <section className="section">
-        <div className="dash-section-head"><h2>Sertifikat Terbit ({certificates.length})</h2><Link className="dash-more" to="/admin/sertifikat/terbitkan">Terbitkan →</Link></div>
+        <div className="dash-section-head"><h2>Sertifikat Terbit ({certificatesTotal})</h2><Link className="dash-more" to="/admin/sertifikat/terbitkan">Terbitkan →</Link></div>
+        {certificatesTotal > certificates.length && (
+          <p className="muted">Menampilkan {certificates.length} dari {certificatesTotal} sertifikat — muat sisanya lewat &ldquo;Tampilkan lebih banyak&rdquo; di Manajemen Sertifikat di bawah.</p>
+        )}
         {certificates.length === 0 ? (
           <p className="empty">Belum ada sertifikat yang terbit.</p>
         ) : (
@@ -705,8 +722,9 @@ export default function AdminCertificatesPage() {
           <button type="button" className={mgmtStatus === 'all' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('all')}>Semua ({certificates.length})</button>
           <button type="button" className={mgmtStatus === 'valid' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('valid')}>Valid ({certificates.filter((c) => c.status === 'valid').length})</button>
           <button type="button" className={mgmtStatus === 'revoked' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('revoked')}>Dicabut ({certificates.filter((c) => c.status === 'revoked').length})</button>
+          {/* P61: pill "Tidak aktif" supaya dropdown Status dan pill tab sinkron. */}
+          <button type="button" className={mgmtStatus === 'inactive' ? 'pill-tab active' : 'pill-tab'} onClick={() => setMgmtStatus('inactive')}>Tidak aktif ({certificates.filter((c) => c.status === 'inactive').length})</button>
         </div>
-        <p className="muted">Sertifikat berstatus Tidak aktif hanya tampil di tab Semua. Gunakan filter Status di bawah untuk menampilkan sertifikat Tidak aktif.</p>
         <div className="form" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={{ flex: '1 1 16rem' }}>
             Cari (nama / serial)
@@ -825,7 +843,7 @@ export default function AdminCertificatesPage() {
               di halaman verifikasi publik.
             </p>
             <label>
-              Alasan pencabutan
+              Alasan pencabutan (wajib)
               <input
                 value={revokeReason}
                 onChange={(e) => setRevokeReason(e.target.value)}
@@ -834,7 +852,7 @@ export default function AdminCertificatesPage() {
               />
             </label>
             <p style={{ marginTop: '0.5rem' }}>
-              <button type="button" className="btn btn-primary" onClick={() => void handleConfirmRevoke(revokeConfirmId)} disabled={mgmtBusy}>
+              <button type="button" className="btn btn-primary" onClick={() => void handleConfirmRevoke(revokeConfirmId)} disabled={mgmtBusy || !revokeReason.trim()}>
                 {mgmtBusy ? 'Mencabut…' : 'Ya, cabut sertifikat'}
               </button>{' '}
               <button type="button" className="btn btn-secondary" onClick={() => setRevokeConfirmId(null)}>

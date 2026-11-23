@@ -274,6 +274,13 @@ export function ExamPage() {
       setResult({ score: null, passed: null, serial: null, note: 'Ujian ini hanya bisa diikuti oleh siswa yang terdaftar di course-nya. Daftar dulu di halaman course.' })
       return
     }
+    // P38: ujian tanpa course tidak bisa dikerjakan — sertifikat tidak
+    // akan pernah bisa diterbitkan, jadi submit diblokir (bukan sekadar
+    // catatan redup), konsisten dengan gate K5 di atas.
+    if (currentExam.course_id === null) {
+      setResult({ score: null, passed: null, serial: null, note: 'Ujian ini belum terhubung ke course, jadi belum bisa dikerjakan. Sertifikat baru bisa diterbitkan setelah admin menghubungkan ujian ini ke course.' })
+      return
+    }
     setSubmitting(true)
     setResult(null)
     try {
@@ -336,6 +343,14 @@ export function ExamPage() {
         <p className="notice-box">
           {result.note}{' '}
           {result.serial && <Link to="/sertifikat">Lihat Sertifikat Saya</Link>}
+        </p>
+      )}
+      {/* P38: peringatan mencolok sebelum mulai — ujian tanpa course tidak
+          bisa dikerjakan (submit diblokir di handleSubmit). */}
+      {exam.course_id === null && !isAdmin && !isCourseMentor && (
+        <p className="error-box">
+          Ujian ini belum terhubung ke course, jadi belum bisa dikerjakan. Sertifikat baru bisa
+          diterbitkan setelah admin menghubungkan ujian ini ke course.
         </p>
       )}
       {/* B24: kerjakan ulang bila percobaan masih tersisa dan belum lulus —
@@ -424,7 +439,7 @@ export function ExamPage() {
               {result && q.explanation && <p className="muted">Penjelasan: {q.explanation}</p>}
             </fieldset>
           ))}
-          <button type="submit" className="btn btn-primary" disabled={submitting || blocked || result !== null}>
+          <button type="submit" className="btn btn-primary" disabled={submitting || blocked || result !== null || exam.course_id === null}>
             {submitting ? 'Mengirim…' : 'Kirim Jawaban Ujian'}
           </button>
         </form>

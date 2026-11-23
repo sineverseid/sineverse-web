@@ -160,7 +160,9 @@ export default function MentorsPage() {
         />
       )}
       {!loading && !error && rows !== null && rows.length > 0 && (
-        <ul className="discussion-list">
+        // LC4: kartu mentor dalam grid 2–3 kolom — sebelumnya satu kartu
+        // meregang selebar ±1100px seperti banner.
+        <ul className="discussion-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
           {rows.map((r) => (
             <li key={r.profile.id} className="discussion-item">
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>

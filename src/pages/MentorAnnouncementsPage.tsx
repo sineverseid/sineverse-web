@@ -1,7 +1,8 @@
 // SINEVERSE — Mentor Workspace: Pengumuman Course.
 // Mentor menulis pengumuman untuk satu course yang diampunya; pengumuman
 // tersimpan di course_announcements dan terlihat oleh siswa yang terdaftar
-// di course itu. Mentor hanya melihat pengumumannya sendiri.
+// di course itu. Mentor hanya melihat pengumumannya sendiri; admin melihat
+// semua pengumuman untuk memantau mentor lain.
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -33,11 +34,14 @@ export default function MentorAnnouncementsPage() {
       const all = await fetchCourses()
       const mine = isAdmin ? all : all.filter((c) => c.mentor_id === currentUserId)
       setCourses(mine)
-      const { data, error: qErr } = await supabase
+      // P31: filter created_by hanya untuk mentor — admin memantau semua
+      // pengumuman, bukan hanya pengumumannya sendiri.
+      let query = supabase
         .from('course_announcements')
         .select('*')
-        .eq('created_by', currentUserId)
         .order('created_at', { ascending: false })
+      if (!isAdmin) query = query.eq('created_by', currentUserId)
+      const { data, error: qErr } = await query
       if (qErr) throw qErr
       setItems((data ?? []) as CourseAnnouncement[])
     } catch (err) {
@@ -69,12 +73,12 @@ export default function MentorAnnouncementsPage() {
       return
     }
     setSaving(true)
-    const { error: insErr } = await supabase.from('course_announcements').insert({
+    const { data: inserted, error: insErr } = await supabase.from('course_announcements').insert({
       course_id: courseId,
       title: title.trim(),
       body: body.trim() || null,
       created_by: user.id,
-    })
+    }).select().single()
     setSaving(false)
     if (insErr) {
       // B31: kegagalan kirim tampil sebagai notice inline, daftar tetap terlihat.
@@ -84,8 +88,12 @@ export default function MentorAnnouncementsPage() {
     setNotice('Pengumuman terkirim ke siswa course itu.')
     setTitle('')
     setBody('')
-    setLoading(true)
-    await load(user.id, profile?.role === 'admin')
+    // P41: perbarui local state, bukan reload penuh (tanpa flash "Memuat…").
+    if (inserted) setItems((prev) => [inserted as CourseAnnouncement, ...prev])
+    else {
+      setLoading(true)
+      await load(user.id, profile?.role === 'admin')
+    }
   }
 
   async function handleDelete(a: CourseAnnouncement) {
@@ -98,8 +106,8 @@ export default function MentorAnnouncementsPage() {
       return
     }
     setNotice(`Pengumuman "${a.title}" dihapus.`)
-    setLoading(true)
-    await load(user.id, profile?.role === 'admin')
+    // P41: perbarui local state, bukan reload penuh (tanpa flash "Memuat…").
+    setItems((prev) => prev.filter((it) => it.id !== a.id))
   }
 
   if (loading) return <div className="page"><p className="muted">Memuat…</p></div>

@@ -25,7 +25,11 @@ export function normalizeAvailability(value: string | null | undefined): string 
   const v = (value ?? '').toLowerCase().trim()
   if (!v) return ''
   if (v.includes('weekend') || v.includes('akhir pekan') || v.includes('sabtu') || v.includes('minggu')) return 'weekend'
-  if (v.includes('weekday') || v.includes('hari kerja') || v.includes('senin') || v.includes('selasa') || v.includes('rabu') || v.includes('kamis') || v.includes('jumat') || v.includes('jumat') || v.includes('senin-jumat') || v.includes('senin - jumat')) return 'weekday'
+  // P42: pola gabungan dicek SEBELUM hari tunggal — 'senin' sudah cocok
+  // duluan sehingga 'senin-jumat' tidak pernah tercapai; 'jumat' yang
+  // tertulis dua kali dihapus.
+  if (v.includes('senin-jumat') || v.includes('senin - jumat') || v.includes('senin–jumat')) return 'weekday'
+  if (v.includes('weekday') || v.includes('hari kerja') || v.includes('senin') || v.includes('selasa') || v.includes('rabu') || v.includes('kamis') || v.includes('jumat')) return 'weekday'
   if (v.includes('fleksibel') || v.includes('flexible') || v.includes('kapan saja') || v.includes('kapan pun')) return 'flexible'
   return v
 }
@@ -206,7 +210,10 @@ export default function CrewFinderPage() {
             ))}
           </select>
           <select value={regency} onChange={(e) => setRegency(e.target.value)} disabled={!province} aria-label="Filter kabupaten/kota" style={{ fontFamily: 'inherit', padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-            <option value="">{province ? 'Semua kab/kota' : 'Pilih provinsi dulu'}</option>
+            {/* LC8: tanpa provinsi, filter kab/kota memang nonaktif — labelnya
+                "Semua kab/kota", bukan "Pilih provinsi dulu" yang terbaca
+                seperti keharusan walau "Semua provinsi" sudah dipilih. */}
+            <option value="">Semua kab/kota</option>
             {regencies.map((g) => (
               <option key={g.code} value={g.code}>{g.name}</option>
             ))}
@@ -261,19 +268,12 @@ export default function CrewFinderPage() {
                   {(r.interests ?? []).length > 0 && (
                     <p className="muted">Minat: {(r.interests ?? []).join(', ')}</p>
                   )}
-                  <div className="form-actions" style={{ marginTop: '0.75rem' }}>
-                    <Link className="btn btn-ghost btn-small" to={`/portofolio/${r.id}`}>Lihat Profil</Link>
-                    {user && myProjects.length > 0 && inviteProjectId && (
-                      <Link
-                        className="btn btn-primary btn-small"
-                        to={`/proyek/${inviteProjectId}?undang=${encodeURIComponent(r.name ?? '')}`}
-                      >
-                        Undang ke Proyek
-                      </Link>
-                    )}
-                  </div>
-                  {user && myProjects.length > 1 && (
-                    <label className="muted" style={{ display: 'block', marginTop: '0.5rem' }}>
+                  {/* P43: pilihan proyek tampil DI ATAS tombol undang (dan
+                      untuk semua jumlah proyek, bukan hanya bila >1) —
+                      sebelumnya tombol memakai proyek pertama tanpa
+                      pengguna sadar. */}
+                  {user && myProjects.length > 0 && (
+                    <label className="muted" style={{ display: 'block', marginTop: '0.75rem' }}>
                       Undang ke proyek:{' '}
                       <select
                         value={inviteProjectId}
@@ -287,6 +287,17 @@ export default function CrewFinderPage() {
                       </select>
                     </label>
                   )}
+                  <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+                    <Link className="btn btn-ghost btn-small" to={`/portofolio/${r.id}`}>Lihat Profil</Link>
+                    {user && myProjects.length > 0 && inviteProjectId && (
+                      <Link
+                        className="btn btn-primary btn-small"
+                        to={`/proyek/${inviteProjectId}?undang=${encodeURIComponent(r.name ?? '')}`}
+                      >
+                        Undang ke Proyek
+                      </Link>
+                    )}
+                  </div>
                   {user && myProjects.length === 0 && (
                     <p className="muted" style={{ marginTop: '0.5rem' }}>Buat proyek dulu untuk mengundang kru ini.</p>
                   )}

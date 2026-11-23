@@ -549,39 +549,47 @@ export default function ShowcasePage() {
           {myFilms.length > 0 && (
             <>
               <h3>Film Saya</h3>
-              <ul>
+              {/* P55: tiap film satu kartu dengan area status sendiri —
+                  kotak penolakan tidak lagi bersarang di <li> daftar polos
+                  sehingga barisnya tidak menjulang tanpa pemisah. */}
+              <ul className="course-list">
                 {myFilms.map((f) => (
-                  <li key={f.id}>
-                    <Link to={`/showcase/${f.id}`}>{f.title}</Link> · {filmStatusLabel(f.status)} · {visibilityLabel(f.visibility)}
-                    {f.status === 'draft'
-                      ? ' · Menunggu penilaian admin'
-                      : ''}
-                    {f.status === 'rejected' ? (
-                      <p className="error-box" style={{ marginTop: '0.5rem' }}>
-                        Film ini dinilai tidak layak tampil di Showcase.
-                        {f.review_note ? (
-                          <>
-                            <br />
-                            Alasan: {f.review_note}
-                          </>
-                        ) : null}
-                        <br />
-                        Dinilai oleh{' '}
-                        {f.reviewed_by ? reviewerNames.get(f.reviewed_by) ?? 'admin' : 'admin'}
-                        {f.reviewed_at ? ` · ${fmtDate(f.reviewed_at)}` : ''}
+                  <li key={f.id} className="course-card">
+                    <div className="course-card-body">
+                      <h3>
+                        <Link to={`/showcase/${f.id}`}>{f.title}</Link>
+                      </h3>
+                      <p className="muted">
+                        {filmStatusLabel(f.status)} · {visibilityLabel(f.visibility)}
+                        {f.status === 'draft' ? ' · Menunggu penilaian admin' : ''}
                       </p>
-                    ) : null}
-                    {f.status === 'rejected' ? (
-                      <p>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          onClick={() => void handleResubmit(f)}
-                        >
-                          Kirim ulang untuk dinilai
-                        </button>
-                      </p>
-                    ) : null}
+                      {f.status === 'rejected' ? (
+                        <p className="error-box" style={{ marginTop: '0.5rem' }}>
+                          Film ini dinilai tidak layak tampil di Showcase.
+                          {f.review_note ? (
+                            <>
+                              <br />
+                              Alasan: {f.review_note}
+                            </>
+                          ) : null}
+                          <br />
+                          Dinilai oleh{' '}
+                          {f.reviewed_by ? reviewerNames.get(f.reviewed_by) ?? 'admin' : 'admin'}
+                          {f.reviewed_at ? ` · ${fmtDate(f.reviewed_at)}` : ''}
+                        </p>
+                      ) : null}
+                      {f.status === 'rejected' ? (
+                        <p>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-small"
+                            onClick={() => void handleResubmit(f)}
+                          >
+                            Kirim ulang untuk dinilai
+                          </button>
+                        </p>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

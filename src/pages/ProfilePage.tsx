@@ -73,7 +73,9 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="page page-narrow">
+    // LC4: kolom profil dipusatkan dengan lebar wajar — sebelumnya kolom
+    // 520px menempel kiri dan dua pertiga layar kosong di kanan.
+    <div className="page page-narrow" style={{ marginLeft: 'auto', marginRight: 'auto', maxWidth: 760 }}>
       <PageHeader icon="user" title="Profil Saya" />
       <div className="profile-hero">
         {profile?.photo_url && !photoBroken ? (
@@ -109,6 +111,8 @@ export default function ProfilePage() {
             {menuItem('/akademi', 'academy', 'Course yang Diampu')}
             {menuItem('/mentor/penilaian', 'grade', 'Riwayat Aktivitas')}
             {menuItem('/sertifikat', 'certificate', 'Sertifikat Saya')}
+            {/* P48: mentor juga punya jalan ke Pengaturan Notifikasi (siswa punya). */}
+            {menuItem('/notifikasi/pengaturan', 'settings', 'Pengaturan')}
             {menuItem('/tentang', 'info', 'Bantuan & FAQ')}
           </>
         )}

@@ -408,8 +408,11 @@ export default function GrowthPage() {
                           {s.city ? ` · ${s.city}` : ''}
                         </span>
                       </div>
+                      {/* P52: tidak ada rute detail sekolah per-id — label
+                          jujur "Buka halaman Sekolah", bukan "Lihat" yang
+                          menyiratkan menuju sekolah itu. */}
                       <Link to="/sekolah" className="btn btn-ghost btn-small list-row-action">
-                        Lihat
+                        Buka halaman Sekolah
                       </Link>
                     </li>
                   ))}
@@ -433,19 +436,21 @@ export default function GrowthPage() {
       {tab === 'integrasi' && isAdmin && (
         <div>
           <section className="section">
-            <h2>Integrasi yang Terhubung</h2>
+            {/* P51: label jujur — status live tidak pernah diperiksa, jadi
+                "Dikonfigurasi", bukan "Terhubung". */}
+            <h2>Integrasi yang Dikonfigurasi</h2>
             <ul className="discussion-list">
               <li className="discussion-item">
                 <h3>Supabase, Database, Auth &amp; Storage</h3>
-                <p className="muted">Terhubung. Semua data SINEVERSE (course, proyek, komunitas, sertifikat) tersimpan di Supabase.</p>
+                <p className="muted">Dikonfigurasi. Semua data SINEVERSE (course, proyek, komunitas, sertifikat) tersimpan di Supabase.</p>
               </li>
               <li className="discussion-item">
                 <h3>GitHub Pages, Hosting</h3>
-                <p className="muted">Terhubung. Situs ini ditayangkan dari GitHub Pages.</p>
+                <p className="muted">Dikonfigurasi. Situs ini ditayangkan dari GitHub Pages.</p>
               </li>
               <li className="discussion-item">
                 <h3>Email (SMTP Gmail), Email Konfirmasi</h3>
-                <p className="muted">Terhubung. Email konfirmasi pendaftaran dikirim lewat SMTP Gmail akun SINEVERSE.</p>
+                <p className="muted">Dikonfigurasi. Email konfirmasi pendaftaran dikirim lewat SMTP Gmail akun SINEVERSE.</p>
               </li>
             </ul>
           </section>

@@ -140,6 +140,14 @@ export default function FinalProjectsPage() {
     }
   }
 
+  // P53: proyek sendiri tidak tampil dua kali — "Proyek yang
+  // Dipublikasikan" hanya berisi proyek orang lain (proyek sendiri, baik
+  // sebagai pemilik maupun anggota tim, sudah ada di "Proyek Saya").
+  const myIds = new Set(mine.map((p) => p.id))
+  const publishedOthers = published.filter((p) => !myIds.has(p.id))
+  // P54: potong deskripsi panjang seperti DeadlinesPage (~120 karakter).
+  const snippet = (d: string) => (d.length > 120 ? `${d.slice(0, 120).trimEnd()}…` : d)
+
   if (loading) return <div className="page"><p className="muted">Memuat Proyek Akhir…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
 
@@ -169,7 +177,7 @@ export default function FinalProjectsPage() {
                   <Link to={`/proyek-akhir/${p.id}`}>{p.title}</Link>
                   {' · '}{FINAL_PROJECT_STATUS_LABEL[p.status]}
                   {ownerNames.get(p.owner_id) ? <span className="muted"> · {ownerNames.get(p.owner_id)}</span> : null}
-                  {p.description ? <span className="muted"> — {p.description}</span> : null}
+                  {p.description ? <span className="muted"> — {snippet(p.description)}</span> : null}
                   <span className="muted"> · {fmtDate(p.created_at)}</span>
                 </li>
               ))}
@@ -243,7 +251,7 @@ export default function FinalProjectsPage() {
               <li key={p.id}>
                 <Link to={`/proyek-akhir/${p.id}`}>{p.title}</Link>
                 {' · '}{FINAL_PROJECT_STATUS_LABEL[p.status]}
-                {p.description ? <span className="muted"> — {p.description}</span> : null}
+                {p.description ? <span className="muted"> — {snippet(p.description)}</span> : null}
                 <span className="muted"> · {fmtDate(p.created_at)}</span>
               </li>
             ))}
@@ -253,16 +261,16 @@ export default function FinalProjectsPage() {
       )}
 
       <section className="section">
-        <h2>Proyek yang Dipublikasikan ({published.length})</h2>
-        {published.length === 0 ? (
+        <h2>Proyek yang Dipublikasikan ({publishedOthers.length})</h2>
+        {publishedOthers.length === 0 ? (
           <p className="empty">Belum ada proyek yang dipublikasikan.</p>
         ) : (
           <ul>
-            {published.map((p) => (
+            {publishedOthers.map((p) => (
               <li key={p.id}>
                 <Link to={`/proyek-akhir/${p.id}`}>{p.title}</Link>
                 {' · '}{FINAL_PROJECT_STATUS_LABEL[p.status]}
-                {p.description ? <span className="muted"> — {p.description}</span> : null}
+                {p.description ? <span className="muted"> — {snippet(p.description)}</span> : null}
               </li>
             ))}
           </ul>

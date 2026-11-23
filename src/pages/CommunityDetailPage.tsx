@@ -518,13 +518,6 @@ export default function CommunityDetailPage() {
   const pinnedPosts = allPosts.filter((p) => p.is_pinned)
   const visiblePosts = tab === 'pengumuman' ? pinnedPosts : allPosts
 
-  function scrollToPostForm() {
-    const form = document.getElementById('buat-post')
-    if (!form) return
-    form.scrollIntoView({ behavior: 'smooth' })
-    form.querySelector('textarea')?.focus({ preventScroll: true })
-  }
-
   function renderPostCard(p: CommunityPost) {
     const postReplies = replies.filter((r) => r.post_id === p.id)
     const authorName = p.author?.name ?? 'Anggota'
@@ -748,13 +741,6 @@ export default function CommunityDetailPage() {
               Pengumuman
             </button>
           </div>
-          {tab === 'diskusi' && isMember && (
-            <p>
-              <button type="button" className="btn-mint" onClick={scrollToPostForm}>
-                + Buat Post
-              </button>
-            </p>
-          )}
           {tab === 'diskusi' && isMember && (
             <form id="buat-post" className="form" onSubmit={handlePost}>
               <label>

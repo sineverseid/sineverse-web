@@ -78,6 +78,12 @@ export default function RegisterPage() {
   const [confirm, setConfirm] = useState('')
   const [phone, setPhone] = useState('')
   const [birthDate, setBirthDate] = useState('')
+  // LC9: tanggal lahir tiga field terpisah (tanggal/bulan/tahun) — input
+  // type="date" membuat ketikan digit-per-digit jatuh ke segmen yang salah.
+  const [dobDay, setDobDay] = useState('')
+  const [dobMonth, setDobMonth] = useState('')
+  const [dobYear, setDobYear] = useState('')
+  const [dobError, setDobError] = useState<string | null>(null)
   const [gender, setGender] = useState('')
   // Migrasi 027: username + wilayah + sekolah.
   const [username, setUsername] = useState('')
@@ -256,8 +262,12 @@ export default function RegisterPage() {
   }, [verified, navigate])
 
   // Bila pengguna sudah masuk dan TIDAK sedang memverifikasi, ke Beranda.
+  // P23: navigate tidak boleh dipanggil di body render — pindah ke effect.
+  useEffect(() => {
+    if (user && !registeredEmail) navigate('/', { replace: true })
+  }, [user, registeredEmail, navigate])
+
   if (user && !registeredEmail) {
-    navigate('/', { replace: true })
     return null
   }
 
@@ -299,6 +309,46 @@ export default function RegisterPage() {
     }
   }
 
+  // LC9: gabungkan tiga field tanggal lahir menjadi ISO (YYYY-MM-DD).
+  // birthDate tetap sumber kebenaran untuk validate() + pengiriman.
+  function composeDob(day: string, month: string, year: string) {
+    setDobDay(day)
+    setDobMonth(month)
+    setDobYear(year)
+    if (!day || !month || !year) {
+      setDobError(null)
+      setBirthDate('')
+      return
+    }
+    const d = Number(day)
+    const m = Number(month)
+    const y = Number(year)
+    const currentYear = new Date().getFullYear()
+    if (
+      !Number.isInteger(d) || d < 1 || d > 31 ||
+      !Number.isInteger(m) || m < 1 || m > 12 ||
+      !Number.isInteger(y) || y < 1900 || y > currentYear
+    ) {
+      setDobError('Tanggal lahir tidak valid. Periksa tanggal, bulan, dan tahun.')
+      setBirthDate('')
+      return
+    }
+    const dt = new Date(y, m - 1, d)
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) {
+      setDobError('Tanggal itu tidak ada di bulan tersebut.')
+      setBirthDate('')
+      return
+    }
+    const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    if (iso > TODAY) {
+      setDobError('Tanggal lahir tidak boleh di masa depan.')
+      setBirthDate('')
+      return
+    }
+    setDobError(null)
+    setBirthDate(iso)
+  }
+
   function validate(): string | null {
     if (name.trim().length < 2) return 'Nama lengkap minimal 2 karakter.'
     const u = username.trim()
@@ -312,6 +362,7 @@ export default function RegisterPage() {
     if (password.length < 8) return 'Kata sandi minimal 8 karakter.'
     if (password !== confirm) return 'Konfirmasi kata sandi tidak cocok.'
     if (phone.trim().length < 9) return 'Nomor telepon/WA minimal 9 karakter.'
+    if (dobError) return dobError
     if (!birthDate) return 'Isi tanggal lahir kamu.'
     if (birthDate > TODAY) {
       return 'Tanggal lahir tidak boleh di masa depan.'
@@ -745,16 +796,53 @@ export default function RegisterPage() {
               placeholder="08xxxxxxxxxx"
             />
           </label>
-          <label>
-            Tanggal Lahir
-            <input
-              type="date"
-              value={birthDate}
-              onChange={(e) => setBirthDate(e.target.value)}
-              required
-              max={TODAY}
-            />
-          </label>
+          {/* LC9: tiga field terpisah supaya tanggal lahir bisa diketik
+              angka per angka tanpa jatuh ke segmen yang salah. */}
+          <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend>Tanggal Lahir</legend>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <label style={{ flex: '0 0 4.5rem' }}>
+                <span className="muted">Tanggal</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={31}
+                  placeholder="1"
+                  value={dobDay}
+                  onChange={(e) => composeDob(e.target.value, dobMonth, dobYear)}
+                  required
+                />
+              </label>
+              <label style={{ flex: 1 }}>
+                <span className="muted">Bulan</span>
+                <select
+                  value={dobMonth}
+                  onChange={(e) => composeDob(dobDay, e.target.value, dobYear)}
+                  required
+                >
+                  <option value="">Pilih bulan</option>
+                  {['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'].map((name, i) => (
+                    <option key={name} value={String(i + 1)}>{name}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ flex: '0 0 5.5rem' }}>
+                <span className="muted">Tahun</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1900}
+                  max={new Date().getFullYear()}
+                  placeholder="2000"
+                  value={dobYear}
+                  onChange={(e) => composeDob(dobDay, dobMonth, e.target.value)}
+                  required
+                />
+              </label>
+            </div>
+            {dobError && <p className="error-box" style={{ marginTop: '0.5rem' }}>{dobError}</p>}
+          </fieldset>
           <label>
             Jenis Kelamin
             <select value={gender} onChange={(e) => setGender(e.target.value)} required>

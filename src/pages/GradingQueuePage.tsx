@@ -89,6 +89,8 @@ export default function GradingQueuePage() {
   const [rubricNote, setRubricNote] = useState<string | null>(null)
   const [tab, setTab] = useState<RecapTab>('queue')
   const [recap, setRecap] = useState<RecapData | null>(null)
+  // P26: isi submission yang diperluas (tanpa clamp) — sisanya di-clamp 3 baris.
+  const [expandedSubmissions, setExpandedSubmissions] = useState<Set<string>>(new Set())
   // B25: semua file lampiran per submission (bukan hanya file_url pertama).
   const [filesBySubmission, setFilesBySubmission] = useState<Record<string, SubmissionFile[]>>({})
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({})
@@ -228,8 +230,20 @@ export default function GradingQueuePage() {
         if (!isCancelled?.()) setSignedUrls(Object.fromEntries(signed.filter(([, u]) => u)))
       })()
       // Rekap Nilai — hanya dari submission yang benar-benar sudah dinilai.
-      const gradedItems: RecapItem[] = []
+      // P39: satu siswa yang mengirim ulang lalu dinilai lagi punya DUA
+      // baris submission bernilai — hitung pasangan (tugas, siswa) yang
+      // berbeda, memakai versi terbaru (graded_at paling akhir) tiap
+      // pasangan, supaya v2 tidak terhitung dua kali.
+      const latestByPair = new Map<string, Submission>()
       for (const s of gradedSubs) {
+        const key = `${s.assignment_id}:${s.user_id}`
+        const prev = latestByPair.get(key)
+        if (!prev || +new Date(s.graded_at ?? s.submitted_at) >= +new Date(prev.graded_at ?? prev.submitted_at)) {
+          latestByPair.set(key, s)
+        }
+      }
+      const gradedItems: RecapItem[] = []
+      for (const s of latestByPair.values()) {
         const a = byAssignment.get(s.assignment_id)
         if (!a) continue
         const course = courseById.get(courseByLesson.get(a.lesson_id) ?? '')
@@ -629,14 +643,17 @@ export default function GradingQueuePage() {
                 </div>
                 <div className="stat-card">
                   <span className="stat-num">{recap.total}</span>
-                  <span className="stat-label">Submission Dinilai</span>
+                  {/* P39: total = pasangan (tugas, siswa) yang berbeda, bukan
+                      jumlah baris submission — versi kirim-ulang tidak ganda. */}
+                  <span className="stat-label">Tugas–Siswa Dinilai</span>
                 </div>
               </div>
               <div className="dash-section-head">
                 <h2>Sebaran Predikat</h2>
               </div>
               <p className="muted">
-                Dari {recap.total} submission yang sudah dinilai
+                Dari {recap.total} pasangan tugas–siswa yang sudah dinilai — bila satu siswa
+                mengirim ulang, hanya versi terbaru yang dihitung
                 (Sangat Baik ≥85, Baik ≥70, Cukup ≥60, Perlu Latihan &lt;60).
               </p>
               <ul className="list">
@@ -651,7 +668,7 @@ export default function GradingQueuePage() {
                   <li key={label} className="list-row">
                     <span>{label}</span>
                     <span>
-                      {count} siswa
+                      {count} penilaian
                       <span className="progress-track" style={{ display: 'block', width: 120 }}>
                         <span
                           className="progress-fill"
@@ -779,7 +796,36 @@ export default function GradingQueuePage() {
                     {' '}{row.submission.feedback}
                   </p>
                 )}
-                <p>{row.submission.content ?? '—'}</p>
+                {/* P26: isi submission di-clamp 3 baris + bisa diperluas —
+                    sebelumnya tampil utuh tanpa pemotongan di antrean. */}
+                {(() => {
+                  const content = row.submission.content ?? '—'
+                  const expanded = expandedSubmissions.has(row.submission.id)
+                  const long = content.length > 200
+                  return (
+                    <>
+                      <p style={expanded || !long ? undefined : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {content}
+                      </p>
+                      {long && (
+                        <p>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => setExpandedSubmissions((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(row.submission.id)) next.delete(row.submission.id)
+                              else next.add(row.submission.id)
+                              return next
+                            })}
+                          >
+                            {expanded ? 'Sembunyikan' : 'Lihat selengkapnya'}
+                          </button>
+                        </p>
+                      )}
+                    </>
+                  )
+                })()}
                 {renderSubmissionFiles(row)}
                 {gradingId === row.submission.id ? (
                   gradingForm(row)

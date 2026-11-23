@@ -176,6 +176,8 @@ export function LibraryDetailPage() {
   const [editLegal, setEditLegal] = useState('')
   const [editAttr, setEditAttr] = useState('')
   const [editLimits, setEditLimits] = useState('')
+  // P50: gambar detail yang gagal dimuat jatuh ke placeholder inisial.
+  const [imageBroken, setImageBroken] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -278,7 +280,15 @@ export function LibraryDetailPage() {
       <h1>{currentItem.title}</h1>
       <p className="muted">{currentItem.category ?? 'Pustaka'}</p>
       {notice && <p className="notice-box">{notice}</p>}
-      {currentItem.image_url && <img src={currentItem.image_url} alt={`Ilustrasi ${currentItem.title}`} style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} />}
+      {/* P50: gambar detail punya fallback seperti LibraryThumb — bila
+          gagal dimuat tampil placeholder inisial, bukan ikon patah. */}
+      {currentItem.image_url && !imageBroken ? (
+        <img src={currentItem.image_url} alt={`Ilustrasi ${currentItem.title}`} style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} onError={() => setImageBroken(true)} />
+      ) : currentItem.image_url ? (
+        <div className="media-placeholder" style={{ marginBottom: '1rem' }} aria-label="Gambar tidak dapat dimuat">
+          <span>{itemInitial(currentItem.title)}</span>
+        </div>
+      ) : null}
       {rejected ? (
         <p className="error-box">
           Naskah ini tidak bisa ditampilkan: dasar hukum penggunaannya belum tercatat di SINEVERSE.

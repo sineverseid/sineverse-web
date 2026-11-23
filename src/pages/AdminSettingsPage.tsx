@@ -28,7 +28,17 @@ function SettingsLink({ to, icon, label, sub }: { to: string; icon: IconName; la
 }
 
 export default function AdminSettingsPage() {
-  const { signOut } = useAuth()
+  const { signOut, profile } = useAuth()
+  // P73: penjaga peran di dalam halaman (pola yang sama seperti halaman
+  // admin lain) — jangan hanya mengandalkan RoleRoute di App.tsx.
+  if (profile?.role !== 'admin') {
+    return (
+      <div className="page">
+        <h1>Pengaturan Sistem</h1>
+        <p className="empty">Halaman ini hanya untuk admin.</p>
+      </div>
+    )
+  }
   return (
     <div className="page">
       <PageHeader
@@ -49,6 +59,8 @@ export default function AdminSettingsPage() {
                 SINEVERSE · Versi {BRAND.version} · sineverse.id@gmail.com
               </span>
             </span>
+            {/* LC12: chevron seperti semua baris saudaranya. */}
+            <span className="chev"><Icon name="chevronRight" /></span>
           </li>
           <SettingsLink to="/notifikasi/pengaturan" icon="bell" label="Notifikasi" sub="Atur notifikasi aplikasi" />
           <SettingsLink to="/profil" icon="shield" label="Keamanan" sub="Ubah kata sandi di Profil" />

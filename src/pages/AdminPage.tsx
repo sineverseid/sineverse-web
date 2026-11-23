@@ -112,7 +112,9 @@ export default function AdminPage() {
   const [provinceNames, setProvinceNames] = useState<Map<string, string>>(new Map())
   const [regencyNames, setRegencyNames] = useState<Map<string, string>>(new Map())
   // Tab filter lamaran mentor (jumlah asli dari apps, termasuk 0).
-  const [appTab, setAppTab] = useState<'pending' | 'approved' | 'rejected' | 'revision_required'>('pending')
+  // LC10: default "Semua" — sebelumnya "Menunggu (0)" terpilih padahal
+  // kosong, sehingga satu-satunya lamaran (Disetujui) tersembunyi.
+  const [appTab, setAppTab] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revision_required'>('all')
   // Penolakan/revisi lamaran mentor meminta catatan (migrasi 027).
   const [appAction, setAppAction] = useState<{ id: string; kind: 'reject' | 'revision' } | null>(null)
   const [appNote, setAppNote] = useState('')
@@ -480,6 +482,21 @@ export default function AdminPage() {
   }
 
   async function decideClaim(claim: CourseClaim, approve: boolean, note?: string) {
+    // P74: klaim tidak bisa disetujui bila course sudah bermentor atau
+    // pengaju bukan mentor — jangan tandai "Disetujui" tanpa penetapan.
+    if (approve) {
+      const targetCourse = courses.find((x) => x.id === claim.course_id)
+      const applicantIsMentor = mentors.some((m) => m.id === claim.mentor_id)
+      if (targetCourse?.mentor_id || !applicantIsMentor) {
+        setNotice(
+          'Klaim ini tidak bisa disetujui: ' +
+            (targetCourse?.mentor_id
+              ? 'course sudah memiliki mentor.'
+              : 'pengaju bukan mentor.'),
+        )
+        return
+      }
+    }
     // B65: kunci busy per baris klaim.
     const key = `claim-${claim.id}-${approve ? 'approved' : 'rejected'}`
     if (busyKey) return
@@ -601,6 +618,10 @@ export default function AdminPage() {
   }
 
   async function handleVerifySchool(school: School, verify: boolean) {
+    // P66: "Batalkan Verifikasi" minta konfirmasi dulu (verifikasi biasa
+    // tetap langsung). Bila baris terakhir di halaman ini keluar dari
+    // filter, turun satu halaman supaya halaman tidak kosong.
+    if (!verify && !window.confirm(`Batalkan verifikasi "${school.name}"? Sekolah ini tidak lagi tampil sebagai terverifikasi.`)) return
     const { error: updErr } = await supabase.from('schools').update({ is_verified: verify }).eq('id', school.id)
     if (updErr) setNotice(updErr.message)
     else {
@@ -612,8 +633,10 @@ export default function AdminPage() {
       if (stillMatches) {
         setSchoolRows((rows) => rows.map((r) => (r.id === school.id ? { ...r, is_verified: verify } : r)))
       } else {
-        setSchoolRows((rows) => rows.filter((r) => r.id !== school.id))
+        const remaining = schoolRows.filter((r) => r.id !== school.id)
+        setSchoolRows(remaining)
         setSchoolTotal((t) => Math.max(0, t - 1))
+        if (remaining.length === 0 && schoolPage > 0) setSchoolPage((p) => Math.max(0, p - 1))
       }
       setNotice(`Sekolah ${school.name} ${verify ? 'diverifikasi' : 'batal diverifikasi'}.`)
     }
@@ -725,12 +748,13 @@ export default function AdminPage() {
 
   // Jumlah lamaran per status (asli dari apps) + daftar yang tampil di tab aktif.
   const appTabCounts = {
+    all: apps.length,
     pending: apps.filter((a) => a.status === 'pending').length,
     revision_required: apps.filter((a) => a.status === 'revision_required').length,
     approved: apps.filter((a) => a.status === 'approved').length,
     rejected: apps.filter((a) => a.status === 'rejected').length,
   }
-  const visibleApps = apps.filter((a) => a.status === appTab)
+  const visibleApps = appTab === 'all' ? apps : apps.filter((a) => a.status === appTab)
 
   return (
     <div className="page">
@@ -773,12 +797,13 @@ export default function AdminPage() {
       <section className="section" id="lamaran-mentor">
         <div className="dash-section-head"><h2>Lamaran Mentor</h2></div>
         <div className="pill-tabs" role="tablist" aria-label="Filter lamaran mentor">
+          <button type="button" className={appTab === 'all' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('all')}>Semua ({appTabCounts.all})</button>
           <button type="button" className={appTab === 'pending' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('pending')}>Menunggu ({appTabCounts.pending})</button>
           <button type="button" className={appTab === 'revision_required' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('revision_required')}>Revisi ({appTabCounts.revision_required})</button>
           <button type="button" className={appTab === 'approved' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('approved')}>Disetujui ({appTabCounts.approved})</button>
           <button type="button" className={appTab === 'rejected' ? 'pill-tab active' : 'pill-tab'} onClick={() => setAppTab('rejected')}>Ditolak ({appTabCounts.rejected})</button>
         </div>
-        {visibleApps.length === 0 ? <p className="empty">Tidak ada lamaran mentor dengan status ini.</p> : (
+        {visibleApps.length === 0 ? <p className="empty">{appTab === 'all' ? 'Belum ada lamaran mentor.' : 'Tidak ada lamaran mentor dengan status ini.'}</p> : (
           <ul className="list">
             {visibleApps.map((a) => {
               const applicantName = names.get(a.user_id) ?? 'Pelamar'
@@ -902,16 +927,19 @@ export default function AdminPage() {
             {claims.filter((c) => c.status === 'pending').map((c) => {
               const claimedCourse = courses.find((x) => x.id === c.course_id)
               const isMentorClaim = mentors.some((m) => m.id === c.mentor_id)
+              // P74: tombol Setujui nonaktif bila klaim tidak bisa
+              // disetujui (course sudah bermentor / pengaju bukan mentor).
+              const cannotApprove = Boolean(claimedCourse?.mentor_id) || !isMentorClaim
               return (
               <li key={c.id}>
                 <p>
                   {claimedCourse?.title ?? 'Course'} — {names.get(c.mentor_id) ?? 'Mentor'}{' '}
-                  {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — persetujuan tidak akan mengubah penetapan)</span>}{' '}
-                  {!isMentorClaim && <span className="muted">(pengaju bukan mentor — persetujuan tidak akan menetapkan mentor)</span>}{' '}
+                  {claimedCourse?.mentor_id && <span className="muted">(course ini sudah memiliki mentor — klaim tidak bisa disetujui)</span>}{' '}
+                  {!isMentorClaim && <span className="muted">(pengaju bukan mentor — klaim tidak bisa disetujui)</span>}{' '}
                   {c.decision_note && <span className="muted">(sebelumnya ditolak: {c.decision_note})</span>}
                 </p>
                 <div className="form-actions">
-                  <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null} onClick={() => void decideClaim(c, true)}>{busyKey === `claim-${c.id}-approved` ? 'Memproses…' : 'Setujui'}</button>
+                  <button type="button" className="btn btn-primary btn-small" disabled={busyKey !== null || cannotApprove} onClick={() => void decideClaim(c, true)}>{busyKey === `claim-${c.id}-approved` ? 'Memproses…' : 'Setujui'}</button>
                   {rejectingClaimId === c.id ? (
                     <>
                       {/* B70: label textarea mengambil baris penuh sendiri. */}
@@ -948,8 +976,10 @@ export default function AdminPage() {
         )}
       </section>
 
-      <section className="section" id="buat-course">
-        <div className="dash-section-head"><h2>Pembagian Mentor Kurikulum &amp; Buat Course</h2></div>
+      {/* LC11: dulu satu heading memadatkan dua fungsi tak terkait —
+          kini dua seksi dengan heading sendiri. */}
+      <section className="section" id="pembagian-mentor">
+        <div className="dash-section-head"><h2>Pembagian Mentor Kurikulum</h2></div>
         <form className="form" onSubmit={handleAssignMentor}>
           <label>
             Course
@@ -967,6 +997,10 @@ export default function AdminPage() {
           </label>
           <button type="submit" className="btn btn-primary">Tetapkan Mentor</button>
         </form>
+      </section>
+
+      <section className="section" id="buat-course">
+        <div className="dash-section-head"><h2>Buat Course</h2></div>
         <form className="form" onSubmit={handleCreateCourse}>
           <label>Judul course baru<input value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} required /></label>
           <label>Deskripsi<textarea value={newCourseDesc} onChange={(e) => setNewCourseDesc(e.target.value)} rows={2} /></label>

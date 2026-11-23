@@ -221,7 +221,8 @@ export default function MentorStudentsPage() {
         ) / 10
       : null
   const filtered = allRows.filter((r) => {
-    if (courseFilter && !r.courses.includes(courseFilter)) return false
+    // P29: filter memakai id course — dua course berjudul sama tidak lagi bertabrakan.
+    if (courseFilter && !r.courseIds.includes(courseFilter)) return false
     if (statusFilter === 'active' && r.completed + r.inProgress === 0) return false
     if (statusFilter === 'not_started' && r.completed + r.inProgress > 0) return false
     if (query.trim() && !r.name.toLowerCase().includes(query.trim().toLowerCase())) return false
@@ -321,7 +322,7 @@ export default function MentorStudentsPage() {
               >
                 <option value="">Semua course</option>
                 {courses.map((c) => (
-                  <option key={c.id} value={c.title}>{c.title}</option>
+                  <option key={c.id} value={c.id}>{c.title}</option>
                 ))}
               </select>
               <select

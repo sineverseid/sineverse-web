@@ -187,7 +187,9 @@ export default function QuizPage() {
         {best !== null ? ` · Nilai terbaikmu: ${best}` : ''}
       </p>
 
-      {result && <p className={result.score !== null && result.score >= quiz.passing_score ? 'notice-box' : 'notice-box'}>{result.note}</p>}
+      {/* P34: hasil lulus/gagal tampil berbeda — sebelumnya kedua cabang
+          ternary memakai 'notice-box' yang sama (ternary mati). */}
+      {result && <p className={result.score !== null && result.score >= quiz.passing_score ? 'notice-box' : 'error-box'}>{result.note}</p>}
       {/* B24: kerjakan ulang bila percobaan masih tersisa — tanpa ini
           input terkunci setelah submit pertama dan hanya reload halaman
           yang bisa mengulang. */}

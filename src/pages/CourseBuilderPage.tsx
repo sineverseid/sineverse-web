@@ -464,7 +464,8 @@ export default function CourseBuilderPage() {
       options,
       correct_answer: qqAnswer.trim(),
       explanation: qqExpl.trim() || null,
-      order_index: 0,
+      // P28: urutan soal = jumlah soal yang sudah ada di kuis ini, bukan 0.
+      order_index: quizQuestions.filter((qq) => qq.quiz_id === qqQuiz).length,
     })
     if (insErr) fail(insErr)
     else {
@@ -515,7 +516,8 @@ export default function CourseBuilderPage() {
       options,
       correct_answer: eqAnswer.trim(),
       explanation: eqExpl.trim() || null,
-      order_index: 0,
+      // P28: urutan soal = jumlah soal yang sudah ada di ujian ini, bukan 0.
+      order_index: examQuestions.filter((eq) => eq.exam_id === eqExam).length,
     })
     if (insErr) fail(insErr)
     else {
@@ -555,7 +557,10 @@ export default function CourseBuilderPage() {
     }
   }
 
-  async function cancelLiveClass(liveClassId: string) {
+  async function cancelLiveClass(liveClassId: string, title?: string) {
+    // P35: batalkan kelas live butuh konfirmasi — sebelumnya satu klik
+    // langsung menghapus (materi/pengumuman memakai window.confirm).
+    if (!window.confirm(`Batalkan kelas live "${title ?? 'ini'}"? Tindakan ini tidak bisa dibatalkan.`)) return
     try {
       await deleteLiveClass(liveClassId)
       ok('Kelas live dibatalkan.')
@@ -1210,7 +1215,7 @@ export default function CourseBuilderPage() {
                   </>
                 )}
                 {' '}
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => void cancelLiveClass(lc.id)}>
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => void cancelLiveClass(lc.id, lc.title)}>
                   Batalkan
                 </button>
               </li>

@@ -30,6 +30,9 @@ export default function RpsEditorPage() {
   const [wTugasAkhir, setWTugasAkhir] = useState(40)
   const [wDiskusi, setWDiskusi] = useState(10)
   const [passing, setPassing] = useState(70)
+  // P78: busy guard — klik ganda tidak boleh menyimpan dua kali (duplikat
+  // entri audit log rps.updated).
+  const [saving, setSaving] = useState(false)
   // LB14: textarea Deskripsi auto-grow (tinggi mengikuti isi, bukan
   // 3 baris yang memotong teks di balik scrollbar).
   const descRef = useRef<HTMLTextAreaElement | null>(null)
@@ -107,6 +110,7 @@ export default function RpsEditorPage() {
 
   async function handleSave(e: FormEvent) {
     e.preventDefault()
+    if (saving) return
     if (wPretest + wPosttest + wTugasMingguan + wTugasAkhir + wDiskusi !== 100) {
       setNotice('Total bobot pretest + posttest + tugas mingguan + tugas praktik akhir + diskusi harus 100%.')
       return
@@ -118,20 +122,25 @@ export default function RpsEditorPage() {
       tugas_akhir: wTugasAkhir,
       diskusi: wDiskusi,
     }
-    const { error: updErr } = await supabase
-      .from('rps')
-      .update({
-        title: title.trim(),
-        description: desc.trim() || null,
-        weights: newWeights,
-        passing_grade: passing,
-        updated_by: user?.id ?? null,
-      })
-      .eq('code', BRAND.rpsCode)
-    if (updErr) setNotice(updErr.message)
-    else {
-      await logAudit('rps.updated', 'rps', BRAND.rpsCode, { weights: newWeights, passing_grade: passing })
-      setNotice('RPS diperbarui.')
+    setSaving(true)
+    try {
+      const { error: updErr } = await supabase
+        .from('rps')
+        .update({
+          title: title.trim(),
+          description: desc.trim() || null,
+          weights: newWeights,
+          passing_grade: passing,
+          updated_by: user?.id ?? null,
+        })
+        .eq('code', BRAND.rpsCode)
+      if (updErr) setNotice(updErr.message)
+      else {
+        await logAudit('rps.updated', 'rps', BRAND.rpsCode, { weights: newWeights, passing_grade: passing })
+        setNotice('RPS diperbarui.')
+      }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -157,7 +166,7 @@ export default function RpsEditorPage() {
           <label>Nilai lulus<input type="number" min={0} max={100} value={passing} onChange={(e) => setPassing(Number(e.target.value))} required /></label>
         </div>
         <p className="muted">Total bobot saat ini: {wPretest + wPosttest + wTugasMingguan + wTugasAkhir + wDiskusi}% (harus 100%).</p>
-        <button type="submit" className="btn btn-primary">Simpan RPS</button>
+        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Menyimpan…' : 'Simpan RPS'}</button>
       </form>
       <section className="section">
         <h2>Minggu (read-only di editor ini)</h2>

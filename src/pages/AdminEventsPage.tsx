@@ -30,8 +30,15 @@ function fmtDate(v: string | null) {
   return new Date(v).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+// P63: status kompetisi mentah ("dibuka") dipetakan ke label Indonesia.
+const COMPETITION_STATUS_LABEL: Record<string, string> = {
+  dibuka: 'Dibuka',
+  penjurian: 'Penjurian',
+  selesai: 'Selesai',
+}
+
 export default function AdminEventsPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [events, setEvents] = useState<SineEvent[] | null>(null)
   const [competitions, setCompetitions] = useState<Competition[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -136,6 +143,17 @@ export default function AdminEventsPage() {
     await load()
   }
 
+  // P73: penjaga peran di dalam halaman (pola yang sama seperti halaman
+  // admin lain) — jangan hanya mengandalkan RoleRoute di App.tsx.
+  if (profile?.role !== 'admin') {
+    return (
+      <div className="page">
+        <h1>Acara &amp; Festival</h1>
+        <p className="empty">Halaman ini hanya untuk admin.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="page">
       <PageHeader
@@ -167,7 +185,7 @@ export default function AdminEventsPage() {
               </label>
               <label>
                 Tautan resmi pendaftaran
-                <input value={extLink} onChange={(e) => setExtLink(e.target.value)} placeholder="https://…" />
+                <input type="url" value={extLink} onChange={(e) => setExtLink(e.target.value)} placeholder="https://…" />
               </label>
               <label>
                 Tanggal mulai
@@ -254,7 +272,7 @@ export default function AdminEventsPage() {
                 {competitions.map((c) => (
                   <li key={c.id} className="discussion-item">
                     <p className="discussion-meta">
-                      Status: {c.status} · Tenggat: {fmtDate(c.deadline)}
+                      Status: {COMPETITION_STATUS_LABEL[c.status] ?? c.status} · Tenggat: {fmtDate(c.deadline)}
                     </p>
                     <h3>
                       <Link to={`/kompetisi/${c.id}`}>{c.title}</Link>

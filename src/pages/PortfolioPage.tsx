@@ -29,6 +29,23 @@ const VISIBILITY_LABELS: Record<string, string> = {
   private: 'Privat',
 }
 
+const CERT_TYPE_LABELS: Record<string, string> = {
+  course: 'Course',
+  exam: 'Ujian Kompetensi',
+  work: 'Karya',
+  mentor: 'Mentor',
+  academy: 'Akademi',
+  event: 'Acara',
+}
+
+/** Inisial nama pemilik untuk avatar fallback (pola yang sama seperti CrewFinderPage). */
+function ownerInitials(name: string | null | undefined): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
 export default function PortfolioPage() {
   const { userId } = useParams<{ userId?: string }>()
   const { user, profile } = useAuth()
@@ -45,6 +62,8 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // P47: foto pemilik yang gagal dimuat jatuh ke avatar inisial.
+  const [photoBroken, setPhotoBroken] = useState(false)
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [kind, setKind] = useState<PortfolioItem['kind']>('work')
@@ -183,7 +202,8 @@ export default function PortfolioPage() {
       description: desc.trim() || null,
       visibility,
     })
-    if (insErr) setNotice(insErr.message)
+    // P47: pesan ramah berbahasa Indonesia, bukan pesan mentah Supabase.
+    if (insErr) setNotice('Gagal menambahkan item portofolio. Coba lagi sebentar lagi.')
     else {
       setNotice('Item portofolio ditambahkan.')
       setTitle('')
@@ -199,7 +219,14 @@ export default function PortfolioPage() {
         icon="portfolio"
         title={isOwner ? 'Portofolio Saya' : owner?.name ? `Portofolio ${owner.name}` : 'Portofolio'}
       />
-      {owner?.photo_url && <img src={owner.photo_url} alt="Foto profil" className="avatar" />}
+      {/* P47: foto rusak jatuh ke avatar inisial, bukan ikon gambar patah. */}
+      {owner?.photo_url && !photoBroken ? (
+        <img src={owner.photo_url} alt="Foto profil" className="avatar" onError={() => setPhotoBroken(true)} />
+      ) : (
+        <div className="avatar avatar-placeholder" aria-label="Foto profil tidak tersedia">
+          {ownerInitials(owner?.name)}
+        </div>
+      )}
       {notice && <p className="notice-box">{notice}</p>}
 
       {isOwner && (
@@ -231,7 +258,7 @@ export default function PortfolioPage() {
             ) : (
               <ul>
                 {certs.map((c) => (
-                  <li key={c.id}>{c.serial}, {c.type} · Nilai: {c.score ?? '—'}</li>
+                  <li key={c.id}>{c.serial}, {CERT_TYPE_LABELS[c.type] ?? c.type} · Nilai: {c.score ?? '—'}</li>
                 ))}
               </ul>
             )}

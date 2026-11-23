@@ -274,14 +274,16 @@ export default function GradebookPage() {
             <table className="grade-table">
               <thead>
                 <tr>
-                  <th>Course</th>
-                  <th>Pretest (5%)</th>
-                  <th>Posttest (15%)</th>
-                  <th>Tugas Mingguan (30%)</th>
-                  <th>Tugas Akhir (40%)</th>
-                  <th>Diskusi (10%)</th>
-                  <th>Nilai Akhir</th>
-                  <th>Status</th>
+                  {/* LC5: lebar kolom minimum + header tidak membungkus —
+                      sebelumnya "Tugas Mingguan (30%)" terpotong baris. */}
+                  <th style={{ minWidth: 180 }}>Course</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Pretest (5%)</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Posttest (15%)</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Tugas Mingguan (30%)</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Tugas Akhir (40%)</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Diskusi (10%)</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Nilai Akhir</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Status</th>
                 </tr>
               </thead>
               <tbody>

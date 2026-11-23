@@ -144,7 +144,7 @@ const EXPLORE_MENUS: {
 ]
 
 export default function HomePage() {
-  const { user, profile, loading: authLoading } = useAuth()
+  const { user, profile, loading: authLoading, profileLoading, refreshProfile } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
   const [enrolledIds, setEnrolledIds] = useState<string[]>([])
   const [progress, setProgress] = useState<LessonProgress[]>([])
@@ -173,6 +173,10 @@ export default function HomePage() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [lessonCourse, setLessonCourse] = useState<Map<string, string>>(new Map())
   const [lessonTotals, setLessonTotals] = useState<Map<string, number>>(new Map())
+  // P72: profil gagal dimuat tidak boleh jatuh ke dashboard siswa.
+  // Sinyal "masih dimuat" datang dari AuthContext (profileLoading), bukan
+  // heuristik tenggat — setelah fetch profil selesai dan profil tetap null,
+  // tampilkan error state.
 
   useEffect(() => {
     if (heroPaused) return
@@ -331,6 +335,39 @@ export default function HomePage() {
     return (
       <div className="page">
         <p className="muted">Memuat…</p>
+      </div>
+    )
+  }
+
+  // P72: pengguna login tanpa profil = error state, bukan SiswaHome.
+  // Tamu (user null) tidak kena cabang ini — mereka melihat landing.
+  if (user && !profile) {
+    if (profileLoading) {
+      return (
+        <div className="page">
+          <p className="muted">Memuat profil…</p>
+        </div>
+      )
+    }
+    return (
+      <div className="page">
+        <p className="error-box">
+          Profil gagal dimuat. Dashboard tidak bisa ditampilkan tanpa data peranmu.
+        </p>
+        <p>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              void refreshProfile()
+            }}
+          >
+            Coba lagi
+          </button>{' '}
+          <button type="button" className="btn btn-ghost" onClick={() => window.location.reload()}>
+            Muat ulang halaman
+          </button>
+        </p>
       </div>
     )
   }
@@ -809,15 +846,15 @@ function SiswaHome(props: SiswaHomeProps) {
         </Link>
         <Link to="/komunitas" className="quick-tile">
           <Icon name="community" size={24} />
-          Community
+          Komunitas
         </Link>
         <Link to="/acara" className="quick-tile">
           <Icon name="event" size={24} />
-          Events
+          Acara
         </Link>
         <Link to="/portofolio" className="quick-tile">
           <Icon name="portfolio" size={24} />
-          Portfolio
+          Portofolio
         </Link>
         <Link to="/profil" className="quick-tile">
           <Icon name="user" size={24} />

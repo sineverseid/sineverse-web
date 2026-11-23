@@ -2,7 +2,7 @@
 // hero navy di atas (eyebrow, judul, deskripsi, pil slogan, ilustrasi kru
 // film), kartu login dengan penjelasan lengkap, baris versi, dua tombol
 // daftar (Anggota / Mentor), dan catatan admin.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -20,8 +20,13 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // P23: redirect saat render memanggil navigate di luar effect — pindah
+  // ke effect supaya tidak ada efek samping di body render.
+  useEffect(() => {
+    if (user) navigate(from, { replace: true })
+  }, [user, from, navigate])
+
   if (user) {
-    navigate(from, { replace: true })
     return null
   }
 

@@ -8,6 +8,44 @@ import { fetchNotifications, markAllNotificationsRead, markNotificationRead } fr
 import type { AppNotification } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
+/** Label jenis notifikasi berbahasa Indonesia (P49) — kind mentah
+    ('discussion', 'grade', …) tidak lagi dicetak apa adanya. Kind yang
+    belum dikenal dirapikan dari snake_case supaya tetap terbaca. */
+const KIND_LABELS: Record<string, string> = {
+  discussion: 'Diskusi',
+  grade: 'Nilai',
+  revision: 'Revisi',
+  claim_approved: 'Pengajuan Disetujui',
+  claim_rejected: 'Pengajuan Ditolak',
+  mentor_assigned: 'Mentor Ditugaskan',
+  mentor_application: 'Lamaran Mentor',
+  announcement: 'Pengumuman',
+  certificate: 'Sertifikat',
+  enrollment: 'Pendaftaran',
+  event: 'Acara',
+  reminder_assignment: 'Pengingat Tugas',
+  reminder_live_class: 'Pengingat Kelas Live',
+  reminder_grading: 'Pengingat Penilaian',
+  reminder_event: 'Pengingat Acara',
+  assignment: 'Tugas',
+  quiz: 'Kuis',
+  exam: 'Ujian',
+  community: 'Komunitas',
+  project: 'Proyek',
+  film: 'Film',
+  waitlist: 'Daftar Tunggu',
+}
+
+function kindLabel(kind: string): string {
+  const known = KIND_LABELS[kind]
+  if (known) return known
+  return kind
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 export default function NotificationsPage() {
   const { user } = useAuth()
   const [items, setItems] = useState<AppNotification[] | null>(null)
@@ -57,8 +95,13 @@ export default function NotificationsPage() {
   const unread = items.filter((n) => !n.is_read).length
 
   async function handleReadOne(id: string) {
-    await markNotificationRead(id)
-    setItems((xs) => (xs ?? []).map((n) => (n.id === id ? { ...n, is_read: true } : n)))
+    // P49: kegagalan tandai-baca diberi umpan balik, bukan rejection tak tertangani.
+    try {
+      await markNotificationRead(id)
+      setItems((xs) => (xs ?? []).map((n) => (n.id === id ? { ...n, is_read: true } : n)))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menandai notifikasi sudah dibaca. Coba lagi.')
+    }
   }
 
   async function handleReadAll() {
@@ -99,7 +142,7 @@ export default function NotificationsPage() {
           {items.map((n) => (
             <li key={n.id} className="discussion-item" style={n.is_read ? undefined : { borderLeft: '4px solid var(--film-green)' }}>
               <p className="discussion-meta">
-                {n.kind} · {fmtDate(n.created_at)}
+                {kindLabel(n.kind)} · {fmtDate(n.created_at)}
                 {n.is_read ? '' : ' · Belum dibaca'}
               </p>
               <p><strong>{n.title}</strong></p>

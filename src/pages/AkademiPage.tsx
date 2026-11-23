@@ -490,7 +490,11 @@ export default function AkademiPage() {
                   : mentorNamesLoaded
                     ? 'Mentor: tidak diketahui'
                     : 'Memuat info mentor…'
-                : 'Belum ada mentor, ikuti untuk bergabung'
+                // LC7: untuk mentor, ajakan "ikuti untuk bergabung" tidak
+                // berlaku — teksnya netral per peran.
+                : isMentor
+                  ? 'Belum ada mentor untuk course ini'
+                  : 'Belum ada mentor, ikuti untuk bergabung'
               return (
                 <li key={c.id} className="kurikulum-row">
                   <span className="kurikulum-num" aria-hidden="true">
@@ -684,9 +688,11 @@ export default function AkademiPage() {
         </p>
       )}
 
-      <section id="semua-kursus" className="section" aria-label="Semua Kursus">
+      <section id="semua-kursus" className="section" aria-label={isMentor ? 'Course Saya' : 'Semua Kursus'}>
         <div className="dash-section-head">
-          <h2>Semua Kursus</h2>
+          {/* P37: untuk mentor visibleCourses hanya course miliknya — judul
+              "Semua Kursus" menyesatkan, jadi "Course Saya". */}
+          <h2>{isMentor ? 'Course Saya' : 'Semua Kursus'}</h2>
         </div>
         {isAdmin && (
           <>

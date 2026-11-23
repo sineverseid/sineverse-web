@@ -558,8 +558,15 @@ export default function CourseDetailPage() {
       await enrollInCourse(user.id, c.id)
       setEnrolled(true)
       setNotice('Kamu berhasil mengambil course ini. Selamat belajar.')
-    } catch {
-      setCodeError('Gagal mendaftar ke course. Periksa koneksi lalu coba lagi.')
+    } catch (err) {
+      // P22: pesan "daftar tunggu" dari enrollInCourse diteruskan ke pengguna;
+      // error lain tetap memakai pesan generik (mis. pesan mentah Supabase).
+      const msg = err instanceof Error ? err.message : ''
+      setCodeError(
+        msg.includes('daftar tunggu')
+          ? msg
+          : 'Gagal mendaftar ke course. Periksa koneksi lalu coba lagi.',
+      )
     } finally {
       setBusy(false)
     }
@@ -1094,12 +1101,16 @@ export default function CourseDetailPage() {
         {mentorFailed ? 'gagal dimuat' : (mentorName ?? 'Belum ditugaskan')}
       </p>
       {enrolled && allLessons.length > 0 && (
-        <div className="progress-block">
-          <p className="muted">
+        // LC5: progres diringkas jadi satu baris (teks + bar) — sebelumnya
+        // kartu putih besar yang isinya hanya "0 dari 11 materi · 0%"
+        // dengan bar 0% yang tidak terlihat.
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0.75rem 0' }}>
+          <p className="muted" style={{ margin: 0, whiteSpace: 'nowrap' }}>
             {doneCount} dari {allLessons.length} materi · {percent}%
           </p>
           <div
             className="progress-track"
+            style={{ flex: 1, minWidth: 0, marginTop: 0 }}
             role="progressbar"
             aria-valuenow={percent}
             aria-valuemin={0}

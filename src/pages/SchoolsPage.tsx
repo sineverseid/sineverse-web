@@ -300,6 +300,18 @@ export default function SchoolsPage() {
   async function handleCreateActivity(e: FormEvent) {
     e.preventDefault()
     if (!user || !actClub || !actTitle.trim()) return
+    // P57: aktivitas klub tidak boleh bertanggal lampau — bandingkan pada
+    // level hari supaya aktivitas hari ini tetap bisa dibuat.
+    if (actDate) {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const chosen = new Date(actDate)
+      chosen.setHours(0, 0, 0, 0)
+      if (chosen < today) {
+        setNotice('Tanggal aktivitas tidak boleh di masa lalu. Pilih hari ini atau tanggal berikutnya.')
+        return
+      }
+    }
     const { error } = await supabase.from('club_activities').insert({
       club_id: actClub,
       title: actTitle.trim(),

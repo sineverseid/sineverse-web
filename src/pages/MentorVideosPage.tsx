@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { videoEmbed } from '../lib/guarded'
 import { fetchCourses, supabase } from '../lib/supabase'
 import type { Course, Lesson } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -66,10 +67,13 @@ export default function MentorVideosPage() {
         if (!course) continue
         out.push({ course, lesson })
       }
+      // P40: urutkan berdasarkan course dulu, lalu urutan modul/lesson —
+      // sebelumnya urutan modul dibandingkan dulu sehingga lesson dari
+      // course berbeda saling menyela.
       out.sort((a, b) => {
+        if (a.course.title !== b.course.title) return a.course.title.localeCompare(b.course.title)
         const mo = (moduleOrder.get(a.lesson.module_id) ?? 0) - (moduleOrder.get(b.lesson.module_id) ?? 0)
         if (mo !== 0) return mo
-        if (a.course.title !== b.course.title) return a.course.title.localeCompare(b.course.title)
         return a.lesson.order_index - b.lesson.order_index
       })
       setRows(out)
@@ -99,6 +103,13 @@ export default function MentorVideosPage() {
   async function handleSave(e: FormEvent, lesson: Lesson) {
     e.preventDefault()
     if (!user) return
+    // P30: hanya URL YouTube/Vimeo yang diterima — URL host lain menjadi
+    // tautan eksternal telanjang di lesson. Kosong = hapus video (diizinkan).
+    const url = editUrl.trim()
+    if (url && videoEmbed(url).kind === 'link') {
+      setNotice('Tautan video harus dari YouTube atau Vimeo. Tempel URL video YouTube (youtube.com / youtu.be) atau Vimeo (vimeo.com).')
+      return
+    }
     setSaving(true)
     const { error: updErr } = await supabase
       .from('lessons')

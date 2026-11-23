@@ -449,7 +449,7 @@ export default function AdminAcademyAnalyticsPage() {
       <PageHeader
         icon="chart"
         title="Analitik Akademi"
-        subtitle="Turnaround penilaian, keterlambatan pengumpulan, dan beban kerja mentor — pelengkap Analytics & Reports per course."
+        subtitle="Ringkasan progres dan capaian Academy: turnaround penilaian, keterlambatan pengumpulan, dan beban kerja mentor per course."
       />
       <WorkspaceNav entries={ADMIN_NAV} />
 

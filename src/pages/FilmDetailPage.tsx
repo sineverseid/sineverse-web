@@ -56,11 +56,18 @@ export default function FilmDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // P46: kegagalan memuat ulasan ditampilkan sebagai error, bukan "Belum ada ulasan".
+  const [reviewsError, setReviewsError] = useState<string | null>(null)
   const [rating, setRating] = useState(5)
   const [body, setBody] = useState('')
 
   async function loadReviews(filmId: string) {
-    const { data } = await supabase.from('film_reviews').select('*').eq('film_id', filmId).order('created_at', { ascending: false })
+    const { data, error: revErr } = await supabase.from('film_reviews').select('*').eq('film_id', filmId).order('created_at', { ascending: false })
+    if (revErr) {
+      setReviewsError('Ulasan gagal dimuat. Coba muat ulang halaman ini.')
+      return
+    }
+    setReviewsError(null)
     const rows = (data ?? []) as FilmReview[]
     setReviews(rows)
     // Nama pemberi ulasan gagal dimuat tidak boleh merusak halaman film.
@@ -79,7 +86,7 @@ export default function FilmDetailPage() {
       try {
         // Film dan daftar ulasannya independen (keduanya hanya butuh
         // filmId) — dimuat paralel, bukan film dulu baru ulasan.
-        const [{ data, error: qErr }, { data: revData }] = await Promise.all([
+        const [{ data, error: qErr }, { data: revData, error: revErr }] = await Promise.all([
           supabase.from('films').select('*').eq('id', filmId).maybeSingle(),
           supabase.from('film_reviews').select('*').eq('film_id', filmId).order('created_at', { ascending: false }),
         ])
@@ -96,6 +103,8 @@ export default function FilmDetailPage() {
           const f = data as Film
           const rows = (revData ?? []) as FilmReview[]
           setReviews(rows)
+          // P46: error query ulasan dicatat — jangan tampil "Belum ada ulasan".
+          setReviewsError(revErr ? 'Ulasan gagal dimuat. Coba muat ulang halaman ini.' : null)
           // B42: nama sekolah pemilik bila show_school dicentang.
           if (f.show_school) {
             try {
@@ -313,7 +322,9 @@ export default function FilmDetailPage() {
 
       <section className="section">
         <h2>Ulasan</h2>
-        {reviews.length === 0 ? (
+        {reviewsError ? (
+          <p className="error-box">{reviewsError}</p>
+        ) : reviews.length === 0 ? (
           <p className="empty">Belum ada ulasan. Jadilah yang pertama memberi ulasan.</p>
         ) : (
           <ul className="discussion-list">

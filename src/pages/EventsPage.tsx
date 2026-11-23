@@ -145,8 +145,8 @@ export function EventsPage() {
     // LB9: tanggal + jam digabung ke ISO (jam kosong = 00:00).
     const startsIso = startDate ? new Date(`${startDate}T${startTime || '00:00'}`).toISOString() : null
     const endsIso = endDate ? new Date(`${endDate}T${endTime || '00:00'}`).toISOString() : null
-    if (startsIso && endsIso && new Date(endsIso) < new Date(startsIso)) {
-      setFormError('Waktu selesai tidak boleh lebih awal dari waktu mulai.')
+    if (startsIso && endsIso && new Date(endsIso) <= new Date(startsIso)) {
+      setFormError('Waktu selesai harus lebih lambat dari waktu mulai.')
       return
     }
     setFormError(null)
@@ -412,7 +412,7 @@ function EventsAnalytics() {
     <div>
       {partialError && <p className="error-box">Analitik gagal dimuat sebagian.</p>}
       <section className="section">
-        <h2>Acara</h2>
+        <h2>Ringkasan Acara</h2>
         <dl className="profile-list">
           <div><dt>Total acara</dt><dd>{show(stats.events)}</dd></div>
           <div><dt>Internal</dt><dd>{show(stats.internal)}</dd></div>
@@ -544,8 +544,8 @@ export function EventDetailPage() {
       setEditError('Kapasitas minimal 1 (kosong = tanpa batas).')
       return
     }
-    if (editStartsAt && editEndsAt && new Date(editEndsAt) < new Date(editStartsAt)) {
-      setEditError('Waktu selesai tidak boleh lebih awal dari waktu mulai.')
+    if (editStartsAt && editEndsAt && new Date(editEndsAt) <= new Date(editStartsAt)) {
+      setEditError('Waktu selesai harus lebih lambat dari waktu mulai.')
       return
     }
     setEditError(null)
@@ -577,8 +577,8 @@ export function EventDetailPage() {
       setSesError('Isi judul sesi dulu.')
       return
     }
-    if (sesStartsAt && sesEndsAt && new Date(sesEndsAt) < new Date(sesStartsAt)) {
-      setSesError('Waktu selesai sesi tidak boleh lebih awal dari waktu mulai.')
+    if (sesStartsAt && sesEndsAt && new Date(sesEndsAt) <= new Date(sesStartsAt)) {
+      setSesError('Waktu selesai sesi harus lebih lambat dari waktu mulai sesi.')
       return
     }
     setSesError(null)

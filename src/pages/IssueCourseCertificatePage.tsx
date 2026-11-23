@@ -12,7 +12,7 @@ import {
   issueCourseCertificate,
 } from '../lib/certificates'
 import type { EligibilityRow } from '../lib/certificates'
-import { fetchCourses, fetchProfileNames, logAudit } from '../lib/supabase'
+import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
 import type { Certificate, Course } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
@@ -47,9 +47,26 @@ export default function IssueCourseCertificatePage() {
     async function load() {
       try {
         const courseList = await fetchCourses()
-        // Mentor hanya melihat course yang ia ampu sebagai mentor utama.
-        const visible =
+        // Mentor melihat course yang ia ampu sebagai mentor utama DAN
+        // sebagai co-mentor/assistant-grader lewat course_teachers
+        // (migrasi 003: course_id, user_id, role).
+        let visible =
           profile?.role === 'mentor' ? courseList.filter((c) => c.mentor_id === profile.id) : courseList
+        if (profile?.role === 'mentor') {
+          try {
+            const { data: coRows } = await supabase
+              .from('course_teachers')
+              .select('course_id')
+              .eq('user_id', profile.id)
+            const coIds = new Set(((coRows ?? []) as { course_id: string }[]).map((r) => r.course_id))
+            if (coIds.size > 0) {
+              visible = courseList.filter((c) => c.mentor_id === profile.id || coIds.has(c.id))
+            }
+          } catch {
+            // Gagal membaca course_teachers (mis. RLS) — tetap tampilkan
+            // course mentor utama supaya halaman tetap bisa dipakai.
+          }
+        }
         if (cancelled) return
         setCourses(visible)
         if (visible.length > 0) setSelectedCourseId(visible[0].id)
@@ -172,9 +189,9 @@ export default function IssueCourseCertificatePage() {
             <p className="muted">Bobot dan ambang lulus: {weightsNote || 'memuat…'}</p>
             {profile?.role === 'mentor' && (
               <p className="muted">
-                Daftar ini hanya menampilkan course dengan kamu sebagai mentor utama. Mentor yang
-                mengampu lewat course_teachers tetap bisa menerbitkan sertifikat lewat RPC bila
-                membuka course itu — hubungi admin bila course yang kamu ampu tidak muncul di sini.
+                Daftar ini menampilkan course dengan kamu sebagai mentor utama atau sebagai
+                co-mentor (course_teachers). Bila course yang kamu ampu tidak muncul di sini,
+                hubungi admin.
               </p>
             )}
             <p className="muted">

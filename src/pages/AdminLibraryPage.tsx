@@ -15,7 +15,7 @@ import { ADMIN_NAV } from '../lib/workspaceNav'
 import EmptyState from '../components/EmptyState'
 
 export default function AdminLibraryPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [items, setItems] = useState<LibraryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +54,13 @@ export default function AdminLibraryPage() {
   async function handleAdd(e: FormEvent) {
     e.preventDefault()
     if (!title.trim()) return
+    // P64: label "Dasar hukum (wajib untuk naskah)" ditegakkan — kategori
+    // "Naskah" di file ini adalah teks bebas (mis. "Naskah", "Naskah Film"),
+    // jadi yang dianggap naskah adalah kategori yang mengandung kata naskah.
+    if (category.trim().toLowerCase().includes('naskah') && !legalBasis.trim()) {
+      setNotice('Dasar hukum wajib diisi untuk kategori Naskah.')
+      return
+    }
     const { error: insErr } = await supabase.from('library_items').insert({
       title: title.trim(),
       category: category.trim() || null,
@@ -91,6 +98,17 @@ export default function AdminLibraryPage() {
     invalidateCatalogCache()
     setNotice(`"${itemTitle}" dihapus dari Pustaka.`)
     await load()
+  }
+
+  // P73: penjaga peran di dalam halaman (pola yang sama seperti halaman
+  // admin lain) — jangan hanya mengandalkan RoleRoute di App.tsx.
+  if (profile?.role !== 'admin') {
+    return (
+      <div className="page">
+        <h1>Kelola Pustaka</h1>
+        <p className="empty">Halaman ini hanya untuk admin.</p>
+      </div>
+    )
   }
 
   return (

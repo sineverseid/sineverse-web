@@ -12,6 +12,8 @@ import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
 import EmptyState from '../components/EmptyState'
 
+const PAGE_SIZE = 20
+
 interface DiscussionRow extends Discussion {
   lessonTitle: string
   courseTitle: string
@@ -23,6 +25,9 @@ export default function MentorDiscussionsPage() {
   const [rows, setRows] = useState<DiscussionRow[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // P33: pagination server-side (pola direktori sekolah, 20/halaman).
+  const [page, setPage] = useState(0)
+  const [total, setTotal] = useState(0)
 
   useEffect(() => {
     if (!user) return
@@ -36,6 +41,7 @@ export default function MentorDiscussionsPage() {
             : courses.filter((c) => c.mentor_id === user!.id)
         if (mine.length === 0) {
           if (!cancelled) setRows([])
+          if (!cancelled) setTotal(0)
           return
         }
         const courseById = new Map(mine.map((c) => [c.id, c]))
@@ -46,6 +52,7 @@ export default function MentorDiscussionsPage() {
         const modRows = (mods ?? []) as { id: string; course_id: string }[]
         if (modRows.length === 0) {
           if (!cancelled) setRows([])
+          if (!cancelled) setTotal(0)
           return
         }
         const modCourse = new Map(modRows.map((m) => [m.id, m.course_id]))
@@ -56,17 +63,21 @@ export default function MentorDiscussionsPage() {
         const lessonRows = (lessons ?? []) as { id: string; module_id: string; title: string }[]
         if (lessonRows.length === 0) {
           if (!cancelled) setRows([])
+          if (!cancelled) setTotal(0)
           return
         }
         const lessonInfo = new Map(
           lessonRows.map((l) => [l.id, { title: l.title, courseId: modCourse.get(l.module_id) ?? '' }]),
         )
-        const { data: discs } = await supabase
+        // P33: pagination server-side (pola direktori sekolah): 20 per
+        // halaman + hitungan total, bukan .limit(100) tanpa jalan ke
+        // diskusi lama.
+        const { data: discs, count } = await supabase
           .from('discussions')
-          .select('*')
+          .select('*', { count: 'exact' })
           .in('lesson_id', lessonRows.map((l) => l.id))
           .order('created_at', { ascending: false })
-          .limit(100)
+          .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
         const discRows = (discs ?? []) as Discussion[]
         const names = await fetchProfileNames(discRows.map((d) => d.user_id))
         const out: DiscussionRow[] = discRows.map((d) => {
@@ -80,6 +91,7 @@ export default function MentorDiscussionsPage() {
           }
         })
         if (!cancelled) setRows(out)
+        if (!cancelled) setTotal(count ?? 0)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat diskusi.')
       } finally {
@@ -90,7 +102,12 @@ export default function MentorDiscussionsPage() {
     return () => {
       cancelled = true
     }
-  }, [user, profile?.role])
+  }, [user, profile?.role, page])
+
+  // Ganti pengguna/peran kembali ke halaman pertama.
+  useEffect(() => {
+    setPage(0)
+  }, [user?.id, profile?.role])
 
   return (
     <div className="page">
@@ -102,7 +119,7 @@ export default function MentorDiscussionsPage() {
       <WorkspaceNav entries={MENTOR_NAV} />
       {loading && <p className="muted">Memuat diskusi…</p>}
       {error && <p className="error-box">{error}</p>}
-      {!loading && !error && rows !== null && rows.length === 0 && (
+      {!loading && !error && rows !== null && total === 0 && (
         <EmptyState
           message="Belum ada diskusi. Belum ada siswa yang bertanya di lesson course kamu."
         />
@@ -123,6 +140,22 @@ export default function MentorDiscussionsPage() {
             </li>
           ))}
         </ul>
+      )}
+      {!loading && !error && rows !== null && total > 0 && (
+        <>
+          <p className="muted">
+            Menampilkan {page * PAGE_SIZE + 1}–{Math.min(total, (page + 1) * PAGE_SIZE)} dari {total} diskusi
+          </p>
+          <div className="form-actions">
+            <button type="button" className="btn btn-ghost btn-small" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+              ← Sebelumnya
+            </button>
+            <span className="muted">Halaman {page + 1} dari {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+            <button type="button" className="btn btn-ghost btn-small" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>
+              Berikutnya →
+            </button>
+          </div>
+        </>
       )}
     </div>
   )

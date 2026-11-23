@@ -232,12 +232,36 @@ export function CertificatesPage() {
       />
       {certs.length === 0 ? (
         <p className="empty">
-          Belum ada sertifikat. Sertifikat course diterbitkan oleh mentor atau admin setelah nilai
-          akhirmu lulus; sertifikat ujian diterbitkan otomatis saat kamu lulus ujian kompetensi;
-          sertifikat karya diterbitkan untuk pemenang kompetisi; sertifikat apresiasi mentor
-          diterbitkan oleh admin untuk mentor course; sertifikat kelulusan Academy diterbitkan
-          admin setelah kamu memegang sertifikat course ke-10 course; sertifikat event diterbitkan
-          admin untuk partisipasi event.
+          {/* LC7: teks lama memakai bahasa siswa ("nilai akhirmu") untuk semua
+              peran — mentor/admin tidak punya nilai akhir sebagai siswa. */}
+          {profile?.role === 'mentor' ? (
+            <>
+              Belum ada sertifikat. Sertifikat apresiasi mentor diterbitkan oleh admin untuk
+              mentor course; sertifikat course diterbitkan oleh mentor atau admin setelah nilai
+              akhir siswa lulus; sertifikat ujian diterbitkan otomatis saat siswa lulus ujian
+              kompetensi; sertifikat karya diterbitkan untuk pemenang kompetisi; sertifikat
+              kelulusan Academy diterbitkan admin setelah siswa memegang sertifikat course
+              ke-10 course; sertifikat event diterbitkan admin untuk partisipasi event.
+            </>
+          ) : profile?.role === 'admin' ? (
+            <>
+              Belum ada sertifikat. Sertifikat course diterbitkan oleh mentor atau admin setelah
+              nilai akhir siswa lulus; sertifikat ujian diterbitkan otomatis saat siswa lulus
+              ujian kompetensi; sertifikat karya diterbitkan untuk pemenang kompetisi; sertifikat
+              apresiasi mentor diterbitkan oleh admin untuk mentor course; sertifikat kelulusan
+              Academy diterbitkan admin setelah siswa memegang sertifikat course ke-10 course;
+              sertifikat event diterbitkan admin untuk partisipasi event.
+            </>
+          ) : (
+            <>
+              Belum ada sertifikat. Sertifikat course diterbitkan oleh mentor atau admin setelah
+              nilai akhirmu lulus; sertifikat ujian diterbitkan otomatis saat kamu lulus ujian
+              kompetensi; sertifikat karya diterbitkan untuk pemenang kompetisi; sertifikat
+              apresiasi mentor diterbitkan oleh admin untuk mentor course; sertifikat kelulusan
+              Academy diterbitkan admin setelah kamu memegang sertifikat course ke-10 course;
+              sertifikat event diterbitkan admin untuk partisipasi event.
+            </>
+          )}
         </p>
       ) : (
         <ul className="discussion-list">
@@ -377,8 +401,13 @@ export function VerifyCertificatePage() {
     if (!key) {
       // BUGFIX 22 Nov 2026: pindah ke halaman verifikasi tanpa parameter harus
       // membersihkan hasil lama — sebelumnya hasil VALID sebelumnya tetap tampil.
+      // P59: reset juga NOT FOUND, error, dan isi input serial supaya kotak
+      // "NOT FOUND" lama tidak ikut tampil.
       autoVerifiedRef.current = ''
       setResult(null)
+      setNotFound(false)
+      setError(null)
+      setSerial('')
       return
     }
     if (autoVerifiedRef.current === key) return

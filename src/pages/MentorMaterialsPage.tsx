@@ -161,8 +161,17 @@ export default function MentorMaterialsPage() {
     }
     setEditingId(null)
     setNotice('Materi tersimpan.')
-    setLoading(true)
-    await load(user.id, profile?.role === 'admin')
+    // P41: perbarui local state, bukan reload penuh (tanpa flash "Memuat…").
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        resources: g.resources.map((r) =>
+          r.id === id
+            ? { ...r, title: editTitle.trim(), kind: editKind, url: editUrl.trim() || null, body: editBody.trim() || null }
+            : r,
+        ),
+      })),
+    )
   }
 
   async function handleDelete(r: LessonResource) {
@@ -175,8 +184,13 @@ export default function MentorMaterialsPage() {
       return
     }
     setNotice(`Materi "${r.title}" dihapus.`)
-    setLoading(true)
-    await load(user.id, profile?.role === 'admin')
+    // P41: perbarui local state, bukan reload penuh (tanpa flash "Memuat…").
+    // Grup lesson yang kehabisan materi ikut hilang dari daftar.
+    setGroups((prev) =>
+      prev
+        .map((g) => ({ ...g, resources: g.resources.filter((x) => x.id !== r.id) }))
+        .filter((g) => g.resources.length > 0),
+    )
   }
 
   if (loading) return <div className="page"><p className="muted">Memuat…</p></div>
