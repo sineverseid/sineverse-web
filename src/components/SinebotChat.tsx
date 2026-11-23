@@ -195,6 +195,16 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
   const [failedText, setFailedText] = useState<string | null>(null)
   const [feedbackSent, setFeedbackSent] = useState<Set<string>>(new Set())
   const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null)
+  // Tahap 6: flag fitur dari respons SINEBOT terakhir (sendMessage).
+  // null = belum ada respons (atau respons tanpa field features) → CTA
+  // tiket tampil seperti biasa. Hanya features.ticketing === false yang
+  // menyembunyikan CTA tiket.
+  const [lastFeatures, setLastFeatures] = useState<{
+    ticketing: boolean
+    status_check: boolean
+    kb_search: boolean
+  } | null>(null)
+  const ticketingDisabled = lastFeatures?.ticketing === false
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -364,6 +374,8 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
         setActiveId(created.id)
       }
       const reply = await sendMessage(user ? convId : null, question)
+      // Simpan flag fitur dari respons ini untuk gating CTA tiket.
+      setLastFeatures(reply.features ?? null)
       if (user && reply.conversation_id) {
         // Ambil ulang pesan tersimpan supaya jawaban AI punya id asli
         // (dibutuhkan tombol feedback) dan riwayat ikut terbarui. Bila
@@ -562,20 +574,28 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                   <div className="sinebot-msg sinebot-msg-ai">
                     <div className="sinebot-bubble">{WELCOME_TEXT}</div>
                     <div className="sinebot-quick" aria-label="Pertanyaan cepat">
-                      {quickPrompts.map((q) => (
-                        <button
-                          key={q}
-                          type="button"
-                          className="sinebot-chip"
-                          disabled={sending}
-                          onClick={() =>
-                            q === 'Hubungi admin' ? goToTicketForm() : void handleSend(q)
-                          }
-                        >
-                          {q}
-                        </button>
-                      ))}
+                      {quickPrompts
+                        .filter((q) => !(ticketingDisabled && q === 'Hubungi admin'))
+                        .map((q) => (
+                          <button
+                            key={q}
+                            type="button"
+                            className="sinebot-chip"
+                            disabled={sending}
+                            onClick={() =>
+                              q === 'Hubungi admin' ? goToTicketForm() : void handleSend(q)
+                            }
+                          >
+                            {q}
+                          </button>
+                        ))}
                     </div>
+                    {ticketingDisabled && (
+                      <p className="muted">
+                        Pembuatan tiket sedang dinonaktifkan admin — hubungi admin di
+                        sineverse.id@gmail.com.
+                      </p>
+                    )}
                   </div>
                 )}
                 {messages.map((m) => (
@@ -663,13 +683,20 @@ export default function SinebotChat({ open, onClose }: { open: boolean; onClose:
                     Coba Lagi
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={goToTicketForm}
-                >
-                  Hubungi Admin
-                </button>
+                {ticketingDisabled ? (
+                  <p className="muted">
+                    Pembuatan tiket sedang dinonaktifkan admin — hubungi admin di
+                    sineverse.id@gmail.com.
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={goToTicketForm}
+                  >
+                    Hubungi Admin
+                  </button>
+                )}
               </div>
             </div>
           )}
