@@ -1,8 +1,8 @@
 // SINEVERSE — Formulir lamaran mentor (dipakai bersama).
 //
-// Dipakai di dua tempat: jalur mentor di RegisterPage (saat mendaftar)
-// dan halaman MentorPage ("Gabung sebagai Mentor", siswa yang sudah
-// masuk). Enam info yang diminta master prompt "Pendaftaran Siswa dan
+// Dipakai di satu tempat: jalur mentor di RegisterPage (saat mendaftar).
+// Siswa tidak bisa melamar sebagai mentor dari akun siswa (24 Nov 2026).
+// Enam info yang diminta master prompt "Pendaftaran Siswa dan
 // Mentor" §2 — TIDAK ADA CV/KTP/sertifikat/surat/dokumen wajib; portofolio
 // hanya berupa tautan opsional. Peran mentor baru aktif setelah admin
 // menyetujui (trigger database 008). Migrasi 033 menambah info ke-7
