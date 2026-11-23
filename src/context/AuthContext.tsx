@@ -42,10 +42,14 @@ interface AuthContextValue {
   signUp: (
     input: SignUpInput,
   ) => Promise<{ error: string | null; needsConfirmation: boolean }>
-  /** Verifikasi kode 8 digit dari email konfirmasi pendaftaran. */
+  /** Verifikasi kode 6 digit dari email konfirmasi pendaftaran. */
   verifyOtpCode: (email: string, code: string) => Promise<{ error: string | null; user: User | null }>
   /** Kirim ulang email konfirmasi pendaftaran. */
   resendConfirmation: (email: string) => Promise<{ error: string | null }>
+  /** Minta kode pemulihan kata sandi (dikirim ke email terdaftar). */
+  requestPasswordReset: (email: string) => Promise<{ error: string | null }>
+  /** Verifikasi kode pemulihan kata sandi (6 digit dari email). */
+  verifyRecoveryCode: (email: string, code: string) => Promise<{ error: string | null; user: User | null }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
   changePassword: (newPassword: string) => Promise<{ error: string | null }>
@@ -73,7 +77,7 @@ function translateAuthError(message: string): string {
     message.toLowerCase().includes('invalid') &&
     (message.toLowerCase().includes('otp') || message.toLowerCase().includes('token'))
   ) {
-    return 'Kode salah. Periksa lagi kode 8 digit dari email kamu.'
+    return 'Kode salah. Periksa lagi kode dari email kamu.'
   }
   if (message.includes('Email rate limit exceeded')) {
     return 'Terlalu sering meminta email. Tunggu sebentar lalu coba lagi.'
@@ -244,6 +248,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error ? translateAuthError(error.message) : null }
   }, [])
 
+  const requestPasswordReset = useCallback(async (email: string) => {
+    // Supabase tidak membocorkan apakah email terdaftar: panggilan ini
+    // berhasil walau email tidak ada, jadi UI harus memakai pesan generik.
+    // Kode 6 digit dikirim bila template email "Reset Password" memuat
+    // {{ .Token }}; tautan pemulihan tetap tersedia sebagai cadangan.
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: appBaseUrl(),
+    })
+      return { error: error ? translateAuthError(error.message) : null }
+  }, [])
+    
+  const verifyRecoveryCode = useCallback(async (email: string, code: string) => {
+    const { data, error } = await supabase.auth.verifyOtp({
+      email,
+      token: code,
+      type: 'recovery',
+    })
+      return { error: error ? translateAuthError(error.message) : null, user: data.user ?? null }
+  }, [])
+    
   const dismissRegistrationNotice = useCallback(() => setRegistrationNotice(null), [])
 
   const signOut = useCallback(async () => {
@@ -281,6 +305,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
       verifyOtpCode,
       resendConfirmation,
+      requestPasswordReset,
+      verifyRecoveryCode,
       signOut,
       refreshProfile,
       changePassword,
@@ -297,6 +323,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
       verifyOtpCode,
       resendConfirmation,
+      requestPasswordReset,
+      verifyRecoveryCode,
       signOut,
       refreshProfile,
       changePassword,
