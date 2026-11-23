@@ -447,6 +447,7 @@ export default function HelpCenterPage() {
   async function handleCreateTicket(e: FormEvent): Promise<void> {
     e.preventDefault()
     if (formBusy) return // busy guard: cegah double-submit
+    if (ticketFileError) return // F4: lampiran ditolak validasi — tiket tidak boleh terkirim tanpa lampiran yang dimaksud (tombol juga disabled, guard ini menahan submit via Enter)
     setFormError(null)
     setFormSuccess(null)
     setFormBusy(true)
@@ -484,6 +485,7 @@ export default function HelpCenterPage() {
     e.preventDefault()
     if (replyBusy || !selectedTicketId || !ticketDetail) return
     if (ticketDetail.ticket.status === 'closed') return
+    if (replyFileError) return // F4: lampiran balasan ditolak validasi — balasan tidak boleh terkirim tanpa lampiran yang dimaksud
     setReplyError(null)
     setReplyBusy(true)
     try {
@@ -724,10 +726,6 @@ export default function HelpCenterPage() {
 
       <section className="section" aria-label="Riwayat percakapan">
         <h2>Riwayat Percakapan</h2>
-        <p className="muted">
-          Riwayat chat disimpan 90 hari dan terhapus otomatis setelahnya. Kamu bisa
-          menghapus percakapanmu kapan saja lewat tombol Hapus.
-        </p>
         {user ? (
           historyLoading ? (
             <p className="muted">Memuat riwayat…</p>
@@ -870,10 +868,14 @@ export default function HelpCenterPage() {
                   Hanya JPG, PNG, WebP, atau PDF, maksimal 5 MB.
                 </span>
               </label>
-              {ticketFile && (
+              {(ticketFile || ticketFileError) && (
                 <p>
-                  File dipilih: <strong>{ticketFile.name}</strong> (
-                  {formatTicketFileSize(ticketFile.size)}){' '}
+                  {ticketFile ? (
+                    <>
+                      File dipilih: <strong>{ticketFile.name}</strong> (
+                      {formatTicketFileSize(ticketFile.size)}){' '}
+                    </>
+                  ) : null}
                   <button
                     type="button"
                     className="link-button"
@@ -892,7 +894,7 @@ export default function HelpCenterPage() {
                 </p>
               )}
               <div className="form-actions">
-                <button type="submit" className="btn btn-primary" disabled={formBusy}>
+                <button type="submit" className="btn btn-primary" disabled={formBusy || ticketFileError !== null}>
                   {formBusy ? 'Mengirim…' : 'Buat Tiket'}
                 </button>
               </div>
@@ -1030,10 +1032,14 @@ export default function HelpCenterPage() {
                             Hanya JPG, PNG, WebP, atau PDF, maksimal 5 MB.
                           </span>
                         </label>
-                        {replyFile && (
+                        {(replyFile || replyFileError) && (
                           <p>
-                            File dipilih: <strong>{replyFile.name}</strong> (
-                            {formatTicketFileSize(replyFile.size)}){' '}
+                            {replyFile ? (
+                              <>
+                                File dipilih: <strong>{replyFile.name}</strong> (
+                                {formatTicketFileSize(replyFile.size)}){' '}
+                              </>
+                            ) : null}
                             <button
                               type="button"
                               className="link-button"
@@ -1050,7 +1056,7 @@ export default function HelpCenterPage() {
                           <button
                             type="submit"
                             className="btn btn-primary"
-                            disabled={replyBusy}
+                            disabled={replyBusy || replyFileError !== null}
                           >
                             {replyBusy ? 'Mengirim…' : 'Kirim Balasan'}
                           </button>
