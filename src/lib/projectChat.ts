@@ -14,6 +14,7 @@
 // (last_read_message_id), bukan satu baris per pesan.
 import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
 import { isMissingTableError } from './guarded'
+import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'
 
 /** Bucket privat file proyek (sudah ada, dipakai juga file produksi). */
@@ -78,6 +79,17 @@ function friendlyError(error: { message: string; code?: string }, action: string
       'Sesi kamu sudah berakhir. Masuk lagi untuk membuka chat ini.',
     )
   }
+  // Fase 6 (070): pesan penolakan trigger moderasi (filter konten,
+  // mention pengguna diblokir, pengirim diblokir, izin sembunyikan) —
+  // tampilkan apa adanya: sudah Bahasa Indonesia dan menjelaskan alasan.
+  if (
+    msg.includes('tidak diizinkan') ||
+    msg.includes('tidak bisa menyebut') ||
+    msg.includes('sedang diblokir') ||
+    msg.includes('diberi wewenang')
+  ) {
+    return new ProjectChatError('generic', error.message)
+  }
   if (
     code === '42501' ||
     msg.includes('permission denied') ||
@@ -126,6 +138,11 @@ export interface ProjectChatMessage {
   pinned_at: string | null
   deleted_at: string | null
   created_at: string
+  /** Fase 6 (070): disembunyikan admin/mentor berwenang; bukan-admin
+      tidak melihat baris ini (RLS), admin melihat dengan lencana. */
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   /** Dilampirkan dari profiles (pola MentorGroupPage). */
   sender: ProjectChatSender | null
 }
@@ -154,6 +171,9 @@ function parseMessageRow(row: Record<string, unknown>): ProjectChatMessage {
     pinned_at: typeof row.pinned_at === 'string' ? row.pinned_at : null,
     deleted_at: typeof row.deleted_at === 'string' ? row.deleted_at : null,
     created_at: typeof row.created_at === 'string' ? row.created_at : '',
+    is_hidden: row.is_hidden === true,
+    hidden_by: typeof row.hidden_by === 'string' ? row.hidden_by : null,
+    hidden_at: typeof row.hidden_at === 'string' ? row.hidden_at : null,
     sender: null,
   }
 }
@@ -448,7 +468,14 @@ export async function sendMessage(input: SendMessageInput): Promise<ProjectChatM
     })
     .select()
     .single()
-  if (error) throw friendlyError(error, 'Gagal mengirim pesan.')
+  if (error) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (error.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('project_chat_message', { reason: 'filter' })
+    }
+    throw friendlyError(error, 'Gagal mengirim pesan.')
+  }
   if (!isRecord(data)) {
     throw new ProjectChatError('generic', 'Gagal mengirim pesan. Coba lagi sebentar lagi.')
   }

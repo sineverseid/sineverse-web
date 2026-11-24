@@ -15,6 +15,7 @@
 //   untuk validasi isi file (magic byte).
 import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
 import { isMissingTableError } from './guarded'
+import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'
 
 /** 11 kategori awal (Master Prompt Bagian I §3, urutan sesuai PDF). */
@@ -86,6 +87,17 @@ function friendlyError(error: { message: string; code?: string }, action: string
       'Sesi kamu sudah berakhir. Masuk lagi untuk membuka komunitas ini.',
     )
   }
+  // Fase 6 (070): pesan penolakan trigger moderasi (filter konten,
+  // mention pengguna diblokir, pengirim diblokir, izin sembunyikan) —
+  // tampilkan apa adanya: sudah Bahasa Indonesia dan menjelaskan alasan.
+  if (
+    msg.includes('tidak diizinkan') ||
+    msg.includes('tidak bisa menyebut') ||
+    msg.includes('sedang diblokir') ||
+    msg.includes('diberi wewenang')
+  ) {
+    return new StudentCommunityError('generic', error.message)
+  }
   if (
     code === '42501' ||
     msg.includes('permission denied') ||
@@ -127,6 +139,11 @@ export interface StudentCommunityPost {
   attachment_type: string | null
   mentioned_user_ids: string[]
   created_at: string
+  /** Fase 6 (070): disembunyikan admin/mentor berwenang; bukan-admin
+      tidak melihat baris ini (RLS), admin melihat dengan lencana. */
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   /** Dilampirkan dari profiles (pola CommunityDetailPage). */
   author: StudentCommunityAuthor | null
 }
@@ -139,6 +156,10 @@ export interface StudentCommunityReply {
   body: string
   mentioned_user_ids: string[]
   created_at: string
+  /** Fase 6 (070): lihat StudentCommunityPost. */
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   author: StudentCommunityAuthor | null
 }
 
@@ -173,6 +194,9 @@ function parsePostRow(row: Record<string, unknown>): StudentCommunityPost {
       ? (row.mentioned_user_ids.filter((v) => typeof v === 'string') as string[])
       : [],
     created_at: typeof row.created_at === 'string' ? row.created_at : '',
+    is_hidden: row.is_hidden === true,
+    hidden_by: typeof row.hidden_by === 'string' ? row.hidden_by : null,
+    hidden_at: typeof row.hidden_at === 'string' ? row.hidden_at : null,
     author: null,
   }
 }
@@ -188,6 +212,9 @@ function parseReplyRow(row: Record<string, unknown>): StudentCommunityReply {
       ? (row.mentioned_user_ids.filter((v) => typeof v === 'string') as string[])
       : [],
     created_at: typeof row.created_at === 'string' ? row.created_at : '',
+    is_hidden: row.is_hidden === true,
+    hidden_by: typeof row.hidden_by === 'string' ? row.hidden_by : null,
+    hidden_at: typeof row.hidden_at === 'string' ? row.hidden_at : null,
     author: null,
   }
 }
@@ -508,7 +535,14 @@ export async function sendPost(input: SendPostInput): Promise<StudentCommunityPo
     })
     .select()
     .single()
-  if (error) throw friendlyError(error, 'Gagal mengirim postingan.')
+  if (error) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (error.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('community_post', { reason: 'filter' })
+    }
+    throw friendlyError(error, 'Gagal mengirim postingan.')
+  }
   if (!isRecord(data)) {
     throw new StudentCommunityError('generic', 'Gagal mengirim postingan. Coba lagi sebentar lagi.')
   }
@@ -546,7 +580,14 @@ export async function sendReply(input: SendReplyInput): Promise<StudentCommunity
     })
     .select()
     .single()
-  if (error) throw friendlyError(error, 'Gagal mengirim balasan.')
+  if (error) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (error.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('community_reply', { reason: 'filter' })
+    }
+    throw friendlyError(error, 'Gagal mengirim balasan.')
+  }
   if (!isRecord(data)) {
     throw new StudentCommunityError('generic', 'Gagal mengirim balasan. Coba lagi sebentar lagi.')
   }

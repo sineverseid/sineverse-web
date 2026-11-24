@@ -21,6 +21,7 @@
 // filter status/publish_at untuk tampilan (belt-and-braces).
 import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
 import { isMissingTableError } from './guarded'
+import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'
 import type { Announcement } from './types'
 
@@ -100,6 +101,12 @@ function friendlyError(err: unknown, fallback: string): AnnouncementError {
   if (err instanceof AnnouncementError) return err
   if (err instanceof Error) {
     const msg = err.message || fallback
+    // Fase 6 (070): pesan penolakan trigger moderasi (filter konten,
+    // pengirim diblokir, izin sembunyikan) — tampilkan apa adanya: sudah
+    // Bahasa Indonesia dan menjelaskan alasan.
+    if (/tidak diizinkan|tidak bisa menyebut|sedang diblokir|diberi wewenang/i.test(msg)) {
+      return new AnnouncementError('generic', msg)
+    }
     if (/row-level security/i.test(msg) || /42501/.test(msg)) {
       return new AnnouncementError('unauthorized', 'Aksi ini hanya untuk admin.')
     }
@@ -205,6 +212,11 @@ export async function createAnnouncement(input: CreateAnnouncementInput): Promis
     .select('*')
     .single()
   if (insErr || !inserted) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (insErr && insErr.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('announcement', { reason: 'filter' })
+    }
     throw friendlyError(insErr, 'Gagal membuat pengumuman.')
   }
   const row = inserted as Announcement
@@ -320,7 +332,14 @@ export async function updateAnnouncement(
     .eq('id', id)
     .select('*')
     .single()
-  if (error || !data) throw friendlyError(error, 'Gagal mengubah pengumuman.')
+  if (error || !data) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (error && error.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('announcement', { reason: 'filter' })
+    }
+    throw friendlyError(error, 'Gagal mengubah pengumuman.')
+  }
   return data as Announcement
 }
 

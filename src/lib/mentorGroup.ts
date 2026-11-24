@@ -16,6 +16,7 @@
 // - Tabel belum ada: isMissingTableError dari lib/guarded.
 import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
 import { isMissingTableError } from './guarded'
+import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'
 
 /** Satu-satunya grup resmi Mentor Community (migrasi 060). */
@@ -82,6 +83,17 @@ function friendlyError(error: { message: string; code?: string }, action: string
       'Sesi kamu sudah berakhir. Masuk lagi untuk membuka grup ini.',
     )
   }
+  // Fase 6 (070): pesan penolakan trigger moderasi (filter konten,
+  // mention pengguna diblokir, pengirim diblokir, izin sembunyikan) —
+  // tampilkan apa adanya: sudah Bahasa Indonesia dan menjelaskan alasan.
+  if (
+    msg.includes('tidak diizinkan') ||
+    msg.includes('tidak bisa menyebut') ||
+    msg.includes('sedang diblokir') ||
+    msg.includes('diberi wewenang')
+  ) {
+    return new MentorGroupError('generic', error.message)
+  }
   if (
     code === '42501' ||
     msg.includes('permission denied') ||
@@ -128,6 +140,11 @@ export interface MentorGroupMessage {
   pinned_by: string | null
   pinned_at: string | null
   mentioned_user_ids: string[]
+  /** Fase 6 (070): disembunyikan admin/mentor berwenang; bukan-admin
+      tidak melihat baris ini (RLS), admin melihat dengan lencana. */
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   /** Dilampirkan dari profiles (pola CommunityDetailPage). */
   sender: MentorGroupSender | null
 }
@@ -158,6 +175,9 @@ function parseMessageRow(row: Record<string, unknown>): MentorGroupMessage {
     mentioned_user_ids: Array.isArray(row.mentioned_user_ids)
       ? (row.mentioned_user_ids.filter((v) => typeof v === 'string') as string[])
       : [],
+    is_hidden: row.is_hidden === true,
+    hidden_by: typeof row.hidden_by === 'string' ? row.hidden_by : null,
+    hidden_at: typeof row.hidden_at === 'string' ? row.hidden_at : null,
     sender: null,
   }
 }
@@ -397,7 +417,14 @@ export async function sendMessage(input: SendMessageInput): Promise<MentorGroupM
     })
     .select()
     .single()
-  if (error) throw friendlyError(error, 'Gagal mengirim pesan.')
+  if (error) {
+    // Filter konten menolak di transaksi yang sama — catat ke audit_log
+    // (best-effort, tidak mengganggu pengguna).
+    if (error.message.toLowerCase().includes('tidak diizinkan')) {
+      void logContentBlocked('mentor_group_message', { reason: 'filter' })
+    }
+    throw friendlyError(error, 'Gagal mengirim pesan.')
+  }
   if (!isRecord(data)) {
     throw new MentorGroupError('generic', 'Gagal mengirim pesan. Coba lagi sebentar lagi.')
   }

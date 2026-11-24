@@ -441,6 +441,11 @@ export interface CommunityPost {
   attachment_name?: string | null
   attachment_type?: string | null
   mentioned_user_ids?: string[]
+  // 070 (Fase 6): disembunyikan admin/mentor berwenang; bukan-admin
+  // tidak melihat baris ini (RLS), admin melihat dengan lencana.
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   author?: { name: string | null; photo_url: string | null; role?: string | null } | null
 }
 
@@ -454,6 +459,10 @@ export interface CommunityPostReply {
   // langsung ke postingan); mentioned_user_ids untuk @mention.
   parent_id?: string | null
   mentioned_user_ids?: string[]
+  // 070 (Fase 6): lihat CommunityPost.
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
   author?: { name: string | null; photo_url: string | null; role?: string | null } | null
 }
 
@@ -886,6 +895,45 @@ export interface AuditLogRow {
   created_at: string
 }
 
+// Fase 6 (070): blokir global oleh admin.
+export interface UserBlock {
+  id: string
+  blocker_id: string
+  blocked_id: string
+  reason: string | null
+  created_at: string
+}
+
+// Fase 6 (070): riwayat tindakan moderasi (trigger menulis audit_log).
+export interface ModerationAction {
+  id: string
+  actor_id: string
+  action: string
+  target_type: string | null
+  target_id: string | null
+  reason: string | null
+  created_at: string
+}
+
+// Fase 6 (070): hak moderasi per mentor, dikonfigurasi admin.
+export interface MentorModerationPermission {
+  mentor_id: string
+  can_pin: boolean
+  can_hide: boolean
+  can_warn: boolean
+  updated_by: string | null
+  updated_at: string
+}
+
+// Fase 6 (070): kata/frasa terlarang (filter konten server-side).
+export interface ModerationFilter {
+  id: string
+  pattern: string
+  is_active: boolean
+  created_by: string | null
+  created_at: string
+}
+
 export interface AppNotification {
   id: string
   user_id: string
@@ -924,6 +972,10 @@ export interface Announcement {
   publish_at?: string | null
   /** Fase 4 (067): 'draft' | 'scheduled' | 'published'. */
   status?: string
+  /** Fase 6 (070): disembunyikan admin/mentor berwenang. */
+  is_hidden?: boolean
+  hidden_by?: string | null
+  hidden_at?: string | null
 }
 
 export interface CourseAnnouncement {
