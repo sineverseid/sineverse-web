@@ -683,8 +683,8 @@ p {
 }
 
 .login-forgot {
-   text-align: right;
-   margin: -0.25rem 0 0;
+  text-align: right;
+  margin: -0.25rem 0 0;
 }
 
 .login-register {
@@ -3310,6 +3310,335 @@ a.task-card:hover {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+/* --- Chat grup modern (referensi Arif 24 Nov 2026) ---
+   Dipakai MentorGroupPage (chat) + header CommunityDetailPage.
+   Palet sama dengan brand: navy #172438, film green #16865e,
+   mint #a3e6c4, latar #eef2f6. Jangan ubah .post-card di atas —
+   kartu forum komunitas tetap memakai gaya itu. */
+.chat-shell {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+
+.chat-header {
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 1rem 1.1rem;
+}
+
+.chat-header-icon {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--film-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.chat-header-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-header-title {
+  margin: 0;
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.chat-header-sub {
+  margin: 0.1rem 0 0;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.85rem;
+}
+
+.chat-header-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.85rem;
+}
+
+.chat-header-pill {
+  display: inline-block;
+  background: #0c5c40;
+  color: var(--mint);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.chat-kebab {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  padding: 0.35rem;
+  margin: -0.35rem -0.35rem 0 0;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.chat-kebab:hover,
+.chat-kebab:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.chat-tools {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.7rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid var(--light-grey);
+}
+
+.chat-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--soft-white);
+  border: 1px solid var(--light-grey);
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.chat-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  padding: 0;
+  outline: none;
+}
+
+.chat-list {
+  background: #eef2f6;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.chat-date-pill {
+  display: flex;
+  justify-content: center;
+  margin: 0.25rem 0 0.9rem;
+}
+
+.chat-date-pill span {
+  background: #dde4ec;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.2rem 0.85rem;
+  border-radius: 999px;
+}
+
+.chat-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.chat-row:last-child {
+  margin-bottom: 0;
+}
+
+.chat-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.chat-avatar-mentor {
+  background: var(--mint-soft);
+  color: #0c5c40;
+}
+
+.chat-avatar-admin {
+  background: #dbe7f3;
+  color: var(--navy);
+}
+
+.chat-bubble {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(23, 36, 56, 0.06);
+  padding: 0.75rem 1rem;
+}
+
+.chat-bubble-pinned {
+  outline: 2px solid var(--mint);
+  outline-offset: -2px;
+}
+
+.chat-name {
+  margin: 0 0 0.15rem;
+  font-weight: 800;
+  color: var(--navy);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  white-space: nowrap;
+  background: var(--mint-soft);
+  color: #0c5c40;
+}
+
+.chat-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-time {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.chat-quote {
+  border-left: 3px solid var(--light-grey);
+  padding-left: 0.5rem;
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chat-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  margin-top: 0.5rem;
+}
+
+.chat-composer {
+  background: #fff;
+  border-top: 1px solid var(--light-grey);
+  padding: 0.75rem 1rem 1rem;
+}
+
+.chat-composer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.chat-composer-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.chat-composer-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--light-grey);
+  border-radius: 999px;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--soft-white);
+  resize: none;
+  line-height: 1.4;
+}
+
+.chat-composer-input:focus {
+  outline: 2px solid var(--film-green);
+  outline-offset: 1px;
+  background: #fff;
+}
+
+.chat-send {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: var(--film-green);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.chat-send:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chat-send:hover:not(:disabled),
+.chat-send:focus-visible {
+  background: #0f7350;
+  outline: none;
+}
+
+.chat-mention-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.chat-mention-list button {
+  width: 100%;
+  text-align: left;
 }
 
 /* --- Profil: hero avatar besar + daftar menu --- */
