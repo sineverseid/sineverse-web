@@ -2069,11 +2069,14 @@ p {
   }
 }
 
-/* Desktop 960–1599px: sembunyikan tagline brand (elemen terlebar di
-   brand) dan persempit nama profil supaya nav mendapat ruang lebih —
-   logo + nama "SINEVERSE" tetap tampil, menu tidak ada yang dihapus.
-   ≥1600px tagline tampil lagi seperti semula. */
-@media (min-width: 960px) and (max-width: 1599px) {
+/* Desktop ≥960px: sembunyikan tagline brand (elemen terlebar di brand)
+   dan persempit nama profil supaya nav mendapat ruang lebih — logo +
+   nama "SINEVERSE" tetap tampil, menu tidak ada yang dihapus. Tagline
+   tetap tampil di bawah 960px (tanpa nav atas) dan di hero. Perluasan
+   24 Nov 2026: semula hanya 960–1599px, tapi di 1920px tagline kembali
+   tampil dan "Portofolio" masih terpotong satu huruf — jadi
+   disembunyikan di semua lebar desktop. */
+@media (min-width: 960px) {
   .topbar .brand-tagline {
     display: none;
   }
