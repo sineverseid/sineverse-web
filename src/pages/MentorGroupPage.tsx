@@ -557,7 +557,7 @@ export default function MentorGroupPage() {
             <p className="chat-quote">Membalas pesan sebelumnya.</p>
           ) : null}
           {deleted ? (
-            <p className="chat-text muted">Pesan ini dihapus oleh admin.</p>
+            <p className="chat-text muted">Pesan ini dihapus.</p>
           ) : (
             <p className="chat-text">{renderBody(m.body, memberNames)}</p>
           )}
