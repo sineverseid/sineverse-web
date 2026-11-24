@@ -1182,14 +1182,22 @@ export type NotificationRealtimeStatus = 'ok' | 'error'
 /** Langganan Realtime untuk notifikasi milik sendiri (postgres_changes INSERT;
     butuh migrasi 075 yang menambah tabel notifications ke publikasi
     supabase_realtime). onStatus 'error' berarti halaman menampilkan notice
-    jujur; lonceng tetap diperbarui lewat polling saat foreground. */
+    jujur; lonceng tetap diperbarui lewat polling saat foreground.
+    Nama channel WAJIB unik per tempat langganan: supabase.channel(nama)
+    mengembalikan channel yang sama bila namanya sudah ada, dan menambah
+    postgres_changes ke channel yang sudah subscribe() MELEMPAR error
+    ("cannot add postgres_changes callbacks ... after subscribe()") —
+    itulah yang membuat halaman Notifikasi blank pada deploy Fase 1 pertama
+    (24 Nov 2026), karena Layout dan halaman memakai nama 'notifications'
+    yang sama. Lonceng memakai 'notifications-bell', halaman 'notifications-page'. */
 export function subscribeToNotifications(
   userId: string,
   onInsert: (n: AppNotification) => void,
   onStatus?: (status: NotificationRealtimeStatus) => void,
+  channelName = 'notifications-page',
 ): () => void {
   const channel = supabase
-    .channel('notifications')
+    .channel(channelName)
     .on(
       'postgres_changes',
       {
