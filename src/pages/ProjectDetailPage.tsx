@@ -8,6 +8,8 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { fetchCrewProfiles, fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
+import { fetchProjectChatSummary } from '../lib/projectChat'
+import type { ProjectChatSummary } from '../lib/projectChat'
 import type {
   Project,
   ProjectAccessMode,
@@ -78,6 +80,9 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Chat Tim (Fase 3, migrasi 068): ringkasan unread + pesan terakhir.
+  const [chatSummary, setChatSummary] = useState<ProjectChatSummary | null>(null)
+  const [chatReady, setChatReady] = useState(false)
 
   const [taskTitle, setTaskTitle] = useState('')
   const [taskDesc, setTaskDesc] = useState('')
@@ -223,6 +228,29 @@ export default function ProjectDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  // Ringkasan Chat Tim (Fase 3): hanya anggota/pemilik/admin. Bila migrasi
+  // 068 belum diterapkan, kartu disembunyikan (bukan error halaman).
+  useEffect(() => {
+    if (!id || !user) return
+    if (!isMember && !isAdmin) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const summary = await fetchProjectChatSummary(id, user.id)
+        if (!cancelled) {
+          setChatSummary(summary)
+          setChatReady(true)
+        }
+      } catch {
+        if (!cancelled) setChatReady(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, user?.id, isMember, isAdmin])
 
   if (loading) return <div className="page"><p className="muted">Memuat proyek…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -629,6 +657,30 @@ export default function ProjectDetailPage() {
           ))}
         </ul>
       </section>
+
+      {(isMember || isAdmin) && chatReady && (
+        <section className="section">
+          <h2>Chat Tim</h2>
+          {chatSummary && chatSummary.unread > 0 ? (
+            <p className="notice-box">{chatSummary.unread} pesan belum dibaca.</p>
+          ) : (
+            <p className="muted">Semua pesan sudah dibaca.</p>
+          )}
+          {chatSummary?.latest ? (
+            <p className="muted">
+              Terakhir dari {chatSummary.latest.senderName} · {fmtDate(chatSummary.latest.createdAt)}: {(chatSummary.latest.body || '[Lampiran]').slice(0, 120)}
+              {chatSummary.latest.body.length > 120 ? '…' : ''}
+            </p>
+          ) : (
+            <p className="muted">Belum ada pesan di chat tim.</p>
+          )}
+          <p>
+            <Link to={`/proyek/${currentProject.id}/chat`} className="btn btn-primary">
+              Buka Chat Tim
+            </Link>
+          </p>
+        </section>
+      )}
 
       {(isOwner || isAdmin) && requests.filter((r) => r.status === 'pending').length > 0 && (
         <section className="section">

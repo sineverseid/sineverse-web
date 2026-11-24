@@ -37,6 +37,8 @@ const KIND_LABELS: Record<string, string> = {
   mentor_group_message: 'Komunitas Mentor',
   mentor_group_announcement: 'Pengumuman Komunitas Mentor',
   announcement_published: 'Pengumuman',
+  project_chat_mention: 'Disebut di Chat Proyek',
+  project_chat_message: 'Chat Proyek',
   project: 'Proyek',
   film: 'Film',
   waitlist: 'Daftar Tunggu',
@@ -78,6 +80,14 @@ function notificationLink(n: AppNotification): { href: string; label: string } |
     return {
       href: communityId ? `/komunitas/${communityId}` : '/komunitas',
       label: 'Buka di Komunitas →',
+    }
+  }
+  if (n.kind === 'project_chat_mention' || n.kind === 'project_chat_message') {
+    const projectId =
+      n.data && typeof n.data.project_id === 'string' ? n.data.project_id : null
+    return {
+      href: projectId ? `/proyek/${projectId}/chat` : '/proyek',
+      label: 'Buka di Chat Proyek →',
     }
   }
   return null
