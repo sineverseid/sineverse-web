@@ -618,7 +618,7 @@ export default function MentorGroupPage() {
                   {m.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
                 </button>
               )}
-              {isAdmin && (
+              {(isAdmin || m.sender_id === user?.id) && (
                 <button
                   type="button"
                   className="btn btn-ghost btn-small"
