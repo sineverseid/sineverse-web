@@ -3,7 +3,7 @@
 // Registration relies on the database trigger (002/010): a profiles row is
 // created automatically on signup, so the client never inserts into
 // profiles. Supabase "Confirm email" is ON, so signUp returns no session
-// until the user confirms via the email link or the 6-digit code
+// until the user confirms via the email link or the 8-digit code
 // (verifyOtp type 'signup'). Data pendaftaran lengkap dikirim lewat
 // user_metadata; foto file dan lamaran mentor diselesaikan setelah masuk
 // (lihat lib/registration.ts) karena butuh sesi terautentikasi.
@@ -42,13 +42,13 @@ interface AuthContextValue {
   signUp: (
     input: SignUpInput,
   ) => Promise<{ error: string | null; needsConfirmation: boolean }>
-  /** Verifikasi kode 6 digit dari email konfirmasi pendaftaran. */
+  /** Verifikasi kode 8 digit dari email konfirmasi pendaftaran. */
   verifyOtpCode: (email: string, code: string) => Promise<{ error: string | null; user: User | null }>
   /** Kirim ulang email konfirmasi pendaftaran. */
   resendConfirmation: (email: string) => Promise<{ error: string | null }>
   /** Minta kode pemulihan kata sandi (dikirim ke email terdaftar). */
   requestPasswordReset: (email: string) => Promise<{ error: string | null }>
-  /** Verifikasi kode pemulihan kata sandi (6 digit dari email). */
+  /** Verifikasi kode pemulihan kata sandi (8 digit dari email). */
   verifyRecoveryCode: (email: string, code: string) => Promise<{ error: string | null; user: User | null }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
@@ -226,7 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     if (error) return { error: translateAuthError(error.message), needsConfirmation: false }
     // With email confirmation ON, there is no session until the user clicks
-    // the confirmation link or confirms the 6-digit code.
+    // the confirmation link or confirms the 8-digit code.
     return { error: null, needsConfirmation: !data.session }
   }, [])
 
@@ -251,23 +251,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestPasswordReset = useCallback(async (email: string) => {
     // Supabase tidak membocorkan apakah email terdaftar: panggilan ini
     // berhasil walau email tidak ada, jadi UI harus memakai pesan generik.
-    // Kode 6 digit dikirim bila template email "Reset Password" memuat
+    // Kode 8 digit dikirim bila template email "Reset Password" memuat
     // {{ .Token }}; tautan pemulihan tetap tersedia sebagai cadangan.
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: appBaseUrl(),
     })
-      return { error: error ? translateAuthError(error.message) : null }
+    return { error: error ? translateAuthError(error.message) : null }
   }, [])
-    
+
   const verifyRecoveryCode = useCallback(async (email: string, code: string) => {
     const { data, error } = await supabase.auth.verifyOtp({
       email,
       token: code,
       type: 'recovery',
     })
-      return { error: error ? translateAuthError(error.message) : null, user: data.user ?? null }
+    return { error: error ? translateAuthError(error.message) : null, user: data.user ?? null }
   }, [])
-    
+
   const dismissRegistrationNotice = useCallback(() => setRegistrationNotice(null), [])
 
   const signOut = useCallback(async () => {
