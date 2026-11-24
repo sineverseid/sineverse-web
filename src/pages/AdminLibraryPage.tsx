@@ -16,11 +16,8 @@ import EmptyState from '../components/EmptyState'
 
 const LIBRARY_IMAGES_BUCKET = 'library-images'
 const LIBRARY_FILES_BUCKET = 'library-files'
-/** Batas ukuran gambar ilustrasi Pustaka (sama seperti gambar materi lesson). */
-const LIBRARY_IMAGE_MAX_BYTES = 10 * 1024 * 1024
-/** Batas ukuran lampiran (sama seperti materi lesson: video 100 MB, file 20 MB). */
-const LIBRARY_VIDEO_MAX_BYTES = 100 * 1024 * 1024
-const LIBRARY_FILE_MAX_BYTES = 20 * 1024 * 1024
+// TANPA batas ukuran (Arif, 24 Nov 2026): gambar, video, dan file
+// lampiran Pustaka boleh diunggah berapa pun ukurannya.
 const LIBRARY_FILE_EXTENSIONS = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'zip', 'txt']
 
 function fileExtension(name: string): string {
@@ -96,10 +93,6 @@ export default function AdminLibraryPage() {
       setNotice('File harus berupa gambar.')
       return
     }
-    if (file.size > LIBRARY_IMAGE_MAX_BYTES) {
-      setNotice('Ukuran gambar maksimal 10 MB.')
-      return
-    }
     if (imagePreview) URL.revokeObjectURL(imagePreview)
     setImageFile(file)
     setImagePreview(URL.createObjectURL(file))
@@ -115,13 +108,8 @@ export default function AdminLibraryPage() {
   function handleAttachmentSelect(file: File | undefined) {
     if (!file) return
     const video = file.type.startsWith('video/') || isVideoName(file.name)
-    const max = video ? LIBRARY_VIDEO_MAX_BYTES : LIBRARY_FILE_MAX_BYTES
     if (!video && !LIBRARY_FILE_EXTENSIONS.includes(fileExtension(file.name))) {
       setNotice('Jenis file tidak didukung. Pilih video atau dokumen (PDF, Word, PowerPoint, Excel, ZIP, TXT).')
-      return
-    }
-    if (file.size > max) {
-      setNotice(`Ukuran ${video ? 'video' : 'file'} maksimal ${formatFileSize(max)}.`)
       return
     }
     if (attachmentPreview) URL.revokeObjectURL(attachmentPreview)
