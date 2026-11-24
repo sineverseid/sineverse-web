@@ -12,7 +12,7 @@
 // AdminPage) menelan error supaya kegagalan email TIDAK PERNAH menggagalkan
 // registrasi / keputusan lamaran.
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL, supabase } from './supabase'
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 
 export const EMAIL_ATTACHMENTS_BUCKET = 'email-attachments'
 export const EMAIL_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024

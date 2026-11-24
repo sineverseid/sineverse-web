@@ -19,7 +19,7 @@
 // RLS sudah mengatur siapa boleh baca (published + sesuai target) — fungsi
 // di sini TIDAK memfilter manual yang bertentangan dengan RLS, kecuali
 // filter status/publish_at untuk tampilan (belt-and-braces).
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 import { isMissingTableError } from './guarded'
 import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'

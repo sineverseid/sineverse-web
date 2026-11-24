@@ -14,7 +14,7 @@
 // - Nama penulis: fetchProfileNames + lampirkan profil seperti
 //   CommunityDetailPage (author diisi dari profiles).
 // - Tabel belum ada: isMissingTableError dari lib/guarded.
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 import { isMissingTableError } from './guarded'
 import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'

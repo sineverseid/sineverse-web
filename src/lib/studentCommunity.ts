@@ -13,7 +13,7 @@
 // - CommunityDetailPage: nama penulis dilampirkan dari profiles.
 // - sinebot.ts: checkTicketAttachmentContent + sanitizeTicketFileName
 //   untuk validasi isi file (magic byte).
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 import { isMissingTableError } from './guarded'
 import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'

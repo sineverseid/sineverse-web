@@ -12,7 +12,7 @@
 // Perbedaan: keanggotaan dari project_members + owner (bukan tabel grup);
 // tandai-baca satu baris per (proyek, pengguna) di project_chat_reads
 // (last_read_message_id), bukan satu baris per pesan.
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 import { isMissingTableError } from './guarded'
 import { logContentBlocked } from './moderation'
 import { supabase } from './supabase'

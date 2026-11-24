@@ -12,7 +12,7 @@
 // ini publik, jadi URL diambil dari getPublicUrl (bukan signed URL).
 // Cek magic byte gambar/PDF memakai ulang checkTicketAttachmentContent
 // dari lib/sinebot (temuan LMP-04 Tahap 6).
-import { checkTicketAttachmentContent, sanitizeTicketFileName } from './sinebot'
+import { checkTicketAttachmentContent, sanitizeTicketFileName } from './attachmentValidation'
 import { supabase } from './supabase'
 import type { LessonResource } from './types'
 

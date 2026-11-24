@@ -24,7 +24,7 @@
 // diimpor ulang. Parsing dibuat defensif (kolom dibaca apa adanya dari
 // baris RPC) karena bentuk persis support_tickets /
 // support_ticket_messages ditentukan migrasi backend Tahap 4.
-import { checkTicketAttachmentContent } from './sinebot'
+import { checkTicketAttachmentContent } from './attachmentValidation'
 import { supabase } from './supabase'
 
 export type TicketStatus =
