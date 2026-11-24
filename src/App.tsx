@@ -66,7 +66,7 @@ const MentorVideosPage = lazy(() => import('./pages/MentorVideosPage'))
 const MentorAnalyticsPage = lazy(() => import('./pages/MentorAnalyticsPage'))
 const MentorCourseBuilderPage = lazy(() => import('./pages/MentorCourseBuilderPage'))
 const MentorDiscussionsPage = lazy(() => import('./pages/MentorDiscussionsPage'))
-  const MentorGroupPage = lazy(() => import('./pages/MentorGroupPage'))
+const MentorGroupPage = lazy(() => import('./pages/MentorGroupPage'))
 const MentorStudentsPage = lazy(() => import('./pages/MentorStudentsPage'))
 const MentorsPage = lazy(() => import('./pages/MentorsPage'))
 const ModerationPage = lazy(() => import('./pages/ModerationPage'))
@@ -75,6 +75,7 @@ const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const OfficeHoursPage = lazy(() => import('./pages/OfficeHoursPage'))
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const ProjectChatPage = lazy(() => import('./pages/ProjectChatPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const QuizPage = lazy(() => import('./pages/QuizPage'))
@@ -156,21 +157,23 @@ export default function App() {
             <Route path="komunitas" element={<Protected><CommunitiesPage /></Protected>} />
             <Route path="komunitas/:id" element={<Protected><CommunityDetailPage /></Protected>} />
             {/* Mentor Community (Fase 1, migrasi 060/061) — grup resmi admin +
-            mentor; RoleRoute menampilkan "Akses terbatas" di tempat
-            untuk peran lain (siswa/mentor pending). */}
+                mentor; RoleRoute menampilkan "Akses terbatas" di tempat
+                untuk peran lain (siswa/mentor pending). */}
             <Route
               path="komunitas-mentor"
               element={
-              <RoleRoute roles={['mentor', 'admin']}>
-                <MentorGroupPage />
-              </RoleRoute>
+                <RoleRoute roles={['mentor', 'admin']}>
+                  <MentorGroupPage />
+                </RoleRoute>
               }
-              />
+            />
             <Route path="sekolah" element={<Protected><SchoolsPage /></Protected>} />
             {/* Projects / Crew Finder (Fase C) */}
             <Route path="proyek/perkenalan" element={<IntroProjectsPage />} />
             <Route path="proyek" element={<Protected><ProjectsPage /></Protected>} />
             <Route path="proyek/:id" element={<Protected><ProjectDetailPage /></Protected>} />
+            {/* Project Team Chat (Fase 3, migrasi 068) — chat privat anggota proyek. */}
+            <Route path="proyek/:id/chat" element={<Protected><ProjectChatPage /></Protected>} />
             <Route path="proyek-akhir" element={<FinalProjectsPage />} />
             <Route path="proyek-akhir/:id" element={<Protected><FinalProjectDetailPage /></Protected>} />
             <Route path="kru" element={<Protected><CrewFinderPage /></Protected>} />
