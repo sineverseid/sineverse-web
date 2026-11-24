@@ -58,6 +58,15 @@ const KIND_LABELS: Record<string, string> = {
   project_chat_message: 'Chat Proyek',
   moderation_warning: 'Peringatan Moderasi',
   project: 'Proyek',
+  project_invite: 'Undangan Proyek',
+  project_invite_accepted: 'Undangan Diterima',
+  project_invite_declined: 'Undangan Ditolak',
+  project_join_request: 'Permintaan Gabung',
+  project_join_approved: 'Gabung Disetujui',
+  project_join_rejected: 'Gabung Ditolak',
+  final_project_review: 'Umpan Balik Proyek Akhir',
+  final_project_status: 'Status Proyek Akhir',
+  reminder_final_task: 'Pengingat Tugas Proyek Akhir',
   film: 'Film',
   waitlist: 'Daftar Tunggu',
 }
@@ -107,6 +116,48 @@ function notificationLink(n: AppNotification): { href: string; label: string } |
       href: projectId ? `/proyek/${projectId}/chat` : '/proyek',
       label: 'Buka di Chat Proyek →',
     }
+  }
+  // Fase 2 — sertifikat: daftar sertifikat milik sendiri.
+  if (n.kind === 'certificate') {
+    return { href: '/sertifikat', label: 'Lihat sertifikat →' }
+  }
+  // Fase 2 — undangan/gabung proyek (6 kind, satu kasus): detail proyek.
+  if (
+    n.kind === 'project_invite' ||
+    n.kind === 'project_invite_accepted' ||
+    n.kind === 'project_invite_declined' ||
+    n.kind === 'project_join_request' ||
+    n.kind === 'project_join_approved' ||
+    n.kind === 'project_join_rejected'
+  ) {
+    const projectId =
+      n.data && typeof n.data.project_id === 'string' ? n.data.project_id : null
+    return {
+      href: projectId ? `/proyek/${projectId}` : '/proyek',
+      label: 'Buka proyek →',
+    }
+  }
+  // Fase 2 — proyek akhir (review/status): detail proyek akhir.
+  if (n.kind === 'final_project_review' || n.kind === 'final_project_status') {
+    const projectId =
+      n.data && typeof n.data.project_id === 'string' ? n.data.project_id : null
+    return {
+      href: projectId ? `/proyek-akhir/${projectId}` : '/proyek-akhir',
+      label: 'Buka proyek akhir →',
+    }
+  }
+  // Fase 2 — mentor_assigned bercabang: konteks proyek akhir (data.context
+  // === 'final_project') menaut ke proyek akhir; konteks klaim-course lama
+  // (tanpa project_id) tetap tanpa tautan seperti sebelumnya.
+  if (n.kind === 'mentor_assigned') {
+    const projectId =
+      n.data && typeof n.data.project_id === 'string' ? n.data.project_id : null
+    const context =
+      n.data && typeof n.data.context === 'string' ? n.data.context : null
+    if (context === 'final_project' && projectId) {
+      return { href: `/proyek-akhir/${projectId}`, label: 'Buka proyek akhir →' }
+    }
+    return null
   }
   return null
 }
