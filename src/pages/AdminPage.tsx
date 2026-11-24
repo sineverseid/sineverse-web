@@ -22,6 +22,22 @@ import {
   updateAnnouncement,
 } from '../lib/announcements'
 import type { AnnouncementTarget } from '../lib/announcements'
+import {
+  ADMIN_TEST_EMAIL_DEFAULT,
+  deleteAttachment,
+  emailStatusLabel,
+  emailTemplateLabel,
+  fetchAttachments,
+  fetchLogs,
+  fetchTemplates,
+  invokeWelcomeEmailForUser,
+  processQueuedEmails,
+  resendEmail,
+  sendTestEmail,
+  updateTemplate,
+  uploadAttachment,
+} from '../lib/emailManagement'
+import type { EmailAttachment, EmailLog, EmailTemplate, EmailTemplateKey } from '../lib/emailManagement'
 import { decideMentorApplication, decideSchoolSubmission, fetchCourses, fetchMentorApplications, fetchProfileNames, fetchProvinces, fetchRefNameMap, fetchRegencies, fetchSchoolSubmissions, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
 import type { Announcement, CommunityProposal, Course, CourseClaim, MentorApplication, RefProvince, RefRegency, School, SchoolSubmission } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -195,6 +211,22 @@ export default function AdminPage() {
   const [annRemoveAttachment, setAnnRemoveAttachment] = useState(false)
   const [editingAnn, setEditingAnn] = useState<Announcement | null>(null)
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
+
+  // Email Management (Fase 5, migrasi 069): template + lampiran + riwayat.
+  // Dimuat terpisah dari load() dan TIDAK BOLEH merusak panel bila migrasi
+  // 069 belum diterapkan — seksi menampilkan pesan jujur sebagai gantinya.
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([])
+  const [emailDrafts, setEmailDrafts] = useState<Record<string, { subject: string; body_html: string; is_active: boolean }>>({})
+  const [emailAttachments, setEmailAttachments] = useState<EmailAttachment[]>([])
+  const [emailLogs, setEmailLogs] = useState<EmailLog[]>([])
+  const [emailLoading, setEmailLoading] = useState(true)
+  const [emailUnavailable, setEmailUnavailable] = useState(false)
+  const [emailNotice, setEmailNotice] = useState<string | null>(null)
+  const [emailPreview, setEmailPreview] = useState<Record<string, 'desktop' | 'mobile' | null>>({})
+  const [testTemplate, setTestTemplate] = useState<EmailTemplateKey>('welcome_student')
+  const [testEmail, setTestEmail] = useState(ADMIN_TEST_EMAIL_DEFAULT)
+  const [uploadCourse, setUploadCourse] = useState('')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [newCourseTitle, setNewCourseTitle] = useState('')
   const [newCourseDesc, setNewCourseDesc] = useState('')
   const [newCourseCategory, setNewCourseCategory] = useState('')
@@ -328,8 +360,34 @@ export default function AdminPage() {
     }
   }
 
+  // Email Management (Fase 5): dimuat terpisah; bila migrasi 069 belum
+  // diterapkan, seksi menampilkan pesan jujur, bukan angka 0.
+  async function loadEmail() {
+    try {
+      const [templates, logs, attachments] = await Promise.all([
+        fetchTemplates(),
+        fetchLogs(50),
+        fetchAttachments('welcome_mentor'),
+      ])
+      setEmailTemplates(templates)
+      setEmailDrafts(Object.fromEntries(templates.map((t) => [t.key, { subject: t.subject, body_html: t.body_html, is_active: t.is_active }])))
+      setEmailLogs(logs)
+      setEmailAttachments(attachments)
+      setEmailUnavailable(false)
+    } catch {
+      setEmailUnavailable(true)
+    } finally {
+      setEmailLoading(false)
+    }
+  }
+
   useEffect(() => {
     void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    void loadEmail()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -457,19 +515,142 @@ export default function AdminPage() {
             ? 'mentor_application.rejected'
             : 'mentor_application.revision_required'
       await logAudit(action, 'mentor_applications', app.id, { user_id: app.user_id })
+      // Fase 5 (fallback jalur 2): trigger database sudah mengantre email
+      // sambutan/penolakan; pemanggilan ini memastikan email terkirim walau
+      // pg_net belum dikonfigurasi. Best-effort: kegagalan email TIDAK
+      // BOLEH mengubah hasil keputusan lamaran — hanya dicatat di notice.
+      let emailNote = ''
+      if (decision === 'approved' || decision === 'rejected') {
+        try {
+          const sent = await invokeWelcomeEmailForUser(
+            decision === 'approved' ? 'welcome_mentor' : 'mentor_rejected',
+            app.user_id,
+          )
+          if (sent.deduped) emailNote = ' Email sambutan sudah pernah terkirim sebelumnya.'
+          else if (sent.status === 'sent') emailNote = ' Email sambutan terkirim.'
+        } catch (err) {
+          emailNote = ` Email sambutan gagal dikirim (${err instanceof Error ? err.message : 'kesalahan layanan email'}) — cek Email History atau kirim ulang dari sana.`
+        }
+      }
       setNotice(
         decision === 'approved'
-          ? 'Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.'
+          ? `Lamaran mentor disetujui. Peran diubah menjadi mentor oleh trigger database.${emailNote}`
           : decision === 'rejected'
-            ? 'Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.'
+            ? `Lamaran mentor ditolak. Alasan tersimpan dan terlihat oleh pelamar.${emailNote}`
             : 'Lamaran diminta revisi. Catatan tersimpan dan terlihat oleh pelamar.',
       )
       setAppAction(null)
       setAppNote('')
       await load()
+      await loadEmail()
     } finally {
       setBusyKey(null)
     }
+  }
+
+  // ---- Email Management (Fase 5) ----
+  async function handleSaveEmailTemplate(key: EmailTemplateKey) {
+    const draft = emailDrafts[key]
+    if (!draft || !user) return
+    setBusyKey(`email-tpl-${key}`)
+    try {
+      await updateTemplate(key, draft)
+      setEmailNotice(`Template ${emailTemplateLabel(key)} disimpan.`)
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal menyimpan template.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleSendTestEmail() {
+    if (!user) return
+    setBusyKey('email-test')
+    try {
+      const res = await sendTestEmail(testTemplate, testEmail.trim())
+      setEmailNotice(
+        res.status === 'sent'
+          ? `Test email ${emailTemplateLabel(testTemplate)} terkirim ke ${testEmail.trim()}.`
+          : `Test email gagal (${res.status ?? 'tidak diketahui'}). Cek Email History untuk detail error.`,
+      )
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal mengirim test email.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleUploadEmailAttachment() {
+    if (!user || !uploadFile) return
+    setBusyKey('email-upload')
+    try {
+      await uploadAttachment('welcome_mentor', uploadFile, uploadCourse || null, user.id)
+      setEmailNotice(`Lampiran ${uploadFile.name} diunggah${uploadCourse ? ' untuk course yang dipilih' : ' sebagai dokumen default'}.`)
+      setUploadFile(null)
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal mengunggah lampiran.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleDeleteEmailAttachment(att: EmailAttachment) {
+    if (!window.confirm(`Hapus lampiran "${att.file_name}"? Email sambutan mentor berikutnya tidak akan menyertakannya.`)) return
+    setBusyKey(`email-att-${att.id}`)
+    try {
+      await deleteAttachment(att.id)
+      setEmailNotice(`Lampiran ${att.file_name} dihapus.`)
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal menghapus lampiran.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleResendEmail(log: EmailLog) {
+    setBusyKey(`email-resend-${log.id}`)
+    try {
+      const res = await resendEmail(log.id)
+      setEmailNotice(
+        res.deduped
+          ? 'Email ini sudah berstatus terkirim — tidak dikirim ulang.'
+          : res.status === 'sent'
+            ? `Email ke ${log.recipient_email} terkirim ulang.`
+            : `Kirim ulang gagal (${res.status ?? 'tidak diketahui'}).`,
+      )
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal mengirim ulang.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  async function handleProcessQueuedEmails() {
+    setBusyKey('email-process-queue')
+    try {
+      const res = await processQueuedEmails()
+      setEmailNotice(`Antrean diproses: ${res.processed ?? 0} email.`)
+      await loadEmail()
+    } catch (err) {
+      setEmailNotice(err instanceof Error ? err.message : 'Gagal memproses antrean.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  /** Pratinjau template: ganti token dengan contoh supaya admin melihat hasil akhirnya. */
+  function emailPreviewHtml(t: EmailTemplate): string {
+    return t.body_html
+      .replaceAll('{Nama Siswa}', 'Nama Contoh')
+      .replaceAll('{Nama Mentor}', 'Nama Contoh')
+      .replaceAll('{Nama}', 'Nama Contoh')
+      .replaceAll('{{NAMA}}', 'Nama Contoh')
+      .replaceAll('{{CTA_URL}}', '#')
   }
 
   async function decideSub(sub: SchoolSubmission, decision: 'approved' | 'rejected', note = '') {
@@ -1396,6 +1577,138 @@ export default function AdminPage() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="section" id="email-management">
+        <div className="dash-section-head"><h2>Email Management</h2></div>
+        {emailLoading ? (
+          <p className="muted">Memuat template email…</p>
+        ) : emailUnavailable ? (
+          <p className="notice-box">Tabel email belum tersedia — terapkan migrasi 069 dulu, lalu muat ulang halaman ini.</p>
+        ) : (
+          <>
+            {emailNotice && <p className="notice-box">{emailNotice}</p>}
+            <p className="muted">
+              Template memakai token {'{Nama}'}, {'{Nama Siswa}'}, {'{Nama Mentor}'} (diganti nama penerima saat kirim)
+              dan {'{{CTA_URL}}'} (tautan tombol masuk). Email sambutan siswa tidak memakai lampiran; email sambutan
+              mentor wajib menyertakan RPS + Kode Etik Mentor — bila lampiran belum diunggah, pengiriman dihentikan
+              dan dicatat sebagai gagal.
+            </p>
+            {emailTemplates.map((t) => {
+              const draft = emailDrafts[t.key] ?? { subject: t.subject, body_html: t.body_html, is_active: t.is_active }
+              const previewMode = emailPreview[t.key] ?? null
+              return (
+                <div key={t.key} style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '0.75rem', marginBottom: '0.75rem' }}>
+                  <strong>{emailTemplateLabel(t.key)}</strong>{' '}
+                  <span className="muted">({t.is_active ? 'Aktif' : 'Nonaktif'})</span>
+                  <label>Subjek<input value={draft.subject} onChange={(e) => setEmailDrafts((d) => ({ ...d, [t.key]: { ...draft, subject: e.target.value } }))} /></label>
+                  <label>Isi (HTML)<textarea value={draft.body_html} onChange={(e) => setEmailDrafts((d) => ({ ...d, [t.key]: { ...draft, body_html: e.target.value } }))} rows={6} /></label>
+                  <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input type="checkbox" checked={draft.is_active} onChange={(e) => setEmailDrafts((d) => ({ ...d, [t.key]: { ...draft, is_active: e.target.checked } }))} />
+                    Template aktif
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    <button type="button" className="btn btn-primary btn-small" disabled={busyKey === `email-tpl-${t.key}`} onClick={() => void handleSaveEmailTemplate(t.key)}>
+                      {busyKey === `email-tpl-${t.key}` ? 'Menyimpan…' : 'Simpan Template'}
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={() => setEmailPreview((p) => ({ ...p, [t.key]: p[t.key] === 'desktop' ? null : 'desktop' }))}>
+                      Pratinjau Desktop
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-small" onClick={() => setEmailPreview((p) => ({ ...p, [t.key]: p[t.key] === 'mobile' ? null : 'mobile' }))}>
+                      Pratinjau Mobile
+                    </button>
+                  </div>
+                  {previewMode && (
+                    <div style={{ marginTop: '0.75rem', border: '1px solid var(--light-grey)', borderRadius: 8, padding: '1rem', maxWidth: previewMode === 'mobile' ? 360 : 600, background: '#F5F7FA' }}>
+                      <div style={{ background: '#172438', color: '#fff', textAlign: 'center', padding: '0.75rem', borderRadius: 6, fontWeight: 800, letterSpacing: 2 }}>SINEVERSE</div>
+                      <div style={{ background: '#fff', padding: '1rem', marginTop: '0.5rem', borderRadius: 6 }} dangerouslySetInnerHTML={{ __html: emailPreviewHtml(t) }} />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            <div className="dash-section-head" style={{ marginTop: '1rem' }}><h2>Lampiran Mentor (RPS + Kode Etik)</h2></div>
+            {emailAttachments.length === 0 ? (
+              <p className="empty">Belum ada lampiran. Unggah RPS_Mentor_SINEVERSE.pdf dan Kode_Etik_Mentor_SINEVERSE.pdf — tanpa keduanya, email sambutan mentor tidak akan terkirim.</p>
+            ) : (
+              <ul className="list">
+                {emailAttachments.map((a) => (
+                  <li key={a.id}>
+                    {a.file_name} ({a.course_id ? (courses.find((c) => c.id === a.course_id)?.title ?? 'Course') : 'Default'}
+                    {a.file_size ? ` · ${Math.round(a.file_size / 1024)} KB` : ''}){' '}
+                    <button type="button" className="btn btn-ghost btn-small" disabled={busyKey === `email-att-${a.id}`} onClick={() => void handleDeleteEmailAttachment(a)}>
+                      {busyKey === `email-att-${a.id}` ? 'Menghapus…' : 'Hapus'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form className="form" onSubmit={(e) => { e.preventDefault(); void handleUploadEmailAttachment() }}>
+              <label>
+                Dokumen per course (kosong = dokumen default untuk semua mentor)
+                <select value={uploadCourse} onChange={(e) => setUploadCourse(e.target.value)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+                  <option value="">— Default (semua mentor) —</option>
+                  {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                </select>
+              </label>
+              <label>
+                File PDF (maks 10 MB)
+                <input type="file" accept="application/pdf,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }} />
+              </label>
+              {uploadFile && <p className="muted">Dipilih: {uploadFile.name} ({Math.round(uploadFile.size / 1024)} KB)</p>}
+              <div><button type="submit" className="btn btn-primary btn-small" disabled={!uploadFile || busyKey === 'email-upload'}>{busyKey === 'email-upload' ? 'Mengunggah…' : 'Unggah Lampiran'}</button></div>
+            </form>
+
+            <div className="dash-section-head" style={{ marginTop: '1rem' }}><h2>Test Email</h2></div>
+            <form className="form" onSubmit={(e) => { e.preventDefault(); void handleSendTestEmail() }}>
+              <label>
+                Template
+                <select value={testTemplate} onChange={(e) => setTestTemplate(e.target.value as EmailTemplateKey)} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
+                  {emailTemplates.map((t) => <option key={t.key} value={t.key}>{emailTemplateLabel(t.key)}</option>)}
+                </select>
+              </label>
+              <label>Kirim ke<input type="email" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} required /></label>
+              <div><button type="submit" className="btn btn-secondary btn-small" disabled={busyKey === 'email-test'}>{busyKey === 'email-test' ? 'Mengirim…' : 'Kirim Test Email'}</button></div>
+            </form>
+
+            <div className="dash-section-head" style={{ marginTop: '1rem' }}><h2>Email History</h2></div>
+            <div style={{ marginBottom: '0.5rem' }}>
+              <button type="button" className="btn btn-secondary btn-small" disabled={busyKey === 'email-process-queue'} onClick={() => void handleProcessQueuedEmails()}>
+                {busyKey === 'email-process-queue' ? 'Memproses…' : 'Proses Antrean Tertunda'}
+              </button>{' '}
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => void loadEmail()}>Muat Ulang Riwayat</button>
+            </div>
+            {emailLogs.length === 0 ? (
+              <p className="empty">Belum ada email tercatat.</p>
+            ) : (
+              <div className="grade-table-wrap">
+                <table className="grade-table">
+                  <thead><tr><th>Penerima</th><th>Jenis</th><th>Waktu</th><th>Status</th><th>Message ID</th><th>Error</th><th></th></tr></thead>
+                  <tbody>
+                    {emailLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>{log.recipient_email}</td>
+                        <td>{emailTemplateLabel(log.template_key)}</td>
+                        <td>{fmtDate(log.created_at)}</td>
+                        <td>{emailStatusLabel(log.status)}{log.attempts > 0 ? ` (${log.attempts}x)` : ''}</td>
+                        <td>{log.provider_message_id ?? '—'}</td>
+                        <td>{log.error ?? '—'}</td>
+                        <td>
+                          {(log.status === 'failed' || log.status === 'retrying' || log.status === 'queued') && (
+                            <button type="button" className="btn btn-ghost btn-small" disabled={busyKey === `email-resend-${log.id}`} onClick={() => void handleResendEmail(log)}>
+                              {busyKey === `email-resend-${log.id}` ? 'Mengirim…' : 'Kirim Ulang'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
       </section>
 
       <section className="section">

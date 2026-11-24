@@ -29,6 +29,7 @@ import MentorApplicationForm from '../components/MentorApplicationForm'
 import { useAuth } from '../context/AuthContext'
 import { BRAND } from '../lib/brand'
 import { photoExtFromFile, photoToDataUrl } from '../lib/photo'
+import { triggerWelcomeEmailForCurrentUser } from '../lib/emailManagement'
 import {
   completePendingRegistration,
   savePendingRegistration,
@@ -499,6 +500,14 @@ export default function RegisterPage() {
       return
     }
     setVerified(true)
+    // Fase 5 (fallback jalur 2): trigger database sudah mengantre welcome
+    // email saat email terverifikasi; pemanggilan ini memastikan email
+    // terkirim walau pg_net belum dikonfigurasi. Best-effort — kegagalan
+    // email TIDAK BOLEH mengganggu alur pendaftaran (idempotency di server
+    // mencegah kirim ganda bila trigger + fallback sama-sama jalan).
+    void triggerWelcomeEmailForCurrentUser().catch(() => {
+      /* ditelan — baris 'queued' tetap bisa diproses admin dari Email History */
+    })
     // Sesi sudah aktif — selesaikan pendaftaran tertunda (foto, profil,
     // pengajuan sekolah, lamaran mentor). AuthProvider juga menjalankannya
     // sebagai pengaman; pemanggil kedua menunggu janji yang sama, bukan
