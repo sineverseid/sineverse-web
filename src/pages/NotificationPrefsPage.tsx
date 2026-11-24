@@ -100,14 +100,14 @@ export default function NotificationPrefsPage() {
     <div className="page page-narrow">
       <h1>Pengaturan Notifikasi</h1>
       <form className="form" onSubmit={handleSave}>
-        <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+        <label className="checkbox-item">
           <input type="checkbox" checked={inApp} onChange={(e) => setInApp(e.target.checked)} />
           Notifikasi di dalam aplikasi aktif
         </label>
         <fieldset style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '0.75rem' }}>
           <legend><strong>Kategori</strong></legend>
           {CATEGORIES.map((c) => (
-            <label key={c.key} style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', fontWeight: 400 }}>
+            <label key={c.key} className="checkbox-item">
               <input
                 type="checkbox"
                 checked={cats[c.key] ?? true}
