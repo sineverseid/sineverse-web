@@ -267,7 +267,7 @@ export async function fetchPublicCourse(id: string): Promise<PublicCourseData | 
 export async function fetchMentorName(mentorId: string | null): Promise<string | null> {
   if (!mentorId) return null
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('name')
     .eq('id', mentorId)
     .maybeSingle()
@@ -899,7 +899,7 @@ export async function fetchDiscussions(lessonId: string): Promise<Discussion[]> 
   const userIds = [...new Set(rows.map((r) => r.user_id))]
   if (userIds.length > 0) {
     const { data: profiles, error: profErr } = await supabase
-      .from('profiles')
+      .from('public_profiles')
       .select('id,name,photo_url')
       .in('id', userIds)
     if (profErr) throw profErr
@@ -1128,7 +1128,7 @@ export async function fetchCrewProfiles(): Promise<
   Pick<Profile, 'id' | 'name' | 'photo_url' | 'city' | 'province' | 'regency' | 'bio' | 'skills' | 'interests' | 'availability' | 'is_open_to_crew'>[]
 > {
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,photo_url,city,province,regency,bio,skills,interests,availability,is_open_to_crew')
     .eq('is_open_to_crew', true)
   if (error) throw error
@@ -1140,7 +1140,7 @@ export async function fetchCrewProfiles(): Promise<
 
 export async function fetchPublicProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,photo_url,city,bio,role,created_at')
     .eq('id', userId)
     .maybeSingle()
@@ -1152,7 +1152,7 @@ export async function fetchProfileNames(userIds: string[]): Promise<Map<string, 
   const map = new Map<string, string>()
   const unique = [...new Set(userIds.filter(Boolean))]
   if (unique.length === 0) return map
-  const { data, error } = await supabase.from('profiles').select('id,name').in('id', unique)
+  const { data, error } = await supabase.from('public_profiles').select('id,name').in('id', unique)
   // P19 (audit 23 Nov 2026): error query dilempar, bukan map parsial —
   // nama yang gagal dimuat tidak lagi tampil sebagai "Anggota" berulang.
   // Pemanggil sudah menangani throw (try/catch atau .catch → Map kosong).

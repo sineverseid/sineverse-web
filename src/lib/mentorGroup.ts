@@ -186,7 +186,7 @@ async function attachSenders(messages: MentorGroupMessage[]): Promise<void> {
   const ids = [...new Set(messages.map((m) => m.sender_id).filter(Boolean))]
   if (ids.length === 0) return
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,role,photo_url')
     .in('id', ids)
   if (error) throw error
@@ -217,7 +217,7 @@ export async function fetchMembers(): Promise<MentorGroupMember[]> {
   const rows = (data ?? []) as { user_id: string; joined_at: string }[]
   if (rows.length === 0) return []
   const { data: profs, error: profErr } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,role,photo_url')
     .in('id', rows.map((r) => r.user_id))
   if (profErr) throw friendlyError(profErr, 'Gagal memuat daftar anggota.')
@@ -530,7 +530,7 @@ export async function fetchMentorGroupSummary(userId: string): Promise<MentorGro
   if (latestRow) {
     try {
       const { data } = await supabase
-        .from('profiles')
+        .from('public_profiles')
         .select('name')
         .eq('id', latestRow.sender_id)
         .maybeSingle()

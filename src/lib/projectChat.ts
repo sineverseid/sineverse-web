@@ -182,7 +182,7 @@ async function attachSenders(messages: ProjectChatMessage[]): Promise<void> {
   const ids = [...new Set(messages.map((m) => m.sender_id).filter(Boolean))]
   if (ids.length === 0) return
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,role,photo_url')
     .in('id', ids)
   if (error) throw error
@@ -231,7 +231,7 @@ export async function fetchMembers(projectId: string): Promise<ProjectChatMember
   const ids = [...new Set([...rows.map((r) => r.user_id), ...(ownerId ? [ownerId] : [])])]
   if (ids.length === 0) return []
   const { data: profs, error: profErr } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,role,photo_url')
     .in('id', ids)
   if (profErr) throw friendlyError(profErr, 'Gagal memuat daftar anggota.')
@@ -607,7 +607,7 @@ export async function fetchProjectChatSummary(
   if (latestRow) {
     try {
       const { data } = await supabase
-        .from('profiles')
+        .from('public_profiles')
         .select('name')
         .eq('id', latestRow.sender_id)
         .maybeSingle()

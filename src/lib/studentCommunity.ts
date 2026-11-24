@@ -226,7 +226,7 @@ async function fetchAuthors(
   const unique = [...new Set(ids.filter(Boolean))]
   if (unique.length === 0) return out
   const { data, error } = await supabase
-    .from('profiles')
+    .from('public_profiles')
     .select('id,name,role,photo_url')
     .in('id', unique)
   if (error) throw error
