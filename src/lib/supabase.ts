@@ -1046,6 +1046,15 @@ export async function fetchUnreadCount(userId: string): Promise<number | null> {
   return count ?? 0
 }
 
+/** Event yang disiarkan setiap kali notifikasi ditandai dibaca (satu atau
+    semua), supaya lonceng header di Layout bisa menyegarkan angka belum
+    dibaca tanpa menunggu pindah halaman atau kembali ke foreground. */
+export const NOTIFICATIONS_READ_EVENT = 'sineverse:notifications-read'
+
+export function notifyNotificationsRead(): void {
+  window.dispatchEvent(new Event(NOTIFICATIONS_READ_EVENT))
+}
+
 export async function markNotificationRead(id: string): Promise<void> {
   // P5: hanya pemilik notifikasi (RLS notifications_update_own). Bila
   // baris tidak terbaca, biarkan lanjut — RLS yang memutuskan.
