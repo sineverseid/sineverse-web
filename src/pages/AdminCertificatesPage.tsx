@@ -19,7 +19,7 @@ import {
   buildGradeComponents,
   discussionParticipationScore,
 } from '../lib/grading'
-import { fetchCourses, fetchProfileNames, supabase } from '../lib/supabase'
+import { fetchCourses, fetchProfileNames, notifyIfAllowed, supabase } from '../lib/supabase'
 import {
   fetchCertificateAuditLog,
   issueAcademyCertificate,
@@ -334,6 +334,17 @@ export default function AdminCertificatesPage() {
     try {
       const result = await issueMentorCertificate(mentorId, mentorCourseId, mentorNote.trim() || null)
       setMentorResult(result)
+      // Fase 2 — beri tahu mentor, hanya bila baru terbit.
+      if (!result.alreadyIssued) {
+        void notifyIfAllowed(
+          mentorId,
+          'nilai',
+          'certificate',
+          'Sertifikat apresiasi mentor terbit',
+          `Sertifikat apresiasi sebagai mentor course "${course?.title ?? ''}" sudah terbit: ${result.serial}.`,
+          { certificate_serial: result.serial, certificate_type: 'mentor', course_id: mentorCourseId },
+        ).catch(() => undefined)
+      }
       await refreshCertificates()
     } catch (err) {
       setMentorError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat mentor.')
@@ -467,6 +478,17 @@ export default function AdminCertificatesPage() {
     try {
       const result = await issueAcademyCertificate(academyStudentId)
       setAcademyResult(result)
+      // Fase 2 — beri tahu siswa, hanya bila baru terbit.
+      if (!result.alreadyIssued) {
+        void notifyIfAllowed(
+          academyStudentId,
+          'nilai',
+          'certificate',
+          'Sertifikat kelulusan Academy terbit',
+          `Selamat! Sertifikat kelulusan Academy sudah terbit: ${result.serial}.`,
+          { certificate_serial: result.serial, certificate_type: 'academy' },
+        ).catch(() => undefined)
+      }
       await refreshCertificates()
     } catch (err) {
       setAcademyError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat Academy.')
@@ -484,6 +506,17 @@ export default function AdminCertificatesPage() {
     try {
       const result = await issueEventCertificate(eventStudentId, eventId, eventNote.trim() || null)
       setEventResult(result)
+      // Fase 2 — beri tahu siswa, hanya bila baru terbit.
+      if (!result.alreadyIssued) {
+        void notifyIfAllowed(
+          eventStudentId,
+          'nilai',
+          'certificate',
+          'Sertifikat event terbit',
+          `Sertifikat partisipasi event sudah terbit: ${result.serial}.`,
+          { certificate_serial: result.serial, certificate_type: 'event' },
+        ).catch(() => undefined)
+      }
       await refreshCertificates()
     } catch (err) {
       setEventError(err instanceof Error ? err.message : 'Gagal menerbitkan sertifikat event.')
