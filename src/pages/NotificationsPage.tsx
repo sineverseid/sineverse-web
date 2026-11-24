@@ -3,7 +3,7 @@
 // tandai satu/semua dibaca + bersihkan permanen + realtime + infinite scroll.
 // Sumber: tabel notifications (migrasi 008); tanpa data dummy.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import Icon from '../components/icons'
 import type { IconName } from '../components/icons'
 import PageHeader from '../components/PageHeader'
@@ -84,7 +84,8 @@ function kindLabel(kind: string): string {
 /** Deep link tujuan notifikasi. Grup mentor (Fase 1) dan komunitas siswa
     (Fase 2) punya tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya.
     Pengumuman (Fase 4): buka halaman Pengumuman dengan id pengumumannya
-    supaya itemnya disorot. */
+    supaya itemnya disorot. Kartu yang punya tautan bisa diklik di mana saja
+    (onClick di <li>); klik kartu sekaligus menandainya dibaca. */
 function notificationLink(n: AppNotification): { href: string; label: string } | null {
   if (n.kind === 'announcement_published') {
     const announcementId =
@@ -145,6 +146,21 @@ function notificationLink(n: AppNotification): { href: string; label: string } |
       href: projectId ? `/proyek-akhir/${projectId}` : '/proyek-akhir',
       label: 'Buka proyek akhir →',
     }
+  }
+  // Fase 2 — pengingat tugas proyek akhir: detail proyek akhirnya
+  // (data.project_id dari reminders.ts).
+  if (n.kind === 'reminder_final_task') {
+    const projectId =
+      n.data && typeof n.data.project_id === 'string' ? n.data.project_id : null
+    return {
+      href: projectId ? `/proyek-akhir/${projectId}` : '/proyek-akhir',
+      label: 'Buka proyek akhir →',
+    }
+  }
+  // SINEBOT — pembaruan tiket: Pusat Bantuan, tempat tiket pengguna
+  // ditampilkan (emitter-nya Edge Function sinebot-chat).
+  if (n.kind === 'sinebot_ticket_update') {
+    return { href: '/bantuan', label: 'Lihat tiket →' }
   }
   // Fase 2 — mentor_assigned bercabang: konteks proyek akhir (data.context
   // === 'final_project') menaut ke proyek akhir; konteks klaim-course lama
@@ -242,6 +258,7 @@ function timeAgo(iso: string): string {
 
 export default function NotificationsPage() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [items, setItems] = useState<AppNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -604,7 +621,30 @@ export default function NotificationsPage() {
                 const sender = sid ? (names.get(sid) ?? 'Sistem SINEVERSE') : 'Sistem SINEVERSE'
                 const important = isImportantNotification(n.kind)
                 return (
-                  <li key={n.id} className={n.is_read ? 'notif-card' : 'notif-card notif-card--unread'}>
+                  <li
+                    key={n.id}
+                    className={
+                      (n.is_read ? 'notif-card' : 'notif-card notif-card--unread') +
+                      (link ? ' notif-card--clickable' : '')
+                    }
+                    {...(link
+                      ? {
+                          role: 'button',
+                          tabIndex: 0,
+                          onClick: () => {
+                            if (!n.is_read) void handleReadOne(n.id)
+                            navigate(link.href)
+                          },
+                          onKeyDown: (e: React.KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              if (!n.is_read) void handleReadOne(n.id)
+                              navigate(link.href)
+                            }
+                          },
+                        }
+                      : {})}
+                  >
                     <div className="notif-card-head">
                       <span className="notif-icon" aria-hidden="true">
                         <Icon name={meta.icon} size={20} />
@@ -631,7 +671,11 @@ export default function NotificationsPage() {
                       <p className="notif-link-row">
                         <Link
                           to={link.href}
-                          onClick={() => {
+                          onClick={(e) => {
+                            // Kartu sudah bisa diklik (navigasi di <li>);
+                            // tautan ini menahan gelembung supaya navigasi
+                            // tidak terjadi dua kali.
+                            e.stopPropagation()
                             // Membuka tujuan notifikasi sekaligus menandainya dibaca,
                             // supaya lonceng header ikut berkurang.
                             if (!n.is_read) void handleReadOne(n.id)
@@ -645,7 +689,11 @@ export default function NotificationsPage() {
                       <button
                         type="button"
                         className="btn btn-ghost btn-small"
-                        onClick={() => void handleReadOne(n.id)}
+                        onClick={(e) => {
+                          // Jangan ikut menavigasi kartu.
+                          e.stopPropagation()
+                          void handleReadOne(n.id)
+                        }}
                       >
                         Tandai Dibaca
                       </button>
