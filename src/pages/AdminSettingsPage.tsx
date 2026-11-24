@@ -83,7 +83,6 @@ export default function AdminSettingsPage() {
           <SettingsLink to="/admin/moderasi" icon="admin" label="Moderasi dan Audit Log" sub="Laporan diskusi dan jejak audit" />
           <SettingsLink to="/admin/acara" icon="event" label="Acara dan Festival" sub="Kelola acara dan kompetisi" />
           <SettingsLink to="/admin/pustaka" icon="library" label="Kelola Pustaka" sub="Tambah dan hapus item Pustaka" />
-          <SettingsLink to="/admin/diskusi-mentor" icon="message" label="Diskusi Admin dan Mentor" sub="Thread dengan mentor" />
         </ul>
       </section>
 
