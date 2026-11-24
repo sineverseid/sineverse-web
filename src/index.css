@@ -2033,11 +2033,13 @@ p {
   }
 
   /* Desktop: item nav lebih rapat (padding + font mengecil) supaya
-     seluruh menu muat; ikon tetap tampil. */
+     seluruh menu muat; ikon tetap tampil. Putaran 3, 24 Nov 2026:
+     mentor punya 15 menu (siswa 13) — di 1919px "Penilaian" masih
+     terpotong dan "Ruang Kerja" tak terlihat, jadi dirapatkan lagi. */
   .topnav a {
-    padding: 0.45rem 0.55rem;
-    font-size: 0.9rem;
-    gap: 0.35rem;
+    padding: 0.45rem 0.45rem;
+    font-size: 0.88rem;
+    gap: 0.3rem;
   }
 
   /* Desktop: topbar lebih rapat supaya nav mendapat ruang lebih. */
@@ -2070,19 +2072,21 @@ p {
 }
 
 /* Desktop ≥960px: sembunyikan tagline brand (elemen terlebar di brand)
-   dan persempit nama profil supaya nav mendapat ruang lebih — logo +
-   nama "SINEVERSE" tetap tampil, menu tidak ada yang dihapus. Tagline
-   tetap tampil di bawah 960px (tanpa nav atas) dan di hero. Perluasan
-   24 Nov 2026: semula hanya 960–1599px, tapi di 1920px tagline kembali
-   tampil dan "Portofolio" masih terpotong satu huruf — jadi
-   disembunyikan di semua lebar desktop. */
+   dan nama profil (avatar tetap; nama ada di halaman Profil) supaya nav
+   mendapat ruang lebih — logo + nama "SINEVERSE" tetap tampil, menu
+   tidak ada yang dihapus. Tagline tetap tampil di bawah 960px (tanpa
+   nav atas) dan di hero. Perluasan 24 Nov 2026: semula hanya 960–1599px,
+   tapi di 1920px tagline kembali tampil dan "Portofolio" masih terpotong
+   satu huruf — jadi disembunyikan di semua lebar desktop. Putaran 3:
+   nama profil ikut disembunyikan (semula max-width 5rem) karena mentor
+   dengan 15 menu masih kekurangan ruang di 1919px. */
 @media (min-width: 960px) {
   .topbar .brand-tagline {
     display: none;
   }
 
   .topbar .header-profile-name {
-    max-width: 5rem;
+    display: none;
   }
 }
 
