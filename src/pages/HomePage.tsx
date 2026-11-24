@@ -189,6 +189,19 @@ export default function HomePage() {
     return () => window.clearInterval(t)
   }, [heroPaused])
 
+  // Panaskan gambar slide hero lain DI LUAR jalur kritis: 1 detik setelah
+  // muat, begitu carousel berpindah (6 detik) gambar sudah di cache dan
+  // tidak ada kedip. Muat awal hanya mengunduh slide aktif.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      for (const s of HERO_SLIDES) {
+        const img = new Image()
+        img.src = s.src
+      }
+    }, 1000)
+    return () => window.clearTimeout(t)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -436,7 +449,12 @@ export default function HomePage() {
                 <div
                   key={s.src}
                   className={`hero-slide${i === slide ? ' active' : ''}`}
-                  style={{ backgroundImage: `url('${s.src}')` }}
+                  // Hanya slide aktif yang mengunduh gambarnya: slide
+                  // non-aktif memakai opacity 0 (bukan display:none), jadi
+                  // sebelumnya ketiga foto hero (±826 KB) ikut terunduh di
+                  // muat awal. Slide lain dipanaskan idle (lihat effect di
+                  // bawah) supaya perpindahan carousel tetap mulus.
+                  style={i === slide ? { backgroundImage: `url('${s.src}')` } : undefined}
                 />
               ))}
             </div>
@@ -2058,6 +2076,102 @@ function AdminHome(props: {
       // Tujuh fetch independen dijalankan PARALEL dalam satu batch, bukan
       // berurutan — sebelumnya delapan await berurutan membuat Beranda admin
       // paling lambat. fetchProfileNames menyusul setelah profil didapat.
+      //
+      // Rantai Academy (modul → lesson → progres) dan aktivitas terbaru
+      // diluncurkan BERSAMAAN dengan batch ini, bukan sesudahnya:
+      // ketiganya independen — academy hanya butuh enrRows di AKHIR untuk
+      // menghitung total, audit tidak butuh apa-apa dari batch ini.
+      // Sebelumnya urutannya batch → nama/peta → academy (3 query
+      // berurutan) → label (N query berurutan) → audit (2 query
+      // berurutan): ±8 round-trip sebelum Ringkasan tampil. Kini jalur
+      // terpanjang (2 round-trip) yang menentukan waktu muat.
+      //
+      // Lesson diambil TANPA filter module_id — hasilnya sama seperti
+      // sebelumnya (semua lesson dari semua modul), tapi query-nya tidak
+      // perlu menunggu query modul selesai.
+      const academyRawP = tracked(
+        'progres academy',
+        async () => {
+          const [modRes, lesRes] = await Promise.all([
+            supabase.from('modules').select('id,course_id'),
+            supabase.from('lessons').select('id,module_id'),
+          ])
+          if (modRes.error) throw modRes.error
+          if (lesRes.error) throw lesRes.error
+          const mods = (modRes.data ?? []) as { id: string; course_id: string }[]
+          const lessons = (lesRes.data ?? []) as { id: string; module_id: string }[]
+          if (mods.length === 0 || lessons.length === 0) return { empty: true as const }
+          const { data: progData, error: progErr } = await supabase
+            .from('lesson_progress')
+            .select('lesson_id,user_id')
+            .eq('status', 'completed')
+            .in(
+              'lesson_id',
+              lessons.map((l) => l.id),
+            )
+          if (progErr) throw progErr
+          return {
+            mods,
+            lessons,
+            progData: (progData ?? []) as { lesson_id: string; user_id: string }[],
+          }
+        },
+        null as
+          | { empty: true }
+          | {
+              mods: { id: string; course_id: string }[]
+              lessons: { id: string; module_id: string }[]
+              progData: { lesson_id: string; user_id: string }[]
+            }
+          | null,
+      )
+      // Aktivitas terbaru: audit log; bila tabel tidak ada, pakai
+      // pendaftaran terbaru sebagai gantinya (data asli saja).
+      const activityP = (async () => {
+        const aRows = await tracked(
+          'audit log',
+          async () => {
+            const { data, error } = await supabase
+              .from('audit_log')
+              .select('*')
+              .order('created_at', { ascending: false })
+              .limit(5)
+            if (error) throw error
+            return (data ?? []) as AuditLogRow[]
+          },
+          null as AuditLogRow[] | null,
+        )
+        if (aRows && aRows.length > 0) {
+          const actorNames = await fetchProfileNames(
+            aRows.map((r) => r.actor_id).filter((id): id is string => !!id),
+          ).catch(() => new Map<string, string>())
+          return aRows.map((r) => ({
+            id: r.id,
+            actor: (r.actor_id && actorNames.get(r.actor_id)) ?? 'Sistem',
+            action: r.action,
+            created_at: r.created_at,
+          }))
+        }
+        const newest = await tracked(
+          'pendaftaran terbaru',
+          async () => {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('id,name,role,created_at')
+              .order('created_at', { ascending: false })
+              .limit(5)
+            if (error) throw error
+            return (data ?? []) as { id: string; name: string | null; role: string; created_at: string }[]
+          },
+          [] as { id: string; name: string | null; role: string; created_at: string }[],
+        )
+        return newest.map((p) => ({
+          id: p.id,
+          actor: p.name ?? 'Anggota baru',
+          action: `Mendaftar sebagai ${p.role === 'mentor' ? 'mentor' : p.role === 'admin' ? 'admin' : 'siswa'}`,
+          created_at: p.created_at,
+        }))
+      })()
       const [
         { data: profiles, error: profilesErr },
         { count: filmCount },
@@ -2069,6 +2183,8 @@ function AdminHome(props: {
         dData,
         mData,
         schoolTotals,
+        academyRaw,
+        activity,
       ] = await Promise.all([
         supabase.from('profiles').select('id,name,role,created_at'),
         tracked(
@@ -2148,6 +2264,8 @@ function AdminHome(props: {
         // array select('*') di atas terpotong di 1000 baris oleh PostgREST
         // dan pernah membuat hero menampilkan "1000 sekolah".
         tracked('total sekolah', async () => fetchSchoolTotals(), { total: 0, verified: 0, unverified: 0 }),
+        academyRawP,
+        activityP,
       ])
       // Kegagalan memuat profil jangan disamarkan sebagai 0 pengguna.
       if (profilesErr) {
@@ -2165,11 +2283,98 @@ function AdminHome(props: {
         profs.map((p) => ({ role: p.role, created_at: p.created_at })),
       )
       setCertIssuedAt(certRows.map((c) => c.issued_at))
-      setNames(await fetchProfileNames(profs.map((p) => p.id)))
-      const [provMap, regMap] = await Promise.all([
+      // Nama profil + peta provinsi/kabupaten + label laporan moderasi:
+      // ketiganya independen (label hanya butuh mData dari batch di atas)
+      // — jalan paralel, bukan berurutan. Sebelumnya nama → peta → label
+      // (loop berurutan per laporan) = 2+N round-trip; kini 1 round-trip.
+      async function resolveTargetLabel(r: ModerationReport) {
+        const key = `${r.target_type}:${r.target_id ?? ''}`
+        const fallback = { label: targetTypeLabel(r.target_type), to: null as string | null }
+        if (!r.target_id) return [key, fallback] as const
+        try {
+          if (r.target_type === 'community_post' || r.target_type === 'post') {
+            const { data } = await supabase
+              .from('community_posts')
+              .select('body,community_id')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { body: string | null; community_id: string } | null
+            return [
+              key,
+              row
+                ? {
+                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
+                    to: `/komunitas/${row.community_id}`,
+                  }
+                : fallback,
+            ] as const
+          } else if (r.target_type === 'community') {
+            const { data } = await supabase
+              .from('communities')
+              .select('name')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { name: string } | null
+            return [
+              key,
+              row ? { label: row.name, to: `/komunitas/${r.target_id}` } : fallback,
+            ] as const
+          } else if (r.target_type === 'discussion') {
+            const { data } = await supabase
+              .from('discussions')
+              .select('body,lesson_id')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { body: string | null; lesson_id: string } | null
+            return [
+              key,
+              row
+                ? {
+                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
+                    to: `/lesson/${row.lesson_id}`,
+                  }
+                : fallback,
+            ] as const
+          } else if (r.target_type === 'film') {
+            const { data } = await supabase
+              .from('films')
+              .select('title')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { title: string } | null
+            return [
+              key,
+              row ? { label: row.title, to: `/showcase/${r.target_id}` } : fallback,
+            ] as const
+          } else if (r.target_type === 'project') {
+            const { data } = await supabase
+              .from('projects')
+              .select('title')
+              .eq('id', r.target_id)
+              .maybeSingle()
+            const row = data as { title: string } | null
+            return [
+              key,
+              row ? { label: row.title, to: `/proyek/${r.target_id}` } : fallback,
+            ] as const
+          } else {
+            return [key, fallback] as const
+          }
+        } catch {
+          return [key, fallback] as const
+        }
+      }
+      const labelsP = (async () => {
+        const entries = await Promise.all(mData.map((r) => resolveTargetLabel(r)))
+        return new Map(entries)
+      })()
+      const [names, provMap, regMap, labels] = await Promise.all([
+        fetchProfileNames(profs.map((p) => p.id)),
         fetchRefNameMap('ref_provinces'),
         fetchRefNameMap('ref_regencies'),
+        labelsP,
       ])
+      setNames(names)
       setProvinceNames(provMap)
       setRegencyNames(regMap)
       // K13: angka ringkasan lewat helper bersama (lib/counts.ts); total +
@@ -2197,201 +2402,54 @@ function AdminHome(props: {
       // Progress Academy (data asli): lesson selesai / (siswa terdaftar ×
       // lesson) di semua course. Hanya progres siswa yang terdaftar di
       // course lesson itu yang dihitung; gagal memuat → null ("—").
-      const academy = await tracked('progres academy',
-        async () => {
-          // B64: .error tiap sub-query diperiksa — gagal = penanda sumber,
-          // bukan progres 0 yang menyamarkan kegagalan.
-          const { data: modData, error: modErr } = await supabase
-            .from('modules')
-            .select('id,course_id')
-          if (modErr) throw modErr
-          const mods = (modData ?? []) as { id: string; course_id: string }[]
-          if (mods.length === 0) return { pct: null, done: 0, total: 0 }
-          const { data: lesData, error: lesErr } = await supabase
-            .from('lessons')
-            .select('id,module_id')
-            .in(
-              'module_id',
-              mods.map((m) => m.id),
-            )
-          if (lesErr) throw lesErr
-          const lessons = (lesData ?? []) as { id: string; module_id: string }[]
-          if (lessons.length === 0) return { pct: null, done: 0, total: 0 }
-          const modCourse = new Map(mods.map((m) => [m.id, m.course_id]))
-          const lessonCourseMap = new Map(
-            lessons.map((l) => [l.id, modCourse.get(l.module_id) ?? '']),
-          )
-          const lessonsByCourse = new Map<string, number>()
-          for (const l of lessons) {
-            const cid = lessonCourseMap.get(l.id) ?? ''
-            lessonsByCourse.set(cid, (lessonsByCourse.get(cid) ?? 0) + 1)
+      // Data mentahnya sudah diambil paralel dengan batch di atas; di sini
+      // tinggal hitung — butuh enrRows dari batch, yang sudah tiba.
+      let academy: { pct: number | null; done: number; total: number } | null = null
+      if (academyRaw && !('empty' in academyRaw)) {
+        const { mods, lessons, progData } = academyRaw
+        const modCourse = new Map(mods.map((m) => [m.id, m.course_id]))
+        const lessonCourseMap = new Map(
+          lessons.map((l) => [l.id, modCourse.get(l.module_id) ?? '']),
+        )
+        const lessonsByCourse = new Map<string, number>()
+        for (const l of lessons) {
+          const cid = lessonCourseMap.get(l.id) ?? ''
+          lessonsByCourse.set(cid, (lessonsByCourse.get(cid) ?? 0) + 1)
+        }
+        const enrolledByCourse = new Map<string, Set<string>>()
+        for (const e of enrRows) {
+          if (!enrolledByCourse.has(e.course_id)) {
+            enrolledByCourse.set(e.course_id, new Set())
           }
-          const enrolledByCourse = new Map<string, Set<string>>()
-          for (const e of enrRows) {
-            if (!enrolledByCourse.has(e.course_id)) {
-              enrolledByCourse.set(e.course_id, new Set())
-            }
-            enrolledByCourse.get(e.course_id)?.add(e.user_id)
-          }
-          let total = 0
-          for (const [cid, users] of enrolledByCourse) {
-            total += users.size * (lessonsByCourse.get(cid) ?? 0)
-          }
-          if (total === 0) return { pct: null, done: 0, total: 0 }
-          const { data: progData, error: progErr } = await supabase
-            .from('lesson_progress')
-            .select('lesson_id,user_id')
-            .eq('status', 'completed')
-            .in(
-              'lesson_id',
-              lessons.map((l) => l.id),
-            )
-          if (progErr) throw progErr
+          enrolledByCourse.get(e.course_id)?.add(e.user_id)
+        }
+        let total = 0
+        for (const [cid, users] of enrolledByCourse) {
+          total += users.size * (lessonsByCourse.get(cid) ?? 0)
+        }
+        if (total === 0) {
+          academy = { pct: null, done: 0, total: 0 }
+        } else {
           let done = 0
-          for (const p of (progData ?? []) as { lesson_id: string; user_id: string }[]) {
+          for (const p of progData) {
             const cid = lessonCourseMap.get(p.lesson_id) ?? ''
             if (enrolledByCourse.get(cid)?.has(p.user_id)) done += 1
           }
-          return { pct: Math.round((done / total) * 100), done, total }
-        },
-        null as { pct: number | null; done: number; total: number } | null,
-      )
+          academy = { pct: Math.round((done / total) * 100), done, total }
+        }
+      } else if (academyRaw && 'empty' in academyRaw) {
+        academy = { pct: null, done: 0, total: 0 }
+      }
       setAcademyProgress(academy)
 
       // Selesaikan target laporan moderasi menjadi label yang bisa dibaca
       // manusia (judul/nama + tautan), bukan UUID mentah. Bila target tidak
       // bisa diselesaikan, tampilkan jenisnya + ID pendek saja.
-      const labels = new Map<string, { label: string; to: string | null }>()
-      for (const r of mData) {
-        const key = `${r.target_type}:${r.target_id ?? ''}`
-        const fallback = { label: targetTypeLabel(r.target_type), to: null as string | null }
-        if (!r.target_id) {
-          labels.set(key, fallback)
-          continue
-        }
-        try {
-          if (r.target_type === 'community_post' || r.target_type === 'post') {
-            const { data } = await supabase
-              .from('community_posts')
-              .select('body,community_id')
-              .eq('id', r.target_id)
-              .maybeSingle()
-            const row = data as { body: string | null; community_id: string } | null
-            labels.set(
-              key,
-              row
-                ? {
-                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
-                    to: `/komunitas/${row.community_id}`,
-                  }
-                : fallback,
-            )
-          } else if (r.target_type === 'community') {
-            const { data } = await supabase
-              .from('communities')
-              .select('name')
-              .eq('id', r.target_id)
-              .maybeSingle()
-            const row = data as { name: string } | null
-            labels.set(
-              key,
-              row ? { label: row.name, to: `/komunitas/${r.target_id}` } : fallback,
-            )
-          } else if (r.target_type === 'discussion') {
-            const { data } = await supabase
-              .from('discussions')
-              .select('body,lesson_id')
-              .eq('id', r.target_id)
-              .maybeSingle()
-            const row = data as { body: string | null; lesson_id: string } | null
-            labels.set(
-              key,
-              row
-                ? {
-                    label: row.body ? row.body.slice(0, 60) : targetTypeLabel(r.target_type),
-                    to: `/lesson/${row.lesson_id}`,
-                  }
-                : fallback,
-            )
-          } else if (r.target_type === 'film') {
-            const { data } = await supabase
-              .from('films')
-              .select('title')
-              .eq('id', r.target_id)
-              .maybeSingle()
-            const row = data as { title: string } | null
-            labels.set(
-              key,
-              row ? { label: row.title, to: `/showcase/${r.target_id}` } : fallback,
-            )
-          } else if (r.target_type === 'project') {
-            const { data } = await supabase
-              .from('projects')
-              .select('title')
-              .eq('id', r.target_id)
-              .maybeSingle()
-            const row = data as { title: string } | null
-            labels.set(
-              key,
-              row ? { label: row.title, to: `/proyek/${r.target_id}` } : fallback,
-            )
-          } else {
-            labels.set(key, fallback)
-          }
-        } catch {
-          labels.set(key, fallback)
-        }
-      }
+      // (Label sudah dihitung paralel dengan nama/peta di atas.)
       setTargetLabels(labels)
 
-      // Aktivitas terbaru: audit log; bila tabel tidak ada, pakai
-      // pendaftaran terbaru sebagai gantinya (data asli saja).
-      const aRows = await tracked('audit log',
-        async () => {
-          const { data, error } = await supabase
-            .from('audit_log')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(5)
-          if (error) throw error
-          return (data ?? []) as AuditLogRow[]
-        },
-        null as AuditLogRow[] | null,
-      )
-      if (aRows && aRows.length > 0) {
-        const actorNames = await fetchProfileNames(
-          aRows.map((r) => r.actor_id).filter((id): id is string => !!id),
-        ).catch(() => new Map<string, string>())
-        setActivity(
-          aRows.map((r) => ({
-            id: r.id,
-            actor: (r.actor_id && actorNames.get(r.actor_id)) ?? 'Sistem',
-            action: r.action,
-            created_at: r.created_at,
-          })),
-        )
-      } else {
-        const newest = await tracked('pendaftaran terbaru',
-          async () => {
-            const { data, error } = await supabase
-              .from('profiles')
-              .select('id,name,role,created_at')
-              .order('created_at', { ascending: false })
-              .limit(5)
-            if (error) throw error
-            return (data ?? []) as { id: string; name: string | null; role: string; created_at: string }[]
-          },
-          [] as { id: string; name: string | null; role: string; created_at: string }[],
-        )
-        setActivity(
-          newest.map((p) => ({
-            id: p.id,
-            actor: p.name ?? 'Anggota baru',
-            action: `Mendaftar sebagai ${p.role === 'mentor' ? 'mentor' : p.role === 'admin' ? 'admin' : 'siswa'}`,
-            created_at: p.created_at,
-          })),
-        )
-      }
+      // Aktivitas terbaru sudah dimuat paralel dengan batch di atas.
+      setActivity(activity)
       // B64: tampilkan sumber data yang gagal dimuat sebagai penanda.
       setLoadWarnings(failedSources)
     } catch {

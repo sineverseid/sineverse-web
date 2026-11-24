@@ -31,9 +31,9 @@ import {
   replyToTicket,
   searchKb,
   sinebotAdminMailto,
-  checkTicketAttachmentContent,
   validateTicketAttachment,
 } from '../lib/sinebot'
+import { checkTicketAttachmentContent } from '../lib/attachmentValidation'
 import type {
   KbResult,
   SinebotConversation,

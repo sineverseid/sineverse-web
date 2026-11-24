@@ -32,7 +32,7 @@ import {
   uploadTicketAttachment,
   validateTicketAttachment,
 } from '../lib/sinebotTicketsAdmin'
-import { checkTicketAttachmentContent } from '../lib/sinebot'
+import { checkTicketAttachmentContent } from '../lib/attachmentValidation'
 import type {
   AdminListUser,
   TicketAdmin,
