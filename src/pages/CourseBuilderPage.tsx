@@ -122,6 +122,9 @@ export default function CourseBuilderPage() {
   const [draftNum2, setDraftNum2] = useState('')
   const [draftAnswer, setDraftAnswer] = useState('')
   const [draftExpl, setDraftExpl] = useState('')
+  // Opsi soal saat edit (hanya untuk soal pilihan ganda): satu per baris.
+  const [draftOptions, setDraftOptions] = useState('')
+  const [draftQKind, setDraftQKind] = useState<'mc' | 'true_false' | 'short'>('mc')
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [liveClasses, setLiveClasses] = useState<LiveClass[]>([])
   const [lcTitle, setLcTitle] = useState('')
@@ -698,7 +701,7 @@ export default function CourseBuilderPage() {
   // Satu state `editing` + draft field dipakai semua jenis item; simpan
   // dan hapus di bawah memakai tabel + patch yang sesuai jenisnya.
 
-  function startEdit(kind: EditingKind, id: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string }) {
+  function startEdit(kind: EditingKind, id: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string; options?: string; qkind?: 'mc' | 'true_false' | 'short' }) {
     setEditing({ kind, id })
     setDraftTitle(init.title ?? '')
     setDraftText(init.text ?? '')
@@ -707,6 +710,8 @@ export default function CourseBuilderPage() {
     setDraftNum2(init.num2 ?? '')
     setDraftAnswer(init.answer ?? '')
     setDraftExpl(init.expl ?? '')
+    setDraftOptions(init.options ?? '')
+    setDraftQKind(init.qkind ?? 'mc')
     setNotice(null)
   }
 
@@ -715,6 +720,12 @@ export default function CourseBuilderPage() {
     if (!editing) return
     const { kind, id } = editing
     const title = draftTitle.trim()
+    // Opsi soal pilihan ganda saat edit: diparse dari textarea (satu per
+    // baris), sama seperti saat tambah soal.
+    const parsedOptions =
+      (kind === 'quizQuestion' || kind === 'examQuestion') && draftQKind === 'mc'
+        ? draftOptions.split('\n').map((s) => s.trim()).filter(Boolean)
+        : null
     if ((kind === 'module' || kind === 'lesson' || kind === 'assignment' || kind === 'quiz' || kind === 'exam') && !title) {
       setNotice('Judul tidak boleh kosong.')
       return
@@ -727,6 +738,18 @@ export default function CourseBuilderPage() {
       if (!draftAnswer.trim()) {
         setNotice('Jawaban benar tidak boleh kosong.')
         return
+      }
+      // Soal pilihan ganda: opsi harus ada dan jawaban benar harus cocok
+      // dengan salah satu opsi (mencegah jawaban "4" vs opsi "345").
+      if (draftQKind === 'mc') {
+        if (!parsedOptions || parsedOptions.length === 0) {
+          setNotice('Isi minimal 1 pilihan jawaban.')
+          return
+        }
+        if (!parsedOptions.includes(draftAnswer.trim())) {
+          setNotice('Jawaban benar harus sama persis dengan salah satu pilihan jawaban.')
+          return
+        }
       }
     }
     let table = ''
@@ -755,7 +778,7 @@ export default function CourseBuilderPage() {
       doneMsg = 'Kuis disimpan.'
     } else if (kind === 'quizQuestion') {
       table = 'quiz_questions'
-      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null }
+      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null, ...(parsedOptions ? { options: parsedOptions } : {}) }
       doneMsg = 'Soal kuis disimpan.'
     } else if (kind === 'exam') {
       table = 'competency_exams'
@@ -768,7 +791,7 @@ export default function CourseBuilderPage() {
       doneMsg = 'Ujian disimpan.'
     } else {
       table = 'exam_questions'
-      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null }
+      patch = { question: draftText.trim(), correct_answer: draftAnswer.trim(), explanation: draftExpl.trim() || null, ...(parsedOptions ? { options: parsedOptions } : {}) }
       doneMsg = 'Soal ujian disimpan.'
     }
     const { error: updErr } = await supabase.from(table).update(patch).eq('id', id)
@@ -892,6 +915,12 @@ export default function CourseBuilderPage() {
               Pertanyaan
               <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={2} required />
             </label>
+            {draftQKind === 'mc' && (
+              <label>
+                Pilihan jawaban (satu per baris)
+                <textarea value={draftOptions} onChange={(e) => setDraftOptions(e.target.value)} rows={4} required />
+              </label>
+            )}
             <label>
               Jawaban benar (hanya pengajar yang melihat)
               <input value={draftAnswer} onChange={(e) => setDraftAnswer(e.target.value)} required />
@@ -1049,7 +1078,7 @@ export default function CourseBuilderPage() {
     )
   }
 
-  function editDeleteButtons(kind: EditingKind, id: string, label: string, table: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string }) {
+  function editDeleteButtons(kind: EditingKind, id: string, label: string, table: string, init: { title?: string; text?: string; url?: string; num?: string; num2?: string; answer?: string; expl?: string; options?: string; qkind?: 'mc' | 'true_false' | 'short' }) {
     return (
       <>
         <button type="button" className="btn btn-secondary btn-small" onClick={() => startEdit(kind, id, init)}>Edit</button>{' '}
@@ -1418,7 +1447,7 @@ export default function CourseBuilderPage() {
                       {quizQuestions.filter((qq) => qq.quiz_id === q.id).map((qq) => (
                         <li key={qq.id}>
                           {qq.question}{' '}
-                          {editDeleteButtons('quizQuestion', qq.id, 'soal kuis ini', 'quiz_questions', { text: qq.question, answer: qq.correct_answer ?? '', expl: qq.explanation ?? '' })}
+                          {editDeleteButtons('quizQuestion', qq.id, 'soal kuis ini', 'quiz_questions', { text: qq.question, answer: qq.correct_answer ?? '', expl: qq.explanation ?? '', options: (qq.options ?? []).join('\n'), qkind: qq.kind })}
                           {editing?.kind === 'quizQuestion' && editing.id === qq.id && editForm('quizQuestion')}
                         </li>
                       ))}
@@ -1479,7 +1508,7 @@ export default function CourseBuilderPage() {
                       {examQuestions.filter((eq) => eq.exam_id === x.id).map((eq) => (
                         <li key={eq.id}>
                           {eq.question}{' '}
-                          {editDeleteButtons('examQuestion', eq.id, 'soal ujian ini', 'exam_questions', { text: eq.question, answer: eq.correct_answer ?? '', expl: eq.explanation ?? '' })}
+                          {editDeleteButtons('examQuestion', eq.id, 'soal ujian ini', 'exam_questions', { text: eq.question, answer: eq.correct_answer ?? '', expl: eq.explanation ?? '', options: (eq.options ?? []).join('\n'), qkind: eq.kind })}
                           {editing?.kind === 'examQuestion' && editing.id === eq.id && editForm('examQuestion')}
                         </li>
                       ))}
