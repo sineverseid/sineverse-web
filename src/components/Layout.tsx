@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount } from '../lib/supabase'
+import { fetchCommunities, fetchCourses, fetchLibraryItems, fetchUnreadCount, NOTIFICATIONS_READ_EVENT } from '../lib/supabase'
 import { checkDueReminders } from '../lib/reminders'
 import Icon, { type IconName } from './icons'
 import InstallPrompt from './InstallPrompt'
@@ -140,6 +140,10 @@ export default function Layout() {
       if (!document.hidden) refresh()
     }
     document.addEventListener('visibilitychange', onVisible)
+    // Tandai-baca dari halaman Notifikasi menyiarkan event ini — lonceng
+    // langsung menyegarkan tanpa menunggu pindah halaman atau foreground.
+    const onNotificationsRead = () => refresh()
+    window.addEventListener(NOTIFICATIONS_READ_EVENT, onNotificationsRead)
     // Panaskan cache katalog di latar belakang sekali per login, supaya
     // menu Academy, Library, dan Community langsung tampil tanpa menunggu
     // jaringan saat pertama kali dibuka. Gagal dimuat di sini tidak apa-apa
@@ -150,6 +154,7 @@ export default function Layout() {
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener(NOTIFICATIONS_READ_EVENT, onNotificationsRead)
     }
   }, [user])
 
