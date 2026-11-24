@@ -1021,10 +1021,16 @@ export async function sendNotification(
 
 /** Notification Center Fase 2 — helper bersama semua emitter baru:
     kirim notifikasi hanya bila preferensi penerima mengizinkan kategori
-    `prefsKey` (dan `in_app` aktif). Tanpa baris prefs = default aktif
-    (fetchNotificationPrefs mengembalikan default semua-true); tabel prefs
-    belum ada = lewati diam-diam. Mengembalikan true bila terkirim, false
-    bila dilewati gate prefs. Best-effort di call site: pemanggil memakai
+    `prefsKey` (dan `in_app` aktif). Tanpa baris prefs = default aktif.
+    081: gate dibaca lewat RPC SECURITY DEFINER
+    `prefs_allow_notification(user_id, key)` — REST select tidak bisa
+    membaca baris prefs orang lain (policy `notification_prefs_select_own`
+    hanya baris sendiri + admin), sehingga pengirim non-admin selalu
+    mendapat default semua-true dan gate tidak pernah memblokir (defek
+    S12a). RPC hanya mengembalikan satu boolean, tanpa membocorkan isi
+    prefs. Bila RPC gagal, lewati diam-diam (fail-closed).
+    Mengembalikan true bila terkirim, false bila dilewati gate prefs.
+    Best-effort di call site: pemanggil memakai
     `void notifyIfAllowed(...).catch(() => undefined)` supaya kegagalan
     kirim tidak pernah memblokir aksi utama atau menampilkan error.
     Peta kunci: sertifikat & proyek akhir → 'nilai'; undangan/gabung
@@ -1037,17 +1043,12 @@ export async function notifyIfAllowed(
   body: string | null,
   data?: Record<string, unknown> | null,
 ): Promise<boolean> {
-  const prefs = await fetchNotificationPrefs(userId)
-  if (!prefs) return false
-  if (prefs.in_app === false) return false
-  const cats = prefs.categories
-  if (cats) {
-    if (Array.isArray(cats)) {
-      if (!cats.includes(prefsKey)) return false
-    } else if ((cats as Record<string, unknown>)[prefsKey] === false) {
-      return false
-    }
-  }
+  const { data: allowed, error } = await supabase.rpc('prefs_allow_notification', {
+    p_user_id: userId,
+    p_key: prefsKey,
+  })
+  if (error) return false
+  if (allowed !== true) return false
   await sendNotification(userId, kind, title, body, data)
   return true
 }
