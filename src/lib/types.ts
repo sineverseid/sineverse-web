@@ -855,24 +855,6 @@ export interface MentorApplicationInput {
   affiliation: string | null
 }
 
-export interface AdminDiscussion {
-  id: string
-  admin_id: string
-  mentor_id: string | null
-  title: string
-  body: string | null
-  created_at: string
-}
-
-export interface AdminDiscussionReply {
-  id: string
-  thread_id: string
-  user_id: string
-  body: string
-  created_at: string
-  author?: { name: string | null } | null
-}
-
 export interface ModerationReport {
   id: string
   target_type: string

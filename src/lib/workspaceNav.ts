@@ -25,7 +25,8 @@ export const MENTOR_NAV: WorkspaceNavEntry[] = [
 ]
 
 // Menu Admin Panel (master prompt §04): Dashboard, Pengguna, Acara &
-// Festival, Pustaka, Moderasi, Diskusi Mentor, Editor RPS, Pengaturan.
+// Festival, Pustaka, Moderasi, Editor RPS, Pengaturan.
+// (Diskusi Mentor dihapus 24 Nov 2026 — digantikan Ruang Komunikasi Mentor.)
 export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin', label: 'Dasbor', icon: 'admin', end: true },
   { to: '/admin/pengguna', label: 'Pengguna', icon: 'community' },
@@ -34,7 +35,6 @@ export const ADMIN_NAV: WorkspaceNavEntry[] = [
   { to: '/admin/moderasi', label: 'Moderasi', icon: 'admin' },
   { to: '/admin/tiket', label: 'Tiket Bantuan', icon: 'message' },
   { to: '/admin/sinebot', label: 'SINEBOT & Helpdesk', icon: 'message' },
-  { to: '/admin/diskusi-mentor', label: 'Diskusi Mentor', icon: 'message' },
   { to: '/admin/rps', label: 'Editor RPS', icon: 'rps' },
   { to: '/admin/sections', label: 'Section & Lesson', icon: 'academy' },
   { to: '/admin/enrollment', label: 'Pendaftaran', icon: 'user' },
