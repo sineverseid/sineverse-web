@@ -146,7 +146,15 @@ export default function Layout() {
     window.addEventListener(NOTIFICATIONS_READ_EVENT, onNotificationsRead)
     // Realtime (Notification Center Fase 1, migrasi 075): INSERT notifikasi
     // milik sendiri langsung menyegarkan lonceng tanpa menunggu foreground.
-    const unsubscribeNotifications = subscribeToNotifications(user.id, () => refresh())
+    // Nama channel HARUS beda dari halaman Notifikasi ('notifications-page')
+    // — nama sama = channel yang sama, dan menambah handler setelah
+    // subscribe() melempar error (blank 24 Nov 2026).
+    const unsubscribeNotifications = subscribeToNotifications(
+      user.id,
+      () => refresh(),
+      undefined,
+      'notifications-bell',
+    )
     // Panaskan cache katalog di latar belakang sekali per login, supaya
     // menu Academy, Library, dan Community langsung tampil tanpa menunggu
     // jaringan saat pertama kali dibuka. Gagal dimuat di sini tidak apa-apa
