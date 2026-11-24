@@ -4995,6 +4995,14 @@ a.file-row:hover {
 .notif-card--unread {
   border-left: 4px solid var(--film-green);
 }
+.notif-card--clickable {
+  cursor: pointer;
+}
+.notif-card--clickable:hover,
+.notif-card--clickable:focus-visible {
+  border-color: var(--film-green);
+  outline: none;
+}
 .notif-card-head {
   display: flex;
   align-items: flex-start;
