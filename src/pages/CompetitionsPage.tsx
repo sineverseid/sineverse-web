@@ -11,7 +11,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchEnrollments, fetchProfileNames, supabase } from '../lib/supabase'
+import { fetchEnrollments, fetchProfileNames, notifyIfAllowed, supabase } from '../lib/supabase'
 import { issueWorkCertificate } from '../lib/certificates'
 import type { Competition, CompetitionScore, CompetitionStatus, CompetitionSubmission, CompetitionWinner } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -485,6 +485,18 @@ export function CompetitionDetailPage() {
       // langsung sudah dihapus). RPC idempotent per (kompetisi, pemenang).
       try {
         const result = await issueWorkCertificate(currentComp.id, sub.user_id, null)
+        // Fase 2 — beri tahu pemenang, hanya bila baru terbit
+        // (cabang alreadyIssued sudah ada untuk teks hasil — pakai gate yang sama).
+        if (!result.alreadyIssued) {
+          void notifyIfAllowed(
+            sub.user_id,
+            'nilai',
+            'certificate',
+            `Sertifikat karya terbit: "${currentComp.title}"`,
+            `Sertifikat karya untuk kemenanganmu di "${currentComp.title}" sudah terbit: ${result.serial}.`,
+            { certificate_serial: result.serial, certificate_type: 'work', competition_id: currentComp.id },
+          ).catch(() => undefined)
+        }
         issued.push(
           result.alreadyIssued
             ? `${name}, ${result.serial} (sudah diterbitkan sebelumnya)`
