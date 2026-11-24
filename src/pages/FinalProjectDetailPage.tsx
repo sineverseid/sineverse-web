@@ -46,7 +46,7 @@ import type {
   FinalProjectTask,
   FinalProjectTaskStatus,
 } from '../lib/finalProjects'
-import { fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
+import { fetchProfileNames, logAudit, notifyIfAllowed, supabase, uploadToBucket } from '../lib/supabase'
 
 type Tab = 'ringkasan' | 'tim' | 'tugas' | 'berkas' | 'umpan-balik' | 'penilaian'
 
@@ -197,14 +197,38 @@ export default function FinalProjectDetailPage() {
   const nameOf = (userId: string | null | undefined) =>
     userId ? (names.get(userId) ?? 'Anggota') : '—'
 
-  async function changeStatus(status: FinalProjectStatus, msg: string) {
+  async function changeStatus(status: FinalProjectStatus, msg: string): Promise<boolean> {
     try {
       await updateProjectStatus(current.id, status)
       await logAudit('final_project.status', 'final_projects', current.id, { status })
       setProject({ ...current, status })
       setNotice(msg)
+      // Fase 2 — hanya dua transisi yang diberi notifikasi (in_progress dan
+      // published adalah aksi pemilik sendiri; approved/revision/rejected
+      // ditangani handleAssess dengan satu notifikasi status).
+      if (status === 'submitted' && current.mentor_id) {
+        void notifyIfAllowed(
+          current.mentor_id,
+          'nilai',
+          'final_project_status',
+          `Film "${current.title}" dikirim untuk dinilai`,
+          'Pemilik proyek mengirim film untuk dinilai. Buka proyek untuk memulai penilaian.',
+          { project_id: current.id, status, reviewer_id: user?.id ?? null },
+        ).catch(() => undefined)
+      } else if (status === 'under_review') {
+        void notifyIfAllowed(
+          current.owner_id,
+          'nilai',
+          'final_project_status',
+          `Penilaian "${current.title}" dimulai`,
+          'Mentor mulai menilai proyek akhirmu.',
+          { project_id: current.id, status, reviewer_id: user?.id ?? null },
+        ).catch(() => undefined)
+      }
+      return true
     } catch {
       setNotice('Gagal mengubah status proyek. Coba lagi.')
+      return false
     }
   }
 
@@ -337,6 +361,11 @@ export default function FinalProjectDetailPage() {
       return
     }
     try {
+      // Fase 2 — addProjectReview memakai upsert tanpa updated_at, jadi
+      // dari baris hasil tidak bisa dibedakan review baru vs edit. Kirim
+      // notifikasi hanya bila mentor ini BELUM pernah memberi review;
+      // mengedit review yang sama bukan event baru.
+      const hadReview = reviews.some((r) => r.reviewer_id === user.id)
       const saved = await addProjectReview({
         projectId: current.id,
         reviewerId: user.id,
@@ -344,6 +373,20 @@ export default function FinalProjectDetailPage() {
         feedback: reviewFeedback.trim() || null,
       })
       setReviews([saved, ...reviews])
+      if (!hadReview) {
+        const feedbackText = (reviewFeedback.trim() || '').slice(0, 120)
+        const parts: string[] = []
+        if (feedbackText) parts.push(`"${nameOf(user.id)}": ${feedbackText}`)
+        if (score !== null) parts.push(`Skor: ${score}.`)
+        void notifyIfAllowed(
+          current.owner_id,
+          'nilai',
+          'final_project_review',
+          `Umpan balik baru untuk "${current.title}"`,
+          parts.join(' ') || 'Mentor memberikan umpan balik baru.',
+          { project_id: current.id, review_id: saved.id, reviewer_id: user.id },
+        ).catch(() => undefined)
+      }
       setReviewScore('')
       setReviewFeedback('')
       setNotice('Umpan balik dikirim.')
@@ -379,7 +422,38 @@ export default function FinalProjectDetailPage() {
           : decision === 'revision'
             ? 'Proyek dikembalikan untuk revisi.'
             : 'Proyek ditolak.'
-      await changeStatus(decision, msg)
+      // Fase 2 — SATU notifikasi status per penilaian (bukan dua:
+      // review di alur ini tidak mengirim notifikasi terpisah). Hanya
+      // bila status benar-benar berubah (changeStatus mengembalikan false
+      // bila gagal).
+      const ok = await changeStatus(decision, msg)
+      if (ok) {
+        const fb = assessFeedback.trim()
+        const extra = `${fb ? ` Umpan balik: "${fb.slice(0, 120)}"` : ''}${score !== null ? ` Skor: ${score}.` : ''}`
+        const [title, body] =
+          decision === 'approved'
+            ? [
+                `Proyek akhir disetujui: "${current.title}"`,
+                `Mentor menyetujui proyekmu.${extra} Kamu bisa mempublikasikan film ke Showcase.`,
+              ]
+            : decision === 'revision'
+              ? [
+                  `Proyek akhir perlu revisi: "${current.title}"`,
+                  `Mentor mengembalikan proyekmu untuk revisi.${extra}`,
+                ]
+              : [
+                  `Proyek akhir ditolak: "${current.title}"`,
+                  `Mentor menolak proyek ini.${extra}`,
+                ]
+        void notifyIfAllowed(
+          current.owner_id,
+          'nilai',
+          'final_project_status',
+          title,
+          body,
+          { project_id: current.id, status: decision, reviewer_id: user.id },
+        ).catch(() => undefined)
+      }
       setAssessScore('')
       setAssessFeedback('')
     } catch {
@@ -442,6 +516,18 @@ export default function FinalProjectDetailPage() {
     try {
       await setProjectMentor(current.id, mentorSelect || null)
       setProject({ ...current, mentor_id: mentorSelect || null })
+      // Fase 2 — beri tahu mentor BARU yang ditunjuk; bila mentorSelect
+      // kosong (mentor dilepas) tidak ada penerima → tidak ada notifikasi.
+      if (mentorSelect) {
+        void notifyIfAllowed(
+          mentorSelect,
+          'nilai',
+          'mentor_assigned',
+          `Kamu ditunjuk sebagai mentor proyek akhir "${current.title}"`,
+          `Kamu menjadi mentor pendamping proyek "${current.title}". Buka proyek untuk melihat progresnya.`,
+          { project_id: current.id, project_title: current.title, context: 'final_project' },
+        ).catch(() => undefined)
+      }
       setNotice('Mentor pendamping diperbarui.')
     } catch {
       setNotice('Gagal mengganti mentor. Coba lagi.')
