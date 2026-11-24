@@ -4887,3 +4887,223 @@ a.file-row:hover {
   background: #16865e;
   border-radius: 999px;
 }
+
+/* Notification Center (Fase 1) — kelas berprefix notif- */
+.notif-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0.75rem 0 1rem;
+}
+.notif-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 999px;
+  background: #fff;
+  color: #5b6b7f;
+}
+.notif-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--navy);
+}
+.notif-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.notif-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.notif-clear-btn {
+  background: #fdecec;
+  color: #b3261e;
+  border: 1px solid #f3c2c0;
+}
+.notif-clear-btn:hover {
+  background: #fbdcdc;
+}
+.notif-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--film-green);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.notif-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+.notif-pill {
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--light-grey);
+  background: #fff;
+  color: var(--navy);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.notif-pill--active {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.notif-group-title {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.95rem;
+  color: #5b6b7f;
+}
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.notif-card {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+}
+.notif-card--unread {
+  border-left: 4px solid var(--film-green);
+}
+.notif-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.notif-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 10px;
+  background: var(--mint-soft);
+  color: var(--navy);
+}
+.notif-card-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: #5b6b7f;
+  padding-top: 0.15rem;
+}
+.notif-dot-sep {
+  margin: 0 0.3rem;
+}
+.notif-unread-dot {
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: 0.5rem;
+  border-radius: 50%;
+  background: var(--film-green);
+}
+.notif-title {
+  margin: 0.6rem 0 0.25rem;
+}
+.notif-body {
+  margin: 0;
+  color: #33475e;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.55rem;
+}
+.notif-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+}
+.notif-tag--new {
+  background: var(--film-green);
+  color: #fff;
+}
+.notif-tag--important {
+  background: var(--navy);
+  color: #fff;
+}
+.notif-kind {
+  font-size: 0.8rem;
+  color: #5b6b7f;
+}
+.notif-link-row {
+  margin: 0.6rem 0 0;
+}
+.notif-link-row a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--film-green);
+  font-weight: 600;
+}
+.notif-dialog {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid #f3c2c0;
+  border-radius: 12px;
+  background: #fff7f7;
+}
+.notif-dialog p {
+  margin: 0 0 0.6rem;
+}
+.notif-dialog-option {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.4rem 0;
+  cursor: pointer;
+}
+.notif-dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.notif-sentinel {
+  text-align: center;
+  padding: 0.75rem;
+  color: #5b6b7f;
+}
+.notif-end {
+  text-align: center;
+}
+@media (min-width: 640px) {
+  .notif-toolbar {
+    flex-wrap: nowrap;
+  }
+}
