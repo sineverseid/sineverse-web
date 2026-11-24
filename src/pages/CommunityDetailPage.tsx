@@ -1,10 +1,12 @@
 // SINEVERSE, Feed komunitas: postingan + balasan + sematkan (004).
+// Fase 2 (063): kategori, badge peran, reactions, balasan bertingkat,
+// mention, pencarian, lampiran gambar/PDF.
 // Hanya anggota komunitas yang bisa membaca/menulis feed (RLS); pin oleh
 // pembuat komunitas atau admin. Pembuat/admin juga bisa menghidupkan/
 // mematikan penanda "Mencari pembimbing" (011) dan mengganti avatar
 // komunitas (preset warna atau foto sendiri — lihat communityAvatar.ts).
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import Icon from '../components/icons'
 import MigrationNotice from '../components/MigrationNotice'
@@ -18,55 +20,133 @@ import {
   uploadCommunityAvatar,
 } from '../lib/communityAvatar'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchProfileNames, invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
-import type { Community, CommunityPost, CommunityPostReply } from '../lib/types'
+import {
+  STUDENT_COMMUNITY_CATEGORIES,
+  STUDENT_COMMUNITY_EMOJIS,
+  STUDENT_COMMUNITY_PAGE_SIZE,
+  deletePost,
+  deleteReply,
+  fetchCategories,
+  fetchMembers,
+  fetchPosts,
+  fetchReactions,
+  fetchReplies,
+  roleBadgeLabel,
+  sendPost,
+  sendReply,
+  signedPostAttachmentUrl,
+  subscribeToCommunity,
+  toggleReaction,
+  validatePostAttachment,
+} from '../lib/studentCommunity'
+import type {
+  StudentCommunityMember,
+  StudentCommunityPost,
+  StudentCommunityReactionSummary,
+  StudentCommunityReply,
+} from '../lib/studentCommunity'
+import { invalidateCatalogCache, logAudit, supabase } from '../lib/supabase'
+import type { Community } from '../lib/types'
 
-interface MemberRow {
-  user_id: string
-  role: string
-  name: string
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Avatar bulat komunitas: foto bila cover_url berupa URL, ubin inisial bila preset/kosong. */
-function CommunityAvatarBadge({
-  coverUrl,
+/** Render isi teks: @nama anggota dicetak tebal, baris baru dipertahankan (pola MentorGroupPage). */
+function renderBodyWithMentions(body: string, memberNames: string[]): ReactNode {
+  const names = [...new Set(memberNames)].sort((a, b) => b.length - a.length)
+  const mentionRe =
+    names.length > 0
+      ? new RegExp(`(@(?:${names.map(escapeRegExp).join('|')}))`, 'g')
+      : null
+  return body.split('\n').map((line, li) => (
+    <span key={li}>
+      {li > 0 && <br />}
+      {mentionRe
+        ? line.split(mentionRe).map((part, i) =>
+            i % 2 === 1 ? <strong key={i}>{part}</strong> : part,
+          )
+        : line}
+    </span>
+  ))
+}
+
+/** Badge peran (Master Prompt: Student / Mentor / Admin terlihat di setiap postingan/komentar). */
+function RoleBadge({ role }: { role: string | null | undefined }) {
+  const label = roleBadgeLabel(role)
+  const style =
+    label === 'Admin'
+      ? { background: '#172438', color: '#fff' }
+      : label === 'Mentor'
+        ? { background: '#A3E6C4', color: '#172438' }
+        : { background: '#E8EDF3', color: '#172438' }
+  return (
+    <span
+      style={{
+        ...style,
+        display: 'inline-block',
+        fontSize: '0.7rem',
+        fontWeight: 700,
+        lineHeight: 1,
+        padding: '0.2rem 0.45rem',
+        borderRadius: '999px',
+        marginLeft: '0.4rem',
+        verticalAlign: 'middle',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </span>
+  )
+}
+
+/** Lampiran postingan: gambar tampil inline, PDF/dokumen lain berupa tautan (signed URL, bucket privat). */
+function AttachmentView({
+  path,
   name,
-  size,
+  type,
 }: {
-  coverUrl: string | null
-  name: string
-  size?: number
+  path: string
+  name: string | null
+  type: string | null
 }) {
-  const avatar = resolveCommunityAvatar(coverUrl, name)
-  const px = size ?? 48
-  if (avatar.kind === 'image') {
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    signedPostAttachmentUrl(path)
+      .then((u) => {
+        if (!cancelled) setUrl(u)
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [path])
+  const label = name ?? 'Lampiran'
+  if (failed) return <p className="muted">Lampiran tidak bisa dibuka saat ini.</p>
+  if (!url) return <p className="muted">Memuat lampiran…</p>
+  if ((type ?? '').startsWith('image/')) {
     return (
-      <img
-        src={avatar.url}
-        alt=""
-        style={{ width: px, height: px, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-      />
+      <p>
+        <img
+          src={url}
+          alt={label}
+          style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 8, display: 'block' }}
+        />
+        <span className="muted">{label}</span>
+      </p>
     )
   }
   return (
-    <span
-      aria-hidden="true"
-      style={{
-        width: px,
-        height: px,
-        borderRadius: '50%',
-        background: avatar.bg,
-        color: avatar.fg,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontWeight: 800,
-        fontSize: px * 0.45,
-        flexShrink: 0,
-      }}
-    >
-      {avatar.letter}
-    </span>
+    <p>
+      <a href={url} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+      <span className="muted"> (PDF — terbuka di tab baru)</span>
+    </p>
   )
 }
 
@@ -174,24 +254,57 @@ export default function CommunityDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user, profile } = useAuth()
   const [community, setCommunity] = useState<Community | null>(null)
-  const [posts, setPosts] = useState<CommunityPost[] | null>(null)
-  const [replies, setReplies] = useState<CommunityPostReply[]>([])
+  const [posts, setPosts] = useState<StudentCommunityPost[] | null>(null)
+  const [replies, setReplies] = useState<StudentCommunityReply[]>([])
+  const [reactions, setReactions] = useState<Map<string, StudentCommunityReactionSummary[]>>(
+    new Map(),
+  )
   const [isMember, setIsMember] = useState(false)
   const [myRole, setMyRole] = useState<string | null>(null)
-  const [members, setMembers] = useState<MemberRow[]>([])
+  const [members, setMembers] = useState<StudentCommunityMember[]>([])
   const [postsError, setPostsError] = useState<string | null>(null)
   const [joining, setJoining] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [realtimeOk, setRealtimeOk] = useState<boolean | null>(null)
+  // Fase 2: kategori + pencarian + paginasi.
+  const [categories, setCategories] = useState<string[]>([...STUDENT_COMMUNITY_CATEGORIES])
+  const [activeCategory, setActiveCategory] = useState<string | null>(null)
+  const [searchInput, setSearchInput] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  // Komposer postingan.
+  const [title, setTitle] = useState('')
+  const [postCategory, setPostCategory] = useState('')
   const [body, setBody] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  // Komposer balasan: replyTo = postingan, replyParent = balasan yang
+  // dibalas (null = balasan langsung ke postingan).
   const [replyTo, setReplyTo] = useState<string | null>(null)
+  const [replyParent, setReplyParent] = useState<StudentCommunityReply | null>(null)
   const [replyBody, setReplyBody] = useState('')
   // B60: kunci tombol kirim selama request berjalan (klik ganda =
   // postingan/balasan ganda).
   const [posting, setPosting] = useState(false)
   const [replying, setReplying] = useState(false)
   const [tab, setTab] = useState<'diskusi' | 'pengumuman'>('diskusi')
+  // Mention (@nama): satu state bersama untuk kedua komposer; mentionTarget
+  // menandai textarea mana yang sedang aktif.
+  const [mentionTarget, setMentionTarget] = useState<'post' | 'reply' | null>(null)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionStart, setMentionStart] = useState<number | null>(null)
+  const [mentionedPostIds, setMentionedPostIds] = useState<string[]>([])
+  const [mentionedReplyIds, setMentionedReplyIds] = useState<string[]>([])
+  const postTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null)
+  // Reactions + hapus (dua langkah, tanpa window.confirm).
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null)
+  const [confirmDeletePostId, setConfirmDeletePostId] = useState<string | null>(null)
+  const [confirmDeleteReplyId, setConfirmDeleteReplyId] = useState<string | null>(null)
+  const [busyAction, setBusyAction] = useState<string | null>(null)
   // Editor avatar (pembuat/admin): preset atau foto yang diunggah, saling
   // meniadakan. Diisi dari community.cover_url saat komunitas dimuat.
   const [editPreset, setEditPreset] = useState<string | null>(null)
@@ -217,44 +330,57 @@ export default function CommunityDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [community?.id])
 
-  async function loadPosts(communityId: string) {
-    const { data, error: qErr } = await supabase
-      .from('community_posts')
-      .select('*')
-      .eq('community_id', communityId)
-      .order('is_pinned', { ascending: false })
-      .order('created_at', { ascending: false })
-    if (qErr) throw qErr
-    const rows = (data ?? []) as CommunityPost[]
-    const userIds = [...new Set(rows.map((r) => r.user_id))]
-    // Nama penulis dan balasan tidak saling bergantung: jalankan paralel.
-    const [profsRes, repsRes] = await Promise.all([
-      userIds.length > 0
-        ? supabase.from('profiles').select('id,name,photo_url').in('id', userIds)
-        : Promise.resolve({ data: null as { id: string; name: string | null; photo_url: string | null }[] | null }),
-      rows.length > 0
-        ? supabase
-            .from('community_post_replies')
-            .select('*')
-            .in('post_id', rows.map((r) => r.id))
-            .order('created_at', { ascending: true })
-        : Promise.resolve({ data: null as CommunityPostReply[] | null }),
+  /**
+   * Muat satu halaman feed (Fase 2: kategori + pencarian + cursor).
+   * append = true menempelkan halaman berikutnya di bawah yang sudah ada.
+   * Balasan + reaksi selalu dimuat untuk semua postingan yang tampil.
+   */
+  async function loadPosts(
+    communityId: string,
+    opts: {
+      category?: string | null
+      search?: string
+      beforeCreatedAt?: string | null
+      append?: boolean
+    } = {},
+  ) {
+    const page = await fetchPosts(communityId, {
+      category: opts.category ?? activeCategory,
+      search: opts.search ?? searchTerm,
+      beforeCreatedAt: opts.beforeCreatedAt ?? null,
+      limit: STUDENT_COMMUNITY_PAGE_SIZE,
+    })
+    setHasMore(page.length === STUDENT_COMMUNITY_PAGE_SIZE)
+    // Dedupe: postingan yang disematkan bisa muncul di dua halaman
+    // (urut disematkan-dulu + cursor created_at) — jangan tampil ganda.
+    const all = opts.append
+      ? [...(posts ?? []), ...page.filter((p) => !(posts ?? []).some((x) => x.id === p.id))]
+      : page
+    setPosts(all)
+    const ids = all.map((p) => p.id)
+    const [reps, reacts] = await Promise.all([
+      fetchReplies(ids),
+      user
+        ? fetchReactions(
+            ids,
+            [],
+            user.id,
+          )
+        : Promise.resolve(new Map<string, StudentCommunityReactionSummary[]>()),
     ])
-    if (userIds.length > 0) {
-      const byId = new Map(((profsRes.data ?? []) as { id: string; name: string | null; photo_url: string | null }[]).map((p) => [p.id, p]))
-      for (const r of rows) r.author = byId.get(r.user_id) ?? null
+    setReplies(reps)
+    // Reaksi balasan dimuat terpisah (butuh id balasan dulu).
+    if (reps.length > 0 && user) {
+      const replyReacts = await fetchReactions([], reps.map((r) => r.id), user.id)
+      for (const [k, v] of replyReacts) reacts.set(k, v)
     }
-    setPosts(rows)
-    if (rows.length > 0) {
-      const rrows = (repsRes.data ?? []) as CommunityPostReply[]
-      const rIds = [...new Set(rrows.map((r) => r.user_id))]
-      if (rIds.length > 0) {
-        const { data: profs } = await supabase.from('profiles').select('id,name').in('id', rIds)
-        const byId = new Map(((profs ?? []) as { id: string; name: string | null }[]).map((p) => [p.id, p]))
-        for (const r of rrows) r.author = byId.get(r.user_id) ? { name: byId.get(r.user_id)?.name ?? null, photo_url: null } : null
-      }
-      setReplies(rrows)
-    }
+    setReactions(reacts)
+  }
+
+  /** Muat ulang feed dari halaman pertama (setelah kirim/hapus/filter berubah). */
+  async function reloadFeed(communityId: string) {
+    setHasMore(false)
+    await loadPosts(communityId, { beforeCreatedAt: null })
   }
 
   useEffect(() => {
@@ -278,21 +404,16 @@ export default function CommunityDetailPage() {
         if (cancelled) return
         const comm = data as Community | null
         setCommunity(comm)
-        // Keanggotaan saya dan daftar anggota tidak saling bergantung.
-        const [memRes, memRowsRes] = await Promise.all([
-          user
-            ? supabase
-                .from('community_members')
-                .select('id,role')
-                .eq('community_id', communityId)
-                .eq('user_id', user.id)
-                .maybeSingle()
-            : Promise.resolve({ data: null as { role: string | null } | null }),
-          supabase
-            .from('community_members')
-            .select('user_id,role')
-            .eq('community_id', communityId),
-        ])
+        // Keanggotaan saya (daftar anggota lengkap dimuat lewat lib
+        // fetchMembers di bawah, beserta nama + role profil untuk badge).
+        const memRes = user
+          ? await supabase
+              .from('community_members')
+              .select('id,role')
+              .eq('community_id', communityId)
+              .eq('user_id', user.id)
+              .maybeSingle()
+          : { data: null as { role: string | null } | null }
         let member = false
         let role: string | null = null
         if (user) {
@@ -304,26 +425,22 @@ export default function CommunityDetailPage() {
             setMyRole(role)
           }
         }
-        // Daftar anggota + jumlah anggota; nama anggota dan feed dimuat
+        // Daftar anggota (nama + role profil untuk badge) dan feed dimuat
         // paralel karena tidak saling bergantung.
-        const memList = (memRowsRes.data ?? []) as { user_id: string; role: string | null }[]
-        // Feed hanya boleh dibaca anggota, pembuat, dan admin. Bila query
-        // post diblokir RLS, tampilkan pesan terkunci, bukan halaman error.
         const canRead =
           member || comm?.created_by === user?.id || profile?.role === 'admin'
-        const namesPromise = fetchProfileNames(memList.map((m) => m.user_id))
-          .catch(() => new Map<string, string>())
-          .then((names) => {
-            if (!cancelled) {
-              setMembers(
-                memList.map((m) => ({
-                  user_id: m.user_id,
-                  role: m.role ?? 'member',
-                  name: names.get(m.user_id) ?? 'Anggota',
-                })),
-              )
-            }
+        const membersPromise = fetchMembers(communityId)
+          .then((list) => {
+            if (!cancelled) setMembers(list)
           })
+          .catch(() => {
+            if (!cancelled) setMembers([])
+          })
+        const catsPromise = fetchCategories()
+          .then((cats) => {
+            if (!cancelled) setCategories(cats)
+          })
+          .catch(() => {})
         const postsPromise = canRead
           ? loadPosts(communityId).catch(() => {
               if (!cancelled) {
@@ -334,7 +451,7 @@ export default function CommunityDetailPage() {
           : Promise.resolve().then(() => {
               if (!cancelled) setPosts([])
             })
-        await Promise.all([namesPromise, postsPromise])
+        await Promise.all([membersPromise, catsPromise, postsPromise])
       } catch {
         if (!cancelled) setError('Gagal memuat komunitas. Coba lagi nanti.')
       } finally {
@@ -347,6 +464,29 @@ export default function CommunityDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user?.id, profile?.role])
+
+  // Realtime Fase 2: feed dimuat ulang saat ada postingan/balasan baru.
+  // Hanya bila feed sudah berhasil dimuat (posts !== null) — non-anggota
+  // tidak melihat error dari sini.
+  const postsRef = useRef<StudentCommunityPost[] | null>(null)
+  postsRef.current = posts
+  const reloadRef = useRef<() => void>(() => {})
+  reloadRef.current = () => {
+    if (!community || postsRef.current === null) return
+    void reloadFeed(community.id).catch(() => {
+      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+    })
+  }
+  useEffect(() => {
+    if (!id || !user) return
+    const unsubscribe = subscribeToCommunity(
+      id,
+      () => reloadRef.current(),
+      (status) => setRealtimeOk(status === 'ok'),
+    )
+    return unsubscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, user?.id])
 
   if (loading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -378,7 +518,13 @@ export default function CommunityDetailPage() {
     setMyRole('member')
     setMembers((m) => [
       ...m,
-      { user_id: user.id, role: 'member', name: profile?.name ?? 'Anggota' },
+      {
+        user_id: user.id,
+        role: 'member',
+        name: profile?.name ?? 'Anggota',
+        photo_url: profile?.photo_url ?? null,
+        profileRole: profile?.role ?? 'siswa',
+      },
     ])
     await logAudit('community.joined', 'communities', community.id, { name: community.name })
     try {
@@ -460,22 +606,124 @@ export default function CommunityDetailPage() {
     setNotice('Avatar komunitas disimpan.')
   }
 
+  // --- Mention (@nama) — satu pola untuk kedua komposer (pola MentorGroupPage) ---
+  function handleComposerChange(
+    kind: 'post' | 'reply',
+    e: ChangeEvent<HTMLTextAreaElement>,
+  ) {
+    const value = e.target.value
+    const cursor = e.target.selectionStart ?? value.length
+    if (kind === 'post') setBody(value)
+    else setReplyBody(value)
+    const before = value.slice(0, cursor)
+    const match = before.match(/@([\p{L}\p{N} ]*)$/u)
+    if (match && match.index !== undefined) {
+      const atIndex = match.index
+      const prevChar = atIndex > 0 ? before[atIndex - 1] : ' '
+      if (prevChar === ' ' || prevChar === '\n') {
+        setMentionTarget(kind)
+        setMentionQuery(match[1])
+        setMentionStart(atIndex)
+        return
+      }
+    }
+    setMentionTarget(null)
+    setMentionQuery(null)
+    setMentionStart(null)
+  }
+
+  function pickMention(member: StudentCommunityMember) {
+    if (mentionTarget === null || mentionStart === null) return
+    const ref = mentionTarget === 'post' ? postTextareaRef : replyTextareaRef
+    const current = mentionTarget === 'post' ? body : replyBody
+    const cursor = ref.current?.selectionStart ?? current.length
+    const next = `${current.slice(0, mentionStart)}@${member.name} ${current.slice(cursor)}`
+    if (mentionTarget === 'post') {
+      setBody(next)
+      setMentionedPostIds((prev) =>
+        prev.includes(member.user_id) ? prev : [...prev, member.user_id],
+      )
+    } else {
+      setReplyBody(next)
+      setMentionedReplyIds((prev) =>
+        prev.includes(member.user_id) ? prev : [...prev, member.user_id],
+      )
+    }
+    setMentionTarget(null)
+    setMentionQuery(null)
+    setMentionStart(null)
+    const pos = mentionStart + member.name.length + 2
+    requestAnimationFrame(() => {
+      ref.current?.focus()
+      ref.current?.setSelectionRange(pos, pos)
+    })
+  }
+
+  const mentionSuggestions =
+    mentionQuery === null
+      ? []
+      : members
+          .filter((m) => m.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+          .slice(0, 6)
+
+  /** Hanya id yang @namanya masih ada di teks yang dikirim. */
+  function mentionedInText(text: string, ids: string[]): string[] {
+    return ids.filter((id) => {
+      const m = members.find((mm) => mm.user_id === id)
+      return m ? text.includes(`@${m.name}`) : false
+    })
+  }
+
+  function handleFileChange(file: File | null) {
+    setFileError(null)
+    if (!file) {
+      setFile(null)
+      return
+    }
+    const problem = validatePostAttachment(file)
+    if (problem) {
+      setFile(null)
+      setFileError(problem)
+      return
+    }
+    setFile(file)
+  }
+
   async function handlePost(e: FormEvent) {
     e.preventDefault()
     const currentCommunity = community
-    if (!user || !body.trim() || !currentCommunity || posting) return
+    if (!user || (!body.trim() && !file) || !currentCommunity || posting) return
     setPosting(true)
     try {
-      const { error: insErr } = await supabase.from('community_posts').insert({
-        community_id: currentCommunity.id,
-        user_id: user.id,
-        body: body.trim(),
+      const post = await sendPost({
+        communityId: currentCommunity.id,
+        userId: user.id,
+        title: title.trim() === '' ? null : title.trim(),
+        category: postCategory === '' ? null : postCategory,
+        body,
+        mentionedUserIds: mentionedInText(body, mentionedPostIds),
+        file,
       })
-      if (insErr) setNotice('Gagal mengirim postingan. Coba lagi nanti.')
+      setTitle('')
+      setPostCategory('')
+      setBody('')
+      setFile(null)
+      setMentionedPostIds([])
+      // Postingan baru tampil di atas (Realtime juga akan mengembalikannya
+      // — dedupe lewat id).
+      setPosts((prev) => {
+        const xs = prev ?? []
+        return xs.some((p) => p.id === post.id) ? xs : [post, ...xs]
+      })
+      // Bila filter kategori/pencarian aktif, postingan baru belum tentu
+      // cocok — muat ulang supaya daftar konsisten dengan filter.
+      if (activeCategory || searchTerm) await reloadFeed(currentCommunity.id)
       else {
-        setBody('')
-        await loadPosts(currentCommunity.id)
+        const reps = await fetchReplies([post.id]).catch(() => [])
+        setReplies((prev) => [...prev, ...reps])
       }
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal mengirim postingan. Coba lagi nanti.')
     } finally {
       setPosting(false)
     }
@@ -487,23 +735,26 @@ export default function CommunityDetailPage() {
     if (!user || !replyBody.trim() || !currentCommunity || replying) return
     setReplying(true)
     try {
-      const { error: insErr } = await supabase.from('community_post_replies').insert({
-        post_id: postId,
-        user_id: user.id,
-        body: replyBody.trim(),
+      const reply = await sendReply({
+        postId,
+        userId: user.id,
+        body: replyBody,
+        parentId: replyParent?.id ?? null,
+        mentionedUserIds: mentionedInText(replyBody, mentionedReplyIds),
       })
-      if (insErr) setNotice('Gagal mengirim balasan. Coba lagi nanti.')
-      else {
-        setReplyBody('')
-        setReplyTo(null)
-        await loadPosts(currentCommunity.id)
-      }
+      setReplyBody('')
+      setReplyTo(null)
+      setReplyParent(null)
+      setMentionedReplyIds([])
+      setReplies((prev) => (prev.some((r) => r.id === reply.id) ? prev : [...prev, reply]))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal mengirim balasan. Coba lagi nanti.')
     } finally {
       setReplying(false)
     }
   }
 
-  async function handlePin(post: CommunityPost) {
+  async function handlePin(post: StudentCommunityPost) {
     const currentCommunity = community
     if (!currentCommunity) return
     const { error: updErr } = await supabase
@@ -511,20 +762,241 @@ export default function CommunityDetailPage() {
       .update({ is_pinned: !post.is_pinned })
       .eq('id', post.id)
     if (updErr) setNotice('Gagal mengubah sematan. Coba lagi nanti.')
-    else await loadPosts(currentCommunity.id)
+    else await reloadFeed(currentCommunity.id)
+  }
+
+  async function handleDeletePost(post: StudentCommunityPost) {
+    const currentCommunity = community
+    if (!currentCommunity) return
+    setBusyAction(`del-post-${post.id}`)
+    try {
+      await deletePost(post.id)
+      setConfirmDeletePostId(null)
+      setPosts((prev) => (prev ?? []).filter((p) => p.id !== post.id))
+      setReplies((prev) => prev.filter((r) => r.post_id !== post.id))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menghapus postingan. Coba lagi nanti.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function handleDeleteReply(reply: StudentCommunityReply) {
+    const currentCommunity = community
+    if (!currentCommunity) return
+    setBusyAction(`del-reply-${reply.id}`)
+    try {
+      await deleteReply(reply.id)
+      setConfirmDeleteReplyId(null)
+      setReplies((prev) => prev.filter((r) => r.id !== reply.id))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menghapus balasan. Coba lagi nanti.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function handleToggleReaction(
+    target: { postId?: string; replyId?: string },
+    emoji: string,
+  ) {
+    if (!user) return
+    const key = target.replyId ? `reply:${target.replyId}` : `post:${target.postId ?? ''}`
+    setBusyAction(`react-${key}-${emoji}`)
+    try {
+      await toggleReaction(target, user.id, emoji)
+      // Muat ulang ringkasan reaksi untuk target ini saja.
+      const fresh = await fetchReactions(
+        target.postId ? [target.postId] : [],
+        target.replyId ? [target.replyId] : [],
+        user.id,
+      )
+      setReactions((prev) => {
+        const next = new Map(prev)
+        const v = fresh.get(key)
+        if (v) next.set(key, v)
+        else next.delete(key)
+        return next
+      })
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal mengubah reaksi. Coba lagi nanti.')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function handleCategoryChange(category: string | null) {
+    if (!community) return
+    setActiveCategory(category)
+    setHasMore(false)
+    try {
+      await loadPosts(community.id, { category, beforeCreatedAt: null })
+    } catch {
+      setPosts([])
+      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+    }
+  }
+
+  async function handleSearchSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!community) return
+    const term = searchInput.trim()
+    setSearchTerm(term)
+    setHasMore(false)
+    try {
+      await loadPosts(community.id, { search: term, beforeCreatedAt: null })
+    } catch {
+      setPosts([])
+      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+    }
+  }
+
+  async function handleLoadMore() {
+    if (!community || loadingMore || !hasMore) return
+    const last = (posts ?? [])[(posts ?? []).length - 1]
+    if (!last) return
+    setLoadingMore(true)
+    try {
+      await loadPosts(community.id, { beforeCreatedAt: last.created_at, append: true })
+    } catch {
+      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   const allPosts = posts ?? []
   const pinnedPosts = allPosts.filter((p) => p.is_pinned)
   const visiblePosts = tab === 'pengumuman' ? pinnedPosts : allPosts
 
-  function renderPostCard(p: CommunityPost) {
+  const memberNames = members.map((m) => m.name)
+
+  /** Baris reaksi untuk satu postingan / balasan (Fase 2). */
+  function renderReactions(target: { postId?: string; replyId?: string }) {
+    const key = target.replyId ? `reply:${target.replyId}` : `post:${target.postId ?? ''}`
+    const list = reactions.get(key) ?? []
+    const pickerOpen = reactionPickerFor === key
+    return (
+      <div className="post-actions" style={{ flexWrap: 'wrap', gap: '0.25rem' }}>
+        {list.map((s) => (
+          <button
+            key={s.emoji}
+            type="button"
+            className="btn btn-ghost btn-small"
+            aria-pressed={s.mine}
+            disabled={busyAction === `react-${key}-${s.emoji}`}
+            onClick={() => void handleToggleReaction(target, s.emoji)}
+            style={s.mine ? { outline: '2px solid #16865E', outlineOffset: 1 } : undefined}
+          >
+            {s.emoji} {s.count}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          onClick={() => setReactionPickerFor(pickerOpen ? null : key)}
+        >
+          + Reaksi
+        </button>
+        {pickerOpen && (
+          <span style={{ display: 'inline-flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+            {STUDENT_COMMUNITY_EMOJIS.map((e) => (
+              <button
+                key={e}
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => {
+                  setReactionPickerFor(null)
+                  void handleToggleReaction(target, e as string)
+                }}
+              >
+                {e}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  /** Satu balasan + anak-anaknya (bertingkat, indent bertambah per tingkat, maks 3). */
+  function renderReply(reply: StudentCommunityReply, depth: number) {
+    const children = replies.filter((r) => r.parent_id === reply.id)
+    const authorName = reply.author?.name ?? 'Anggota'
+    const canDelete = user?.id === reply.user_id || profile?.role === 'admin'
+    const indent = Math.min(depth, 3) * 1.25
+    return (
+      <li key={reply.id} style={indent > 0 ? { marginLeft: `${indent}rem` } : undefined}>
+        <p className="discussion-meta">
+          {authorName}
+          <RoleBadge role={reply.author?.role} /> · {fmtDate(reply.created_at)}
+        </p>
+        <p>{renderBodyWithMentions(reply.body, memberNames)}</p>
+        {renderReactions({ replyId: reply.id })}
+        {isMember && (
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-small"
+              onClick={() => {
+                setReplyTo(reply.post_id)
+                setReplyParent(reply)
+              }}
+            >
+              Balas
+            </button>
+            {canDelete &&
+              (confirmDeleteReplyId === reply.id ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-small"
+                    disabled={busyAction === `del-reply-${reply.id}`}
+                    onClick={() => void handleDeleteReply(reply)}
+                  >
+                    Ya, hapus balasan ini
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => setConfirmDeleteReplyId(null)}
+                  >
+                    Batal
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => setConfirmDeleteReplyId(reply.id)}
+                >
+                  Hapus
+                </button>
+              ))}
+          </div>
+        )}
+        {children.length > 0 && (
+          <ul className="discussion-replies">
+            {children.map((c) => renderReply(c, depth + 1))}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
+  function renderPostCard(p: StudentCommunityPost) {
     const postReplies = replies.filter((r) => r.post_id === p.id)
+    const topReplies = postReplies.filter((r) => !r.parent_id)
     const authorName = p.author?.name ?? 'Anggota'
+    const canDeletePost = user?.id === p.user_id || profile?.role === 'admin'
     return (
       <article key={p.id} className="post-card">
         <div className="post-head">
-          {p.author?.photo_url ? (
+          {p.author?.role === 'admin' ? (
+            <div className="post-avatar chat-avatar-admin" aria-hidden="true">
+              <Icon name="shield" size={20} />
+            </div>
+          ) : p.author?.photo_url ? (
             <img src={p.author.photo_url} alt="" className="post-avatar" />
           ) : (
             <div className="post-avatar" aria-hidden="true">
@@ -534,28 +1006,48 @@ export default function CommunityDetailPage() {
           <div>
             <p className="post-name">
               {authorName}
+              <RoleBadge role={p.author?.role} />
               {p.is_pinned ? ' · Disematkan' : ''}
             </p>
             <p className="post-time">{fmtDate(p.created_at)}</p>
           </div>
         </div>
-        <p className="post-body">{p.body}</p>
+        {p.category && (
+          <p style={{ margin: '0.5rem 0 0' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                background: '#E8EDF3',
+                color: '#172438',
+                padding: '0.2rem 0.55rem',
+                borderRadius: '999px',
+              }}
+            >
+              {p.category}
+            </span>
+          </p>
+        )}
+        {p.title && <h3 style={{ margin: '0.5rem 0 0' }}>{p.title}</h3>}
+        <p className="post-body">{renderBodyWithMentions(p.body, memberNames)}</p>
+        {p.attachment_path && (
+          <AttachmentView
+            path={p.attachment_path}
+            name={p.attachment_name}
+            type={p.attachment_type}
+          />
+        )}
+        {renderReactions({ postId: p.id })}
         <div className="post-actions">
           <span>
             <Icon name="message" size={16} />
             {postReplies.length} Balasan
           </span>
         </div>
-        {postReplies.length > 0 && (
+        {topReplies.length > 0 && (
           <ul className="discussion-replies">
-            {postReplies.map((r) => (
-              <li key={r.id}>
-                <p className="discussion-meta">
-                  {r.author?.name ?? 'Anggota'} · {fmtDate(r.created_at)}
-                </p>
-                <p>{r.body}</p>
-              </li>
-            ))}
+            {topReplies.map((r) => renderReply(r, 0))}
           </ul>
         )}
         {isMember && (
@@ -564,7 +1056,10 @@ export default function CommunityDetailPage() {
               <button
                 type="button"
                 className="btn btn-ghost btn-small"
-                onClick={() => setReplyTo(p.id)}
+                onClick={() => {
+                  setReplyTo(p.id)
+                  setReplyParent(null)
+                }}
               >
                 Balas
               </button>
@@ -578,19 +1073,71 @@ export default function CommunityDetailPage() {
                 {p.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
               </button>
             )}
+            {canDeletePost &&
+              (confirmDeletePostId === p.id ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-small"
+                    disabled={busyAction === `del-post-${p.id}`}
+                    onClick={() => void handleDeletePost(p)}
+                  >
+                    Ya, hapus postingan ini
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => setConfirmDeletePostId(null)}
+                  >
+                    Batal
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => setConfirmDeletePostId(p.id)}
+                >
+                  Hapus
+                </button>
+              ))}
           </div>
         )}
         {isMember && replyTo === p.id && (
           <form className="form form-inline" onSubmit={(e) => handleReply(e, p.id)}>
+            {replyParent && (
+              <p className="muted" style={{ margin: 0 }}>
+                Membalas {replyParent.author?.name ?? 'balasan'} ·{' '}
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyParent(null)}>
+                  Balas ke postingan saja
+                </button>
+              </p>
+            )}
             <label>
               Balasan
               <textarea
+                ref={replyTextareaRef}
                 value={replyBody}
-                onChange={(e) => setReplyBody(e.target.value)}
+                onChange={(e) => handleComposerChange('reply', e)}
                 rows={2}
                 required
               />
             </label>
+            {mentionTarget === 'reply' && mentionSuggestions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                {mentionSuggestions.map((m) => (
+                  <button
+                    key={m.user_id}
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    style={{ justifyContent: 'flex-start' }}
+                    onClick={() => pickMention(m)}
+                  >
+                    @{m.name} · {roleBadgeLabel(m.profileRole)}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="form-actions">
               <button type="submit" className="btn btn-primary btn-small" disabled={replying}>
                 {replying ? 'Mengirim…' : 'Kirim'}
@@ -598,7 +1145,10 @@ export default function CommunityDetailPage() {
               <button
                 type="button"
                 className="btn btn-ghost btn-small"
-                onClick={() => setReplyTo(null)}
+                onClick={() => {
+                  setReplyTo(null)
+                  setReplyParent(null)
+                }}
               >
                 Batal
               </button>
@@ -612,17 +1162,41 @@ export default function CommunityDetailPage() {
   return (
     <div className="page">
       <Link to="/komunitas" className="back-link">← Semua Komunitas</Link>
-      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-        <CommunityAvatarBadge coverUrl={community.cover_url} name={community.name} size={72} />
-        <div style={{ minWidth: 0 }}>
-          <h1 style={{ margin: 0 }}>{community.name}</h1>
-          {community.description ? (
-            <p className="muted" style={{ margin: '0.25rem 0 0' }}>{community.description}</p>
-          ) : (
-            <p className="muted" style={{ margin: '0.25rem 0 0' }}>Belum ada deskripsi.</p>
-          )}
+      <header
+        className="chat-header"
+        style={{
+          borderRadius: 'var(--radius-lg)',
+          boxShadow: 'var(--shadow-card)',
+          marginBottom: '1.25rem',
+        }}
+      >
+        <div className="chat-header-icon" aria-hidden="true">
+          {(() => {
+            const av = resolveCommunityAvatar(community.cover_url, community.name)
+            return av.kind === 'image' ? (
+              <img src={av.url} alt="" />
+            ) : (
+              <span style={{ fontWeight: 800, fontSize: '1.3rem' }}>{av.letter}</span>
+            )
+          })()}
         </div>
-      </div>
+        <div className="chat-header-main">
+          <h1 className="chat-header-title">{community.name}</h1>
+          <p className="chat-header-sub">
+            {community.description ??
+              (community.is_student_community
+                ? 'Ruang resmi siswa SINEVERSE'
+                : 'Komunitas SINEVERSE')}
+          </p>
+          <p className="chat-header-meta">
+            {profile && (
+              <span className="chat-header-pill">{roleBadgeLabel(profile.role)}</span>
+            )}
+            <span>{members.length} anggota</span>
+            {community.is_student_community ? <span>· Ruang Resmi Siswa</span> : null}
+          </p>
+        </div>
+      </header>
       {canManageSeeking && (
         <p>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -691,6 +1265,7 @@ export default function CommunityDetailPage() {
                 <li key={m.user_id} className="discussion-item">
                   <p>
                     {m.name}
+                    <RoleBadge role={m.profileRole} />
                     {m.role === 'mentor' ? ' · Pembimbing' : ''}
                   </p>
                 </li>
@@ -721,6 +1296,72 @@ export default function CommunityDetailPage() {
       {canReadFeed && (
         <>
           {postsError && <p className="notice-box">{postsError}</p>}
+          {realtimeOk === false && (
+            <p className="notice-box">
+              Pembaruan langsung tidak aktif — muat ulang halaman untuk melihat postingan terbaru.
+            </p>
+          )}
+          {/* Fase 2: pencarian + filter kategori. */}
+          <form className="form form-inline" onSubmit={handleSearchSubmit}>
+            <label>
+              Cari postingan
+              <input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Kata kunci di judul atau isi…"
+              />
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="btn btn-secondary btn-small">
+                Cari
+              </button>
+              {searchTerm !== '' && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setSearchInput('')
+                    setSearchTerm('')
+                    setHasMore(false)
+                    void loadPosts(community.id, { search: '', beforeCreatedAt: null }).catch(() => {
+                      setPosts([])
+                      setPostsError('Feed tidak bisa dimuat saat ini. Coba lagi nanti.')
+                    })
+                  }}
+                >
+                  Hapus pencarian
+                </button>
+              )}
+            </div>
+          </form>
+          <div
+            className="pill-tabs"
+            role="tablist"
+            aria-label="Kategori postingan"
+            style={{ flexWrap: 'wrap' }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeCategory === null}
+              className={activeCategory === null ? 'pill-tab active' : 'pill-tab'}
+              onClick={() => void handleCategoryChange(null)}
+            >
+              Semua
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c}
+                type="button"
+                role="tab"
+                aria-selected={activeCategory === c}
+                className={activeCategory === c ? 'pill-tab active' : 'pill-tab'}
+                onClick={() => void handleCategoryChange(c)}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
           <div className="pill-tabs" role="tablist" aria-label="Feed komunitas">
             <button
               type="button"
@@ -744,9 +1385,72 @@ export default function CommunityDetailPage() {
           {tab === 'diskusi' && isMember && (
             <form id="buat-post" className="form" onSubmit={handlePost}>
               <label>
-                Tulis postingan
-                <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} required placeholder="Bagikan kabar, karya, atau ajakan…" />
+                Judul (opsional)
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  maxLength={120}
+                  placeholder="Judul postingan…"
+                />
               </label>
+              <label>
+                Kategori
+                <select value={postCategory} onChange={(e) => setPostCategory(e.target.value)}>
+                  <option value="">Tanpa kategori</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Tulis postingan
+                <textarea
+                  ref={postTextareaRef}
+                  value={body}
+                  onChange={(e) => handleComposerChange('post', e)}
+                  rows={3}
+                  required={file === null}
+                  placeholder="Bagikan kabar, karya, atau ajakan… (ketik @ untuk menyebut anggota)"
+                />
+              </label>
+              {mentionTarget === 'post' && mentionSuggestions.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {mentionSuggestions.map((m) => (
+                    <button
+                      key={m.user_id}
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      style={{ justifyContent: 'flex-start' }}
+                      onClick={() => pickMention(m)}
+                    >
+                      @{m.name} · {roleBadgeLabel(m.profileRole)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <label>
+                Lampiran (opsional — gambar atau PDF, maks 10 MB)
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                  onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {file && (
+                <p className="muted">
+                  Lampiran: {file.name} ({Math.round(file.size / 1024)} KB) ·{' '}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => handleFileChange(null)}
+                  >
+                    Hapus lampiran
+                  </button>
+                </p>
+              )}
+              {fileError && <p className="error-box">{fileError}</p>}
               <button type="submit" className="btn btn-primary" disabled={posting}>
                 {posting ? 'Mengirim…' : 'Kirim Postingan'}
               </button>
@@ -760,6 +1464,18 @@ export default function CommunityDetailPage() {
             <div className="post-list">
               {visiblePosts.map((p) => renderPostCard(p))}
             </div>
+          )}
+          {tab === 'diskusi' && hasMore && (
+            <p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={loadingMore}
+                onClick={() => void handleLoadMore()}
+              >
+                {loadingMore ? 'Memuat…' : 'Muat lebih banyak'}
+              </button>
+            </p>
           )}
         </>
       )}

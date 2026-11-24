@@ -31,9 +31,11 @@ const KIND_LABELS: Record<string, string> = {
   quiz: 'Kuis',
   exam: 'Ujian',
   community: 'Komunitas',
-    mentor_group_mention: 'Disebut di Komunitas Mentor',
-    mentor_group_message: 'Komunitas Mentor',
-    mentor_group_announcement: 'Pengumuman Komunitas Mentor',
+  community_post_mention: 'Disebut di Komunitas',
+  community_post_reply: 'Balasan di Komunitas',
+  mentor_group_mention: 'Disebut di Komunitas Mentor',
+  mentor_group_message: 'Komunitas Mentor',
+  mentor_group_announcement: 'Pengumuman Komunitas Mentor',
   project: 'Proyek',
   film: 'Film',
   waitlist: 'Daftar Tunggu',
@@ -49,17 +51,25 @@ function kindLabel(kind: string): string {
     .join(' ')
 }
 
-/** Deep link tujuan notifikasi. Baru grup mentor (Fase 1) yang punya
-tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya. */
-function notificationLink(kind: string): string | null {
-    if (
-        kind === 'mentor_group_mention' ||
-        kind === 'mentor_group_message' ||
-        kind === 'mentor_group_announcement'
-    ) {
-        return '/komunitas-mentor'
+/** Deep link tujuan notifikasi. Grup mentor (Fase 1) dan komunitas siswa
+    (Fase 2) punya tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya. */
+function notificationLink(n: AppNotification): { href: string; label: string } | null {
+  if (
+    n.kind === 'mentor_group_mention' ||
+    n.kind === 'mentor_group_message' ||
+    n.kind === 'mentor_group_announcement'
+  ) {
+    return { href: '/komunitas-mentor', label: 'Buka di Komunitas Mentor →' }
+  }
+  if (n.kind === 'community_post_mention' || n.kind === 'community_post_reply') {
+    const communityId =
+      n.data && typeof n.data.community_id === 'string' ? n.data.community_id : null
+    return {
+      href: communityId ? `/komunitas/${communityId}` : '/komunitas',
+      label: 'Buka di Komunitas →',
     }
-    return null
+  }
+  return null
 }
 
 export default function NotificationsPage() {
@@ -156,28 +166,28 @@ export default function NotificationsPage() {
       ) : (
         <ul className="discussion-list">
           {items.map((n) => {
-            const link = notificationLink(n.kind)
-                return (
-                    <li key={n.id} className="discussion-item" style={n.is_read ? undefined : { borderLeft: '4px solid var(--film-green)' }}>
-                        <p className="discussion-meta">
-                            {kindLabel(n.kind)} · {fmtDate(n.created_at)}
-                            {n.is_read ? '' : ' · Belum dibaca'}
-                        </p>
-                        <p><strong>{n.title}</strong></p>
-                        {n.body && <p>{n.body}</p>}
-                        {link && (
-                        <p>
-                            <Link to={link}>Buka di Komunitas Mentor →</Link>
-                        </p>
-                    )}
-                        {!n.is_read && (
-                        <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleReadOne(n.id)}>
-                            Tandai Dibaca
-                        </button>
-                    )}
-                    </li>
-                )
-        })}
+            const link = notificationLink(n)
+            return (
+              <li key={n.id} className="discussion-item" style={n.is_read ? undefined : { borderLeft: '4px solid var(--film-green)' }}>
+                <p className="discussion-meta">
+                  {kindLabel(n.kind)} · {fmtDate(n.created_at)}
+                  {n.is_read ? '' : ' · Belum dibaca'}
+                </p>
+                <p><strong>{n.title}</strong></p>
+                {n.body && <p>{n.body}</p>}
+                {link && (
+                  <p>
+                    <Link to={link.href}>{link.label}</Link>
+                  </p>
+                )}
+                {!n.is_read && (
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleReadOne(n.id)}>
+                    Tandai Dibaca
+                  </button>
+                )}
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>

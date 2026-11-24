@@ -891,6 +891,7 @@ export default function CommunitiesPage() {
                       <p className="discussion-meta">
                         {c.is_approved ? 'Disetujui' : 'Belum disetujui'} ·{' '}
                         {memberCountLabel(c.id)}
+                        {c.is_student_community ? ' · Ruang Resmi Siswa' : ''}
                         {c.seeking_mentor ? ' · Mencari pembimbing' : ''}
                       </p>
                       <h3>
@@ -1009,6 +1010,7 @@ export default function CommunitiesPage() {
                         <p className="muted" style={{ margin: 0 }}>
                           Status: {memberRoleLabel(myRoles.get(c.id) ?? 'member')} ·{' '}
                           {memberCountLabel(c.id)}
+                          {c.is_student_community ? ' · Ruang Resmi Siswa' : ''}
                         </p>
                       </div>
                     </div>
@@ -1054,7 +1056,10 @@ export default function CommunitiesPage() {
                       <div style={{ minWidth: 0 }}>
                         <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                         <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                        <p className="muted" style={{ margin: 0 }}>{memberCountLabel(c.id)}</p>
+                        <p className="muted" style={{ margin: 0 }}>
+                          {memberCountLabel(c.id)}
+                          {c.is_student_community ? ' · Ruang Resmi Siswa' : ''}
+                        </p>
                       </div>
                     </div>
                   </Link>
@@ -1137,7 +1142,10 @@ export default function CommunitiesPage() {
                   <div style={{ minWidth: 0 }}>
                     <h3 style={{ margin: '0 0 0.25rem' }}>{c.name}</h3>
                     <p style={{ margin: '0 0 0.25rem' }}>{c.description ?? 'Komunitas SINEVERSE.'}</p>
-                    <p className="muted" style={{ margin: 0 }}>{memberCountLabel(c.id)}</p>
+                    <p className="muted" style={{ margin: 0 }}>
+                      {memberCountLabel(c.id)}
+                      {c.is_student_community ? ' · Ruang Resmi Siswa' : ''}
+                    </p>
                   </div>
                 </div>
               </Link>

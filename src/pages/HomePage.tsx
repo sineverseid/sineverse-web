@@ -30,6 +30,8 @@ import { useAuth } from '../context/AuthContext'
 import { activityLabel } from '../lib/activityLabels'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import { fetchMentorGroupSummary } from '../lib/mentorGroup'
+import { fetchStudentCommunitySummary } from '../lib/studentCommunity'
+import type { StudentCommunitySummary } from '../lib/studentCommunity'
 import type { MentorGroupSummary } from '../lib/mentorGroup'
 import { topRecommendations } from '../lib/recommendations'
 import { courseIllustration, rpsWeekLabel } from '../lib/brand'
@@ -382,6 +384,7 @@ export default function HomePage() {
       {user ? (
         isSiswa ? (
           <SiswaHome
+            userId={user.id}
             profileName={profile?.name ?? ''}
             school={profile?.school ?? null}
             kelas={profile?.kelas ?? null}
@@ -619,6 +622,7 @@ export default function HomePage() {
 // --- Dashboard anggota (siswa), seperti SiswaHome di artefak -----------
 
 interface SiswaHomeProps {
+  userId: string
   profileName: string
   school: string | null
   kelas: string | null
@@ -641,6 +645,7 @@ interface SiswaHomeProps {
 
 function SiswaHome(props: SiswaHomeProps) {
   const {
+    userId,
     profileName,
     school,
     kelas,
@@ -730,6 +735,27 @@ function SiswaHome(props: SiswaHomeProps) {
   // Event mendatang: starts_at ke depan, terdekat dulu.
   // "Sekarang" ditangkap sekali saat komponen dipasang (bukan di useMemo).
   const [now] = useState(() => Date.now())
+
+  // Ringkasan Student Community (Fase 2, migrasi 063).
+  const [communitySummary, setCommunitySummary] = useState<StudentCommunitySummary | null>(null)
+  const [communitySummaryFailed, setCommunitySummaryFailed] = useState(false)
+
+  // Ringkasan komunitas dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 063 belum ada / belum ada ruang resmi, kartu menampilkan
+  // pesan jujur.
+  useEffect(() => {
+    let cancelled = false
+    fetchStudentCommunitySummary(userId)
+      .then((s) => {
+        if (!cancelled) setCommunitySummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setCommunitySummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
   const upcomingEvents = useMemo(() => {
     return events
       .filter((e) => e.starts_at && new Date(e.starts_at).getTime() >= now)
@@ -927,6 +953,60 @@ function SiswaHome(props: SiswaHomeProps) {
             })}
           </div>
         )}
+      </section>
+
+      {/* Student Community (Fase 2, migrasi 063) — ruang resmi siswa +
+          mentor + admin; aktivitas terbaru + diskusi baru + unread. */}
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Student Community</h2>
+        </div>
+        {communitySummaryFailed ? (
+          <p className="muted">
+            Ringkasan komunitas belum bisa dimuat — komunitas siswa belum aktif di server.
+          </p>
+        ) : !communitySummary ? (
+          <p className="muted">Memuat ringkasan komunitas…</p>
+        ) : !communitySummary.communityId ? (
+          <p className="muted">Ruang resmi Student Community belum diaktifkan oleh admin.</p>
+        ) : (
+          <>
+            <p>
+              {communitySummary.newCount > 0
+                ? `${communitySummary.newCount} diskusi baru 7 hari terakhir.`
+                : 'Belum ada diskusi baru 7 hari terakhir.'}
+              {communitySummary.unread > 0
+                ? ` ${communitySummary.unread} balasan/mention belum dibaca.`
+                : ''}
+            </p>
+            {communitySummary.latest ? (
+              <p className="muted">
+                Terakhir dari {communitySummary.latest.authorName} ·{' '}
+                {fmtDate(communitySummary.latest.createdAt)}:{' '}
+                {communitySummary.latest.title ??
+                  communitySummary.latest.body.slice(0, 120)}
+                {!communitySummary.latest.title &&
+                communitySummary.latest.body.length > 120
+                  ? '…'
+                  : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada postingan di komunitas.</p>
+            )}
+          </>
+        )}
+        <p>
+          <Link
+            to={
+              communitySummary?.communityId
+                ? `/komunitas/${communitySummary.communityId}`
+                : '/komunitas'
+            }
+            className="btn btn-primary"
+          >
+            Buka Student Community
+          </Link>
+        </p>
       </section>
 
       {latestAnnouncement && (
@@ -1422,6 +1502,7 @@ function MentorHome(props: {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, courses])
+
   // Ringkasan grup mentor dimuat terpisah dan TIDAK boleh merusak halaman:
   // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
   useEffect(() => {
@@ -2247,6 +2328,7 @@ function AdminHome(props: {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
   // Ringkasan grup mentor dimuat terpisah dan TIDAK boleh merusak halaman:
   // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
   useEffect(() => {
