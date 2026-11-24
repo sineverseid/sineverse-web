@@ -7,6 +7,7 @@ import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { createLiveClass, deleteLiveClass, fetchCourse, fetchLiveClasses, fetchModules, fetchRubricForAssignment, invalidateCatalogCache, saveRubric, supabase, updateCourseAccessMode } from '../lib/supabase'
+import { acceptForKind, deleteLessonFile, fileMatchesKind, formatFileSize, kindForFile, titleFromFileName, uploadLessonFile, validateLessonFile } from '../lib/lessonResources'
 import type { Assignment, AssignmentKind, CompetencyExam, Course, Lesson, LessonResource, LiveClass, Module, Quiz, QuizKind } from '../lib/types'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -66,6 +67,19 @@ export default function CourseBuilderPage() {
   const [resTitle, setResTitle] = useState('')
   const [resUrl, setResUrl] = useState('')
   const [resBody, setResBody] = useState('')
+  // Upload di form Tambah Materi (migrasi 062): file + pratinjau sebelum simpan.
+  const [resFile, setResFile] = useState<File | null>(null)
+  const [resFileUrl, setResFileUrl] = useState<string | null>(null)
+  const [resFileError, setResFileError] = useState<string | null>(null)
+  const [resUploading, setResUploading] = useState(false)
+  // Media lesson di form edit (state di level atas — editForm hanya render).
+  const [editResources, setEditResources] = useState<LessonResource[]>([])
+  const [editResourcesLoading, setEditResourcesLoading] = useState(false)
+  const [editMediaFile, setEditMediaFile] = useState<File | null>(null)
+  const [editMediaUrl, setEditMediaUrl] = useState<string | null>(null)
+  const [editMediaError, setEditMediaError] = useState<string | null>(null)
+  const [editMediaUploading, setEditMediaUploading] = useState(false)
+  const [editMediaDeletingId, setEditMediaDeletingId] = useState<string | null>(null)
   const [asgLesson, setAsgLesson] = useState('')
   const [asgTitle, setAsgTitle] = useState('')
   const [asgDesc, setAsgDesc] = useState('')
@@ -206,6 +220,48 @@ export default function CourseBuilderPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+  // Media lesson untuk form edit: dimuat saat `editing` menunjuk sebuah
+  // lesson. Hook di level atas — editForm hanya me-render daftar ini.
+  // Saat edit ditutup, file media yang sempat dipilih ikut dibersihkan.
+  const editingLessonId = editing?.kind === 'lesson' ? editing.id : null
+  useEffect(() => {
+    if (!editingLessonId) {
+      setEditResources([])
+      if (editMediaUrl) URL.revokeObjectURL(editMediaUrl)
+      setEditMediaFile(null)
+      setEditMediaUrl(null)
+      setEditMediaError(null)
+      return
+    }
+    let cancelled = false
+    async function loadMedia() {
+      setEditResourcesLoading(true)
+      const { data, error } = await supabase
+        .from('lesson_resources')
+        .select('*')
+        .eq('lesson_id', editingLessonId)
+        .order('created_at', { ascending: true })
+      if (cancelled) return
+      setEditResourcesLoading(false)
+      if (!error) setEditResources((data ?? []) as LessonResource[])
+    }
+    void loadMedia()
+    return () => {
+      cancelled = true
+    }
+  }, [editingLessonId])
+
+  // Cabut object URL pratinjau saat diganti atau saat komponen dilepas.
+  useEffect(() => {
+    return () => {
+      if (resFileUrl) URL.revokeObjectURL(resFileUrl)
+    }
+  }, [resFileUrl])
+  useEffect(() => {
+    return () => {
+      if (editMediaUrl) URL.revokeObjectURL(editMediaUrl)
+    }
+  }, [editMediaUrl])
 
   if (loading) return <div className="page"><p className="muted">Memuat Course Builder…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
@@ -313,19 +369,87 @@ export default function CourseBuilderPage() {
       setNotice('Pilih lesson dulu.')
       return
     }
-    const { error: insErr } = await supabase.from('lesson_resources').insert({
-      lesson_id: resLesson,
-      kind: resKind,
-      title: resTitle.trim(),
-      url: resUrl.trim() || null,
-      body: resBody.trim() || null,
-    })
-    if (insErr) fail(insErr)
-    else {
+    // Materi gambar/PDF/video/file butuh sumber: file yang diunggah atau URL.
+    const needsSource =
+      resKind === 'image' || resKind === 'pdf' || resKind === 'video' || resKind === 'file'
+    if (needsSource && !resFile && !resUrl.trim()) {
+      setNotice('Pilih file untuk diunggah atau isi URL.')
+      return
+    }
+    const title = resTitle.trim() || (resFile ? titleFromFileName(resFile.name) : '')
+    if (!title) {
+      setNotice('Isi judul materi dulu.')
+      return
+    }
+    setResUploading(true)
+    try {
+      let url: string | null = resUrl.trim() || null
+      let filePath: string | null = null
+      if (resFile) {
+        // File diunggah DULU, baru baris materi di-insert (pola mentorGroup).
+        const uploaded = await uploadLessonFile(resFile, resLesson, user?.id ?? '')
+        url = uploaded.url
+        filePath = uploaded.path
+      }
+      const { error: insErr } = await supabase.from('lesson_resources').insert({
+        lesson_id: resLesson,
+        kind: resKind,
+        title,
+        url,
+        file_path: filePath,
+        body: resBody.trim() || null,
+      })
+      if (insErr) throw insErr
+      if (resFileUrl) URL.revokeObjectURL(resFileUrl)
       setResTitle('')
       setResUrl('')
       setResBody('')
+      setResFile(null)
+      setResFileUrl(null)
+      setResFileError(null)
       ok('Materi lesson ditambahkan.')
+    } catch (err) {
+      fail(err)
+    } finally {
+      setResUploading(false)
+    }
+  }
+
+  /** File terpilih di form Tambah Materi: validasi + pratinjau + sesuaikan Jenis. */
+  async function handleResFileChange(file: File | null) {
+    if (resFileUrl) URL.revokeObjectURL(resFileUrl)
+    setResFile(null)
+    setResFileUrl(null)
+    setResFileError(null)
+    if (!file) return
+    const detected = kindForFile(file)
+    // File tidak cocok dengan Jenis yang dipilih → ikuti jenis file.
+    // 'file' ikut di sini: batas ukuran mengikuti jenis file yang
+    // terdeteksi (gambar 10 MB, bukan 20 MB), supaya validasi saat pilih
+    // sama dengan validasi saat unggah (uploadLessonFile).
+    const effectiveKind =
+      (resKind === 'image' || resKind === 'pdf' || resKind === 'video' || resKind === 'file') && detected !== resKind
+        ? detected
+        : resKind
+    if (effectiveKind !== resKind) setResKind(effectiveKind)
+    const problem = await validateLessonFile(file, effectiveKind)
+    if (problem) {
+      setResFileError(problem)
+      return
+    }
+    setResFile(file)
+    setResFileUrl(URL.createObjectURL(file))
+    if (!resTitle.trim()) setResTitle(titleFromFileName(file.name))
+  }
+
+  /** Ganti Jenis di form Tambah Materi: buang file bila tidak cocok lagi. */
+  function handleResKindChange(next: LessonResource['kind']) {
+    setResKind(next)
+    if (resFile && (next === 'reading' || next === 'link' || !fileMatchesKind(resFile, next))) {
+      if (resFileUrl) URL.revokeObjectURL(resFileUrl)
+      setResFile(null)
+      setResFileUrl(null)
+      setResFileError(null)
     }
   }
 
@@ -676,6 +800,83 @@ export default function CourseBuilderPage() {
     }
   }
 
+  // --- Media lesson di form edit (migrasi 062) ---------------------------
+  // Daftar media dimuat effect di atas saat `editing` menunjuk lesson.
+
+  async function refreshEditResources(lessonId: string) {
+    const { data, error } = await supabase
+      .from('lesson_resources')
+      .select('*')
+      .eq('lesson_id', lessonId)
+      .order('created_at', { ascending: true })
+    if (!error) setEditResources((data ?? []) as LessonResource[])
+  }
+
+  /** File terpilih di seksi Media lesson: validasi + pratinjau. */
+  async function handleEditMediaFileChange(file: File | null) {
+    if (editMediaUrl) URL.revokeObjectURL(editMediaUrl)
+    setEditMediaFile(null)
+    setEditMediaUrl(null)
+    setEditMediaError(null)
+    if (!file) return
+    const problem = await validateLessonFile(file, kindForFile(file))
+    if (problem) {
+      setEditMediaError(problem)
+      return
+    }
+    setEditMediaFile(file)
+    setEditMediaUrl(URL.createObjectURL(file))
+  }
+
+  /** Unggah media terpilih sebagai materi lesson yang sedang diedit. */
+  async function addEditMedia() {
+    if (!editing || editing.kind !== 'lesson' || !editMediaFile || !user) return
+    const lessonId = editing.id
+    setEditMediaUploading(true)
+    try {
+      const uploaded = await uploadLessonFile(editMediaFile, lessonId, user.id)
+      const { error: insErr } = await supabase.from('lesson_resources').insert({
+        lesson_id: lessonId,
+        kind: kindForFile(editMediaFile),
+        title: titleFromFileName(editMediaFile.name),
+        url: uploaded.url,
+        file_path: uploaded.path,
+        body: null,
+      })
+      if (insErr) throw insErr
+      if (editMediaUrl) URL.revokeObjectURL(editMediaUrl)
+      setEditMediaFile(null)
+      setEditMediaUrl(null)
+      setEditMediaError(null)
+      ok('Media lesson ditambahkan.')
+      await refreshEditResources(lessonId)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setEditMediaUploading(false)
+    }
+  }
+
+  /** Hapus satu media: baris materi + file-nya di bucket (bila ada). */
+  async function deleteEditMedia(resource: LessonResource) {
+    if (!window.confirm(`Hapus media "${resource.title}"? Tindakan ini tidak bisa dibatalkan.`)) return
+    if (editMediaDeletingId) return
+    setEditMediaDeletingId(resource.id)
+    try {
+      const { error: delErr } = await supabase
+        .from('lesson_resources')
+        .delete()
+        .eq('id', resource.id)
+      if (delErr) throw delErr
+      if (resource.file_path) await deleteLessonFile(resource.file_path)
+      ok('Media lesson dihapus.')
+      await refreshEditResources(resource.lesson_id)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setEditMediaDeletingId(null)
+    }
+  }
   /** Form edit inline yang dipakai semua jenis item (field disesuaikan). */
   function editForm(kind: EditingKind) {
     const isQuestion = kind === 'quizQuestion' || kind === 'examQuestion'
@@ -716,6 +917,96 @@ export default function CourseBuilderPage() {
                   Isi bacaan
                   <textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={3} />
                 </label>
+                <div>
+                  <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Media lesson</p>
+                  {editResourcesLoading ? (
+                    <p className="muted">Memuat media…</p>
+                  ) : (
+                    <>
+                      {editResources.filter(
+                        (r) => r.kind === 'image' || r.kind === 'pdf' || r.kind === 'video' || r.kind === 'file',
+                      ).length === 0 ? (
+                        <p className="muted">Belum ada media untuk lesson ini.</p>
+                      ) : (
+                        <ul className="list">
+                          {editResources
+                            .filter(
+                              (r) => r.kind === 'image' || r.kind === 'pdf' || r.kind === 'video' || r.kind === 'file',
+                            )
+                            .map((r) => (
+                              <li key={r.id}>
+                                <p>
+                                  <strong>{r.title}</strong>{' '}
+                                  <span className="muted">
+                                    {r.kind === 'image'
+                                      ? 'Gambar'
+                                      : r.kind === 'pdf'
+                                        ? 'PDF'
+                                        : r.kind === 'video'
+                                          ? 'Video'
+                                          : 'File'}
+                                  </span>
+                                </p>
+                                {r.kind === 'image' && r.url ? (
+                                  <img src={r.url} alt={r.title} style={{ maxWidth: '100%', maxHeight: 240 }} />
+                                ) : null}
+                                {r.kind === 'video' && r.url ? (
+                                  <video controls preload="metadata" src={r.url} style={{ maxWidth: '100%', maxHeight: 240 }} />
+                                ) : null}
+                                {r.kind === 'pdf' && r.url ? (
+                                  <iframe src={r.url} title={r.title} style={{ width: '100%', height: 320, border: 0 }} />
+                                ) : null}
+                                {r.kind === 'file' && r.url ? (
+                                  <p>
+                                    <a href={r.url} target="_blank" rel="noreferrer">
+                                      Buka file
+                                    </a>
+                                  </p>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-small"
+                                  disabled={editMediaDeletingId === r.id}
+                                  onClick={() => void deleteEditMedia(r)}
+                                >
+                                  {editMediaDeletingId === r.id ? 'Menghapus…' : 'Hapus'}
+                                </button>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                  <label>
+                    Tambah media (gambar / video / PDF)
+                    <input
+                      type="file"
+                      accept="image/*,video/*,application/pdf"
+                      onChange={(e) => void handleEditMediaFileChange(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {editMediaError && <p className="error-box">{editMediaError}</p>}
+                  {editMediaFile && editMediaUrl && (
+                    <div>
+                      <p className="muted">
+                        {editMediaFile.name} · {formatFileSize(editMediaFile.size)}
+                      </p>
+                      {kindForFile(editMediaFile) === 'image' ? (
+                        <img src={editMediaUrl} alt={editMediaFile.name} style={{ maxWidth: '100%', maxHeight: 240 }} />
+                      ) : kindForFile(editMediaFile) === 'video' ? (
+                        <video controls src={editMediaUrl} style={{ maxWidth: '100%', maxHeight: 240 }} />
+                      ) : null}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    disabled={!editMediaFile || editMediaUploading}
+                    onClick={() => void addEditMedia()}
+                  >
+                    {editMediaUploading ? 'Mengunggah…' : 'Tambah media'}
+                  </button>
+                </div>
               </>
             )}
             {(kind === 'assignment' || kind === 'exam') && (
@@ -907,7 +1198,7 @@ export default function CourseBuilderPage() {
           </label>
           <label>
             Jenis
-            <select value={resKind} onChange={(e) => setResKind(e.target.value as LessonResource['kind'])} style={selectStyle}>
+            <select value={resKind} onChange={(e) => handleResKindChange(e.target.value as LessonResource['kind'])} style={selectStyle}>
               <option value="reading">Bacaan</option>
               <option value="image">Gambar</option>
               <option value="pdf">PDF</option>
@@ -917,9 +1208,34 @@ export default function CourseBuilderPage() {
             </select>
           </label>
           <label>Judul<input value={resTitle} onChange={(e) => setResTitle(e.target.value)} required /></label>
+          {(resKind === 'image' || resKind === 'pdf' || resKind === 'video' || resKind === 'file') && (
+            <label>
+              Upload file (opsional — atau isi URL di bawah)
+              <input
+                type="file"
+                accept={acceptForKind(resKind)}
+                onChange={(e) => void handleResFileChange(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          )}
+          {resFileError && <p className="error-box">{resFileError}</p>}
+          {resFile && resFileUrl && (
+            <div>
+              <p className="muted">
+                {resFile.name} · {formatFileSize(resFile.size)}
+              </p>
+              {kindForFile(resFile) === 'image' ? (
+                <img src={resFileUrl} alt={resFile.name} style={{ maxWidth: '100%', maxHeight: 240 }} />
+              ) : kindForFile(resFile) === 'video' ? (
+                <video controls src={resFileUrl} style={{ maxWidth: '100%', maxHeight: 240 }} />
+              ) : null}
+            </div>
+          )}
           <label>URL (opsional)<input value={resUrl} onChange={(e) => setResUrl(e.target.value)} placeholder="https://…" /></label>
           <label>Isi / catatan<textarea value={resBody} onChange={(e) => setResBody(e.target.value)} rows={3} /></label>
-          <button type="submit" className="btn btn-primary">Tambah Materi</button>
+          <button type="submit" className="btn btn-primary" disabled={resUploading}>
+            {resUploading ? 'Mengunggah…' : 'Tambah Materi'}
+          </button>
         </form>
       </section>
 
