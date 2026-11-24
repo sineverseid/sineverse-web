@@ -43,7 +43,7 @@ export default function MentorsPage() {
         // gagal dimuat), bukan error halaman.
         const [profRes, appsRes, courses, hoursRes] = await Promise.all([
           supabase
-            .from('profiles')
+            .from('public_profiles')
             .select('id,name,role,photo_url,city,bio,skills,interests,school,school_id,created_at')
             .eq('role', 'mentor')
             .order('name'),

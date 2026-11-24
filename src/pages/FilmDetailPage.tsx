@@ -109,7 +109,7 @@ export default function FilmDetailPage() {
           if (f.show_school) {
             try {
               const { data: profRow } = await supabase
-                .from('profiles')
+                .from('public_profiles')
                 .select('school,school_id')
                 .eq('id', f.owner_id)
                 .maybeSingle()

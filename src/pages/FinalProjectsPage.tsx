@@ -84,7 +84,7 @@ export default function FinalProjectsPage() {
             : (async () => {
                 const [count, mentorRows] = await Promise.all([
                   fetchMyCompletedCourseCount(user.id),
-                  supabase.from('profiles').select('id,name').eq('role', 'mentor').order('name'),
+                  supabase.from('public_profiles').select('id,name').eq('role', 'mentor').order('name'),
                 ])
                 return {
                   list: [] as FinalProject[],

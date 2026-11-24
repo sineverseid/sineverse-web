@@ -186,7 +186,7 @@ export default function GradingQueuePage() {
       // masih punya submission yang menunggu), jadi gabungkan kedua set id.
       const studentIds = [...new Set([...submissions, ...gradedSubs].map((s) => s.user_id))]
       const { data: profiles } = studentIds.length
-        ? await supabase.from('profiles').select('id,name').in('id', studentIds)
+        ? await supabase.from('public_profiles').select('id,name').in('id', studentIds)
         : { data: [] as { id: string; name: string | null }[] }
       const names = new Map(
         ((profiles ?? []) as { id: string; name: string | null }[]).map((p) => [p.id, p.name ?? 'Siswa']),

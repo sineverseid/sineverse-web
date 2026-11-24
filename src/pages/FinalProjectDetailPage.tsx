@@ -174,7 +174,7 @@ export default function FinalProjectDetailPage() {
         } catch {
           // Nama pemilik/mentor boleh tampil sebagai "Anggota".
         }
-        const { data } = await supabase.from('profiles').select('id,name').eq('role', 'mentor').order('name')
+        const { data } = await supabase.from('public_profiles').select('id,name').eq('role', 'mentor').order('name')
         if (!cancelled && data) setMentors(data as MentorOption[])
       } catch {
         if (!cancelled) setError('Gagal memuat Final Project. Coba lagi.')
@@ -213,7 +213,7 @@ export default function FinalProjectDetailPage() {
     e.preventDefault()
     if (!user || !inviteName.trim()) return
     const { data } = await supabase
-      .from('profiles')
+      .from('public_profiles')
       .select('id,name')
       .ilike('name', inviteName.trim())
       .maybeSingle()

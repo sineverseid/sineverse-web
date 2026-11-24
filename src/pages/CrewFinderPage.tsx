@@ -89,7 +89,7 @@ export default function CrewFinderPage() {
         // filter lokasi dan tampilan lokasi di kartu kru.
         const [data, roleData, projData, provData, provNames, regNames] = await Promise.all([
           fetchCrewProfiles(),
-          supabase.from('profiles').select('id,role').eq('is_open_to_crew', true).then((r) => r.data),
+          supabase.from('public_profiles').select('id,role').eq('is_open_to_crew', true).then((r) => r.data),
           user
             ? supabase.from('projects').select('id,title').eq('owner_id', user.id).order('created_at', { ascending: false }).then((r) => r.data)
             : Promise.resolve(null),

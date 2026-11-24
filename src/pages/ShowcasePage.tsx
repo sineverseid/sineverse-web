@@ -108,7 +108,7 @@ export default function ShowcasePage() {
         try {
           const ownerIds = [...new Set(withSchool.map((f) => f.owner_id))]
           const { data: profRows } = await supabase
-            .from('profiles')
+            .from('public_profiles')
             .select('id,school,school_id')
             .in('id', ownerIds)
           const profMap = new Map(

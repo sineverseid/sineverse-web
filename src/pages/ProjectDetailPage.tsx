@@ -364,7 +364,7 @@ export default function ProjectDetailPage() {
     // dipilih — bukan gagal dengan "Tidak ditemukan anggota".
     const q = inviteName.trim().replace(/[%_]/g, '')
     const { data } = await supabase
-      .from('profiles')
+      .from('public_profiles')
       .select('id,name')
       .ilike('name', `%${q}%`)
       .order('name')
