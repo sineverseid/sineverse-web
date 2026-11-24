@@ -86,7 +86,7 @@ export default function ModerationPage() {
   // B73: nama pelapor + isi yang dilaporkan + tautan target.
   const [names, setNames] = useState<Map<string, string>>(new Map())
   const [discContent, setDiscContent] = useState<Map<string, { body: string; lesson_id: string }>>(new Map())
-  const [targetLabels, setTargetLabels] = useState<Map<string, { label: string; to: string | null }>>(new Map())
+  const [targetLabels, setTargetLabels] = useState<Map<string, { label: string; to: string | null; hidden?: boolean }>>(new Map())
   // B65: satu kunci busy per laporan yang sedang diputuskan.
   const [busyKey, setBusyKey] = useState<string | null>(null)
   // Fase 6 (070): blokir, riwayat tindakan, filter, hak mentor.
@@ -166,7 +166,7 @@ export default function ModerationPage() {
         }
         setDiscContent(map)
       }
-      const labels = new Map<string, { label: string; to: string | null }>()
+      const labels = new Map<string, { label: string; to: string | null; hidden?: boolean }>()
       for (const r of mRows) {
         const key = `${r.target_type}:${r.target_id ?? ''}`
         const fallback = { label: targetTypeLabel(r.target_type), to: null as string | null }
@@ -176,29 +176,29 @@ export default function ModerationPage() {
         }
         try {
           if (r.target_type === 'community_post' || r.target_type === 'post') {
-            const { data } = await supabase.from('community_posts').select('body,community_id').eq('id', r.target_id).maybeSingle()
-            const row = data as { body: string | null; community_id: string } | null
-            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: `/komunitas/${row.community_id}` } : fallback)
+            const { data } = await supabase.from('community_posts').select('body,community_id,is_hidden').eq('id', r.target_id).maybeSingle()
+            const row = data as { body: string | null; community_id: string; is_hidden: boolean } | null
+            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: `/komunitas/${row.community_id}`, hidden: row.is_hidden ?? false } : fallback)
           } else if (r.target_type === 'mentor_group_message') {
-            const { data } = await supabase.from('mentor_group_messages').select('body').eq('id', r.target_id).maybeSingle()
-            const row = data as { body: string | null } | null
-            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: '/komunitas-mentor' } : fallback)
+            const { data } = await supabase.from('mentor_group_messages').select('body,is_hidden').eq('id', r.target_id).maybeSingle()
+            const row = data as { body: string | null; is_hidden: boolean } | null
+            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: '/komunitas-mentor', hidden: row.is_hidden ?? false } : fallback)
           } else if (r.target_type === 'community_reply') {
-            const { data } = await supabase.from('community_post_replies').select('body,post_id').eq('id', r.target_id).maybeSingle()
-            const row = data as { body: string | null; post_id: string } | null
+            const { data } = await supabase.from('community_post_replies').select('body,post_id,is_hidden').eq('id', r.target_id).maybeSingle()
+            const row = data as { body: string | null; post_id: string; is_hidden: boolean } | null
             if (row) {
               const { data: postData } = await supabase.from('community_posts').select('community_id').eq('id', row.post_id).maybeSingle()
               const postRow = postData as { community_id: string } | null
-              labels.set(key, { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: postRow ? `/komunitas/${postRow.community_id}` : null })
+              labels.set(key, { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: postRow ? `/komunitas/${postRow.community_id}` : null, hidden: row.is_hidden ?? false })
             } else labels.set(key, fallback)
           } else if (r.target_type === 'project_chat_message') {
-            const { data } = await supabase.from('project_chat_messages').select('body,project_id').eq('id', r.target_id).maybeSingle()
-            const row = data as { body: string | null; project_id: string } | null
-            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: `/proyek/${row.project_id}/chat` } : fallback)
+            const { data } = await supabase.from('project_chat_messages').select('body,project_id,is_hidden').eq('id', r.target_id).maybeSingle()
+            const row = data as { body: string | null; project_id: string; is_hidden: boolean } | null
+            labels.set(key, row ? { label: row.body ? row.body.slice(0, 80) : targetTypeLabel(r.target_type), to: `/proyek/${row.project_id}/chat`, hidden: row.is_hidden ?? false } : fallback)
           } else if (r.target_type === 'announcement') {
-            const { data } = await supabase.from('announcements').select('title').eq('id', r.target_id).maybeSingle()
-            const row = data as { title: string } | null
-            labels.set(key, row ? { label: row.title, to: `/pengumuman?id=${r.target_id}` } : fallback)
+            const { data } = await supabase.from('announcements').select('title,is_hidden').eq('id', r.target_id).maybeSingle()
+            const row = data as { title: string; is_hidden: boolean } | null
+            labels.set(key, row ? { label: row.title, to: `/pengumuman?id=${r.target_id}`, hidden: row.is_hidden ?? false } : fallback)
           } else if (r.target_type === 'user') {
             labels.set(key, { label: namesMap.get(r.target_id) ?? 'Pengguna', to: null })
           } else if (r.target_type === 'community') {
@@ -335,6 +335,30 @@ export default function ModerationPage() {
       }
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal menyembunyikan konten.')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  /** Fase 6 (070): tampilkan kembali konten yang disembunyikan dari
+      laporan yang sudah diselesaikan. Status laporan TIDAK diubah — hanya
+      kontennya yang kembali terlihat. Bila kontennya sudah dihapus paksa,
+      RPC melempar 'Konten tidak ditemukan.' dan ditampilkan sebagai notice. */
+  async function handleUnhideReport(r: ModerationReport) {
+    const key = `unhide-${r.id}`
+    if (busyKey) return
+    setBusyKey(key)
+    try {
+      const table = TARGET_TABLE[r.target_type as ModerationTargetType]
+      if (!table || !r.target_id) {
+        setNotice('Target laporan ini tidak bisa ditampilkan kembali.')
+        return
+      }
+      await hideContent(table, r.target_id, false, r.reason ?? undefined)
+      setNotice('Konten ditampilkan kembali.')
+      await load()
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menampilkan kembali konten.')
     } finally {
       setBusyKey(null)
     }
@@ -571,6 +595,13 @@ export default function ModerationPage() {
                     {r.target_id && (
                       <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => void handleBlockReport(r)}>Blokir pengguna</button>
                     )}
+                  </div>
+                )}
+                {r.status === 'resolved' && info?.hidden === true && r.target_id && r.target_type !== 'user' && (
+                  <div className="form-actions">
+                    <button type="button" className="btn btn-ghost btn-small" disabled={busyKey !== null} onClick={() => void handleUnhideReport(r)}>
+                      {busyKey === `unhide-${r.id}` ? 'Memproses…' : 'Tampilkan kembali'}
+                    </button>
                   </div>
                 )}
               </li>

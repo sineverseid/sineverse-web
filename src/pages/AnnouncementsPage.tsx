@@ -7,14 +7,14 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { listAnnouncements, signedAnnouncementUrl } from '../lib/announcements'
-import { reportContent } from '../lib/moderation'
+import { hideContent, reportContent } from '../lib/moderation'
 import { supabase } from '../lib/supabase'
 import type { Announcement } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 
 export default function AnnouncementsPage() {
-  const { user } = useAuth()
+  const { user, profile } = useAuth()
   const [searchParams] = useSearchParams()
   const highlightId = searchParams.get('id')
   const [items, setItems] = useState<Announcement[] | null>(null)
@@ -28,41 +28,46 @@ export default function AnnouncementsPage() {
   const [reportSending, setReportSending] = useState(false)
   const [reportError, setReportError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      try {
-        // Masuk: daftar terbit sesuai target (RLS + lib). Tamu: perilaku
-        // lama — hanya platform (RLS anon tetap membatasi).
-        if (user) {
-          const rows = await listAnnouncements()
-          if (!cancelled) setItems(rows)
+  // Fase 6 (070): admin menampilkan kembali pengumuman yang disembunyikan.
+  const [unhideBusy, setUnhideBusy] = useState<string | null>(null)
+
+  async function load(signal?: { cancelled: boolean }) {
+    try {
+      // Masuk: daftar terbit sesuai target (RLS + lib). Tamu: perilaku
+      // lama — hanya platform (RLS anon tetap membatasi).
+      if (user) {
+        const rows = await listAnnouncements()
+        if (!signal?.cancelled) setItems(rows)
+        return
+      }
+      const { data, error: qErr } = await supabase
+        .from('announcements')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (qErr) {
+        if (isMissingTableError(qErr)) {
+          if (!signal?.cancelled) setItems(null)
           return
         }
-        const { data, error: qErr } = await supabase
-          .from('announcements')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(50)
-        if (qErr) {
-          if (isMissingTableError(qErr)) {
-            if (!cancelled) setItems(null)
-            return
-          }
-          throw qErr
-        }
-        const rows = ((data ?? []) as Announcement[]).filter((a) => a.scope === 'platform')
-        if (!cancelled) setItems(rows)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat pengumuman.')
-      } finally {
-        if (!cancelled) setLoading(false)
+        throw qErr
       }
+      const rows = ((data ?? []) as Announcement[]).filter((a) => a.scope === 'platform')
+      if (!signal?.cancelled) setItems(rows)
+    } catch (err) {
+      if (!signal?.cancelled) setError(err instanceof Error ? err.message : 'Gagal memuat pengumuman.')
+    } finally {
+      if (!signal?.cancelled) setLoading(false)
     }
-    void load()
+  }
+
+  useEffect(() => {
+    const signal = { cancelled: false }
+    void load(signal)
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   // Deep link notifikasi (?id=): gulir ke pengumuman itu supaya terlihat.
@@ -79,6 +84,23 @@ export default function AnnouncementsPage() {
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Lampiran tidak bisa dibuka saat ini.')
+    }
+  }
+
+  /** Fase 6 (070): admin menampilkan kembali pengumuman yang disembunyikan.
+      RPC melempar 'Konten tidak ditemukan.' bila pengumuman sudah dihapus —
+      ditangkap sebagai notice, bukan crash. */
+  async function handleUnhide(a: Announcement) {
+    if (unhideBusy) return
+    setUnhideBusy(a.id)
+    try {
+      await hideContent('announcements', a.id, false)
+      setNotice('Pengumuman ditampilkan kembali.')
+      await load()
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menampilkan kembali pengumuman.')
+    } finally {
+      setUnhideBusy(null)
     }
   }
 
@@ -143,6 +165,18 @@ export default function AnnouncementsPage() {
               )}
               {user && (
                 <p>
+                  {a.is_hidden && profile?.role === 'admin' && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        disabled={unhideBusy !== null}
+                        onClick={() => void handleUnhide(a)}
+                      >
+                        {unhideBusy === a.id ? 'Memproses…' : 'Tampilkan kembali'}
+                      </button>{' '}
+                    </>
+                  )}
                   <button
                     type="button"
                     className="btn btn-ghost btn-small"

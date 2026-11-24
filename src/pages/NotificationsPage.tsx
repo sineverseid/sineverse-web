@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
-import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '../lib/supabase'
+import { fetchNotifications, markAllNotificationsRead, markNotificationRead, notifyNotificationsRead } from '../lib/supabase'
 import type { AppNotification } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
@@ -147,6 +147,8 @@ export default function NotificationsPage() {
     try {
       await markNotificationRead(id)
       setItems((xs) => (xs ?? []).map((n) => (n.id === id ? { ...n, is_read: true } : n)))
+      // Lonceng header (Layout) menyegarkan angkanya lewat event ini.
+      notifyNotificationsRead()
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal menandai notifikasi sudah dibaca. Coba lagi.')
     }
@@ -158,6 +160,7 @@ export default function NotificationsPage() {
       await markAllNotificationsRead(user.id)
       setItems((xs) => (xs ?? []).map((n) => ({ ...n, is_read: true })))
       setNotice('Semua notifikasi ditandai sudah dibaca.')
+      notifyNotificationsRead()
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Gagal menandai notifikasi.')
     }
@@ -199,7 +202,16 @@ export default function NotificationsPage() {
                 {n.body && <p>{n.body}</p>}
                 {link && (
                   <p>
-                    <Link to={link.href}>{link.label}</Link>
+                    <Link
+                      to={link.href}
+                      onClick={() => {
+                        // Membuka tujuan notifikasi sekaligus menandainya dibaca,
+                        // supaya lonceng header ikut berkurang.
+                        if (!n.is_read) void handleReadOne(n.id)
+                      }}
+                    >
+                      {link.label}
+                    </Link>
                   </p>
                 )}
                 {!n.is_read && (
