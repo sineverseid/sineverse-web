@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
-import { fetchCrewProfiles, fetchProfileNames, logAudit, supabase, uploadToBucket } from '../lib/supabase'
+import { fetchCrewProfiles, fetchProfileNames, logAudit, notifyIfAllowed, supabase, uploadToBucket } from '../lib/supabase'
 import { fetchProjectChatSummary } from '../lib/projectChat'
 import type { ProjectChatSummary } from '../lib/projectChat'
 import type {
@@ -282,15 +282,26 @@ export default function ProjectDetailPage() {
         await refresh()
       }
     } else if (currentProject.access_mode === 'approval') {
-      const { error: insErr } = await supabase.from('project_join_requests').insert({
+      const { data: reqRow, error: insErr } = await supabase.from('project_join_requests').insert({
         project_id: currentProject.id,
         user_id: user.id,
         message: joinMsg.trim() || null,
         status: 'pending',
-      })
+      }).select('id').single()
       if (insErr) setNotice('Gagal mengirim permintaan gabung. Coba lagi.')
       else {
         setNotice('Permintaan gabung terkirim. Pemilik proyek akan meninjaunya.')
+        // Fase 2 — beri tahu pemilik proyek (hanya mode approval; mode open
+        // = gabung langsung, tanpa notifikasi).
+        const msg = joinMsg.trim()
+        void notifyIfAllowed(
+          currentProject.owner_id,
+          'komunitas',
+          'project_join_request',
+          `Permintaan gabung ke proyek "${currentProject.title}"`,
+          `${profile?.name ?? 'Anggota'} meminta bergabung ke proyek "${currentProject.title}".${msg ? ` "${msg.slice(0, 120)}"` : ''}`,
+          { project_id: currentProject.id, request_id: (reqRow as { id: string } | null)?.id ?? null, user_id: user.id },
+        ).catch(() => undefined)
         await refresh()
       }
     } else {
@@ -322,6 +333,19 @@ export default function ProjectDetailPage() {
       setNotice('Gagal memproses permintaan gabung. Coba lagi.')
       return
     }
+    // Fase 2 — beri tahu peminta (bukan pemilik yang memutuskan).
+    void notifyIfAllowed(
+      req.user_id,
+      'komunitas',
+      approve ? 'project_join_approved' : 'project_join_rejected',
+      approve
+        ? `Permintaan gabung disetujui: "${currentProject.title}"`
+        : `Permintaan gabung ditolak: "${currentProject.title}"`,
+      approve
+        ? `Kamu resmi menjadi anggota proyek "${currentProject.title}".`
+        : `Permintaanmu bergabung ke proyek "${currentProject.title}" ditolak pemilik proyek.`,
+      { project_id: currentProject.id, request_id: req.id },
+    ).catch(() => undefined)
     await refresh()
   }
 
@@ -341,15 +365,24 @@ export default function ProjectDetailPage() {
       setNotice(`${invitee.name ?? 'Anggota'} sudah punya undangan yang masih menunggu jawaban.`)
       return
     }
-    const { error: insErr } = await supabase.from('project_invites').insert({
+    const { data: invRow, error: insErr } = await supabase.from('project_invites').insert({
       project_id: currentProject.id,
       inviter_id: user.id,
       invitee_id: invitee.id,
       status: 'pending',
-    })
+    }).select('id').single()
     if (insErr) setNotice('Gagal mengirim undangan. Coba lagi.')
     else {
       setNotice(`Undangan terkirim ke ${invitee.name ?? 'anggota'}.`)
+      // Fase 2 — beri tahu yang diundang.
+      void notifyIfAllowed(
+        invitee.id,
+        'komunitas',
+        'project_invite',
+        `Undangan bergabung ke proyek "${currentProject.title}"`,
+        `${profile?.name ?? 'Anggota'} mengundangmu bergabung ke proyek "${currentProject.title}". Buka proyek untuk menerima atau menolak.`,
+        { project_id: currentProject.id, invite_id: (invRow as { id: string } | null)?.id ?? null, inviter_id: user.id },
+      ).catch(() => undefined)
       setInviteName('')
       setInviteMatches([])
       await refresh()
@@ -407,6 +440,21 @@ export default function ProjectDetailPage() {
       setNotice('Gagal menjawab undangan. Coba lagi.')
       return
     }
+    // Fase 2 — beri tahu PENGUNDANG (invite.inviter_id), bukan user.id
+    // (yang menjawab adalah invitee).
+    const inviteeName = profile?.name ?? names.get(user?.id ?? '') ?? 'Anggota'
+    void notifyIfAllowed(
+      invite.inviter_id,
+      'komunitas',
+      accept ? 'project_invite_accepted' : 'project_invite_declined',
+      accept
+        ? `${inviteeName} menerima undangan proyek "${currentProject.title}"`
+        : `${inviteeName} menolak undangan proyek "${currentProject.title}"`,
+      accept
+        ? `${inviteeName} bergabung ke proyek "${currentProject.title}".`
+        : `${inviteeName} menolak undangan ke proyek "${currentProject.title}".`,
+      { project_id: currentProject.id, invite_id: invite.id, invitee_id: user?.id ?? null },
+    ).catch(() => undefined)
     await refresh()
   }
 
