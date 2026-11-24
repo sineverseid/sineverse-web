@@ -8,8 +8,9 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate } from '../lib/guarded'
+import { listAnnouncements, signedAnnouncementUrl } from '../lib/announcements'
 import { fetchCourses, supabase } from '../lib/supabase'
-import type { Course, CourseAnnouncement } from '../lib/types'
+import type { Announcement, Course, CourseAnnouncement } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { MENTOR_NAV } from '../lib/workspaceNav'
@@ -26,6 +27,10 @@ export default function MentorAnnouncementsPage() {
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [saving, setSaving] = useState(false)
+  // Fase 4 (067): pengumuman admin yang ditujukan ke mentor ini (semua
+  // mentor / mentor course yang diampu). RLS sudah memfilternya.
+  const [adminItems, setAdminItems] = useState<Announcement[]>([])
+  const [adminNotice, setAdminNotice] = useState<string | null>(null)
 
   const isMentor = profile?.role === 'mentor' || profile?.role === 'admin'
 
@@ -60,6 +65,33 @@ export default function MentorAnnouncementsPage() {
     void load(user.id, profile?.role === 'admin')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, profile?.role])
+
+  // Fase 4: pengumuman admin untuk mentor — dimuat terpisah supaya gagalnya
+  // tidak menghalangi daftar pengumuman course sendiri.
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    void listAnnouncements()
+      .then((rows) => {
+        if (!cancelled) setAdminItems(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setAdminItems([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
+
+  async function handleOpenAdminAttachment(a: Announcement) {
+    if (!a.attachment_path) return
+    try {
+      const url = await signedAnnouncementUrl(a.attachment_path)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      setAdminNotice(err instanceof Error ? err.message : 'Lampiran tidak bisa dibuka saat ini.')
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -133,6 +165,34 @@ export default function MentorAnnouncementsPage() {
       <WorkspaceNav entries={MENTOR_NAV} />
       {notice && <p className="notice-box">{notice}</p>}
       <p className="muted">Pengumuman hanya terlihat oleh siswa yang terdaftar di course tersebut.</p>
+
+      <section className="section">
+        <h2>Pengumuman dari Admin</h2>
+        {adminNotice && <p className="notice-box">{adminNotice}</p>}
+        {adminItems.length === 0 ? (
+          <EmptyState message="Belum ada pengumuman dari admin." />
+        ) : (
+          <ul className="discussion-list">
+            {adminItems.map((a) => (
+              <li key={a.id} className="discussion-item">
+                <p className="discussion-meta">
+                  {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.publish_at ?? a.created_at)}
+                  {a.is_pinned ? ' · 📌 Disematkan' : ''}
+                </p>
+                <h3>{a.title}</h3>
+                {a.body && <p>{a.body}</p>}
+                {a.attachment_name && a.attachment_path && (
+                  <p>
+                    <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleOpenAdminAttachment(a)}>
+                      📎 {a.attachment_name}
+                    </button>
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="section">
         <h2>Tulis Pengumuman</h2>

@@ -36,6 +36,7 @@ const KIND_LABELS: Record<string, string> = {
   mentor_group_mention: 'Disebut di Komunitas Mentor',
   mentor_group_message: 'Komunitas Mentor',
   mentor_group_announcement: 'Pengumuman Komunitas Mentor',
+  announcement_published: 'Pengumuman',
   project: 'Proyek',
   film: 'Film',
   waitlist: 'Daftar Tunggu',
@@ -52,8 +53,18 @@ function kindLabel(kind: string): string {
 }
 
 /** Deep link tujuan notifikasi. Grup mentor (Fase 1) dan komunitas siswa
-    (Fase 2) punya tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya. */
+    (Fase 2) punya tujuan — kind lain tetap tampil tanpa tautan seperti sebelumnya.
+    Pengumuman (Fase 4): buka halaman Pengumuman dengan id pengumumannya
+    supaya itemnya disorot. */
 function notificationLink(n: AppNotification): { href: string; label: string } | null {
+  if (n.kind === 'announcement_published') {
+    const announcementId =
+      n.data && typeof n.data.announcement_id === 'string' ? n.data.announcement_id : null
+    return {
+      href: announcementId ? `/pengumuman?id=${announcementId}` : '/pengumuman',
+      label: 'Buka pengumuman →',
+    }
+  }
   if (
     n.kind === 'mentor_group_mention' ||
     n.kind === 'mentor_group_message' ||

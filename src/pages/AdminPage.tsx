@@ -9,16 +9,35 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { countUsersByRole, userBreakdownLabel } from '../lib/counts'
 import { fmtDate } from '../lib/guarded'
-  import { fetchMentorGroupSummary } from '../lib/mentorGroup'
-  import type { MentorGroupSummary } from '../lib/mentorGroup'
+import { fetchMentorGroupSummary } from '../lib/mentorGroup'
+import type { MentorGroupSummary } from '../lib/mentorGroup'
+import {
+  ANNOUNCEMENT_TARGETS,
+  announcementStatusLabel,
+  announcementTargetLabel,
+  announcementTargetNeedsCourse,
+  createAnnouncement,
+  deleteAnnouncement,
+  signedAnnouncementUrl,
+  updateAnnouncement,
+} from '../lib/announcements'
+import type { AnnouncementTarget } from '../lib/announcements'
 import { decideMentorApplication, decideSchoolSubmission, fetchCourses, fetchMentorApplications, fetchProfileNames, fetchProvinces, fetchRefNameMap, fetchRegencies, fetchSchoolSubmissions, invalidateCatalogCache, logAudit, sendNotification, supabase } from '../lib/supabase'
-import type { CommunityProposal, Course, CourseClaim, MentorApplication, RefProvince, RefRegency, School, SchoolSubmission } from '../lib/types'
+import type { Announcement, CommunityProposal, Course, CourseClaim, MentorApplication, RefProvince, RefRegency, School, SchoolSubmission } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
 import { ADMIN_NAV } from '../lib/workspaceNav'
 
 // Direktori sekolah (Verifikasi Sekolah): 20 baris per halaman.
 const SCHOOL_PAGE_SIZE = 20
+
+/** ISO timestamptz -> nilai input datetime-local (waktu lokal, YYYY-MM-DDTHH:mm). */
+function toLocalInputValue(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 interface ProgressRow {
   userId: string
@@ -119,7 +138,7 @@ export default function AdminPage() {
   const [appTab, setAppTab] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revision_required'>('all')
   // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
   const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
-    const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
+  const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
   // Penolakan/revisi lamaran mentor meminta catatan (migrasi 027).
   const [appAction, setAppAction] = useState<{ id: string; kind: 'reject' | 'revision' } | null>(null)
   const [appNote, setAppNote] = useState('')
@@ -166,9 +185,16 @@ export default function AdminPage() {
 
   const [annTitle, setAnnTitle] = useState('')
   const [annBody, setAnnBody] = useState('')
-  const [annScope, setAnnScope] = useState<'platform' | 'course'>('platform')
+  // Fase 4 (067): target menggantikan scope lama (scope diturunkan dari
+  // target di lib). Plus jadwal terbit, pin, lampiran, dan mode edit.
+  const [annTarget, setAnnTarget] = useState<AnnouncementTarget>('all_students')
   const [annCourse, setAnnCourse] = useState('')
-  const [announcements, setAnnouncements] = useState<{ id: string; title: string; scope: string }[]>([])
+  const [annPublishAt, setAnnPublishAt] = useState('')
+  const [annPinned, setAnnPinned] = useState(false)
+  const [annFile, setAnnFile] = useState<File | null>(null)
+  const [annRemoveAttachment, setAnnRemoveAttachment] = useState(false)
+  const [editingAnn, setEditingAnn] = useState<Announcement | null>(null)
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [newCourseTitle, setNewCourseTitle] = useState('')
   const [newCourseDesc, setNewCourseDesc] = useState('')
   const [newCourseCategory, setNewCourseCategory] = useState('')
@@ -216,7 +242,7 @@ export default function AdminPage() {
         supabase.from('community_proposals').select('*').eq('status', 'pending').order('created_at'),
         supabase.from('communities').select('id,name').order('name'),
         supabase.from('discussion_reports').select('id').eq('status', 'open'),
-        supabase.from('announcements').select('id,title,scope').order('created_at', { ascending: false }).limit(20),
+        supabase.from('announcements').select('*').order('created_at', { ascending: false }).limit(20),
         supabase.from('lesson_progress').select('user_id,status'),
         supabase.from('enrollments').select('user_id,course_id'),
         fetchSchoolSubmissions(),
@@ -273,7 +299,7 @@ export default function AdminPage() {
       setCourses(courseList)
       setProposals((propData ?? []) as CommunityProposal[])
       setCommunities((commData ?? []) as { id: string; name: string }[])
-      setAnnouncements((annData ?? []) as { id: string; title: string; scope: string }[])
+      setAnnouncements((annData ?? []) as Announcement[])
       setMentors(profs.filter((p) => p.role === 'mentor').map((p) => ({ id: p.id, name: p.name })))
       const liveCourseIds = new Set(courseList.map((c) => c.id))
       const rows: ProgressRow[] = profs
@@ -311,19 +337,19 @@ export default function AdminPage() {
   // bila migrasi 060/061 belum ada, kartu menampilkan pesan jujur.
   useEffect(() => {
     if (!user) return
-      let cancelled = false
-        fetchMentorGroupSummary(user.id)
-          .then((s) => {
-            if (!cancelled) setGroupSummary(s)
-          })
-          .catch(() => {
-            if (!cancelled) setGroupSummaryFailed(true)
-          })
-          return () => {
-            cancelled = true
-          }
+    let cancelled = false
+    fetchMentorGroupSummary(user.id)
+      .then((s) => {
+        if (!cancelled) setGroupSummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setGroupSummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [user?.id])
-    
+
   // Lompat ke section bila dibuka lewat tautan hash dari Beranda admin
   // (mis. /admin#lamaran-mentor) — setelah data selesai dimuat.
   useEffect(() => {
@@ -732,23 +758,90 @@ export default function AdminPage() {
     }
   }
 
-  async function handleCreateAnnouncement(e: FormEvent) {
+  function resetAnnouncementForm() {
+    setAnnTitle('')
+    setAnnBody('')
+    setAnnTarget('all_students')
+    setAnnCourse('')
+    setAnnPublishAt('')
+    setAnnPinned(false)
+    setAnnFile(null)
+    setAnnRemoveAttachment(false)
+    setEditingAnn(null)
+  }
+
+  /** Simpan pengumuman (buat baru atau edit) — draf atau terbitkan. */
+  async function handleSaveAnnouncement(e: { preventDefault: () => void }, action: 'draft' | 'publish') {
     e.preventDefault()
     if (!user || !annTitle.trim()) return
-    const { error: insErr } = await supabase.from('announcements').insert({
-      scope: annScope,
-      course_id: annScope === 'course' ? annCourse || null : null,
-      title: annTitle.trim(),
-      body: annBody.trim() || null,
-      created_by: user.id,
-    })
-    if (insErr) setNotice(insErr.message)
-    else {
-      setNotice('Pengumuman dibuat.')
-      setAnnTitle('')
-      setAnnBody('')
-      await load()
+    if (announcementTargetNeedsCourse(annTarget) && !annCourse) {
+      setNotice('Pilih course dulu untuk target ini.')
+      return
     }
+    const publishAtIso = annPublishAt ? new Date(annPublishAt).toISOString() : null
+    try {
+      if (editingAnn) {
+        const updated = await updateAnnouncement(editingAnn.id, user.id, {
+          title: annTitle,
+          body: annBody,
+          target: annTarget,
+          courseId: annCourse || null,
+          file: annFile,
+          removeAttachment: annRemoveAttachment && !annFile,
+          publishAt: publishAtIso,
+          publishAtTouched: true,
+          isPinned: annPinned,
+          action,
+        })
+        await logAudit(
+          action === 'publish' ? 'announcement.published' : 'announcement.updated',
+          'announcements',
+          updated.id,
+          { target: updated.target ?? null, status: updated.status ?? null },
+        )
+        setNotice(action === 'publish' ? 'Pengumuman diperbarui dan diterbitkan.' : 'Pengumuman diperbarui sebagai draf.')
+      } else {
+        const created = await createAnnouncement({
+          userId: user.id,
+          title: annTitle,
+          body: annBody,
+          target: annTarget,
+          courseId: annCourse || null,
+          file: annFile,
+          publishAt: publishAtIso,
+          isPinned: annPinned,
+          action,
+        })
+        await logAudit(
+          action === 'publish' ? 'announcement.published' : 'announcement.created',
+          'announcements',
+          created.id,
+          { target: created.target ?? null, status: created.status ?? null },
+        )
+        setNotice(
+          action === 'publish'
+            ? (created.status === 'scheduled' ? 'Pengumuman terjadwal — akan terbit pada waktunya.' : 'Pengumuman diterbitkan.')
+            : 'Pengumuman disimpan sebagai draf.',
+        )
+      }
+      resetAnnouncementForm()
+      await load()
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menyimpan pengumuman.')
+    }
+  }
+
+  function handleEditAnnouncement(a: Announcement) {
+    setEditingAnn(a)
+    setAnnTitle(a.title)
+    setAnnBody(a.body ?? '')
+    setAnnTarget((a.target as AnnouncementTarget) ?? 'all_students')
+    setAnnCourse(a.course_id ?? '')
+    setAnnPublishAt(a.publish_at ? toLocalInputValue(a.publish_at) : '')
+    setAnnPinned(a.is_pinned ?? false)
+    setAnnFile(null)
+    setAnnRemoveAttachment(false)
+    document.getElementById('pengumuman')?.scrollIntoView({ behavior: 'smooth' })
   }
 
   async function handleDeleteAnnouncement(id: string) {
@@ -757,14 +850,24 @@ export default function AdminPage() {
     if (busyKey) return
     setBusyKey(key)
     try {
-      const { error: delErr } = await supabase.from('announcements').delete().eq('id', id)
-      if (delErr) setNotice(delErr.message)
-      else {
-        setNotice('Pengumuman dihapus.')
-        await load()
-      }
+      await deleteAnnouncement(id)
+      await logAudit('announcement.deleted', 'announcements', id, {})
+      setNotice('Pengumuman dihapus.')
+      await load()
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Gagal menghapus pengumuman.')
     } finally {
       setBusyKey(null)
+    }
+  }
+
+  async function handleOpenAnnouncementAttachment(a: Announcement) {
+    if (!a.attachment_path) return
+    try {
+      const url = await signedAnnouncementUrl(a.attachment_path)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Lampiran tidak bisa dibuka saat ini.')
     }
   }
 
@@ -815,41 +918,40 @@ export default function AdminPage() {
           <Link to="/admin/analitik-akademi" className="btn btn-secondary">Analitik Akademi</Link>
         </div>
       </section>
-      
+
       {/* Ruang Komunikasi Mentor (Fase 1, migrasi 060/061) — grup resmi
-      admin + mentor; ringkasan unread + pesan terakhir. */}
+          admin + mentor; ringkasan unread + pesan terakhir. */}
       <section className="section">
         <div className="dash-section-head"><h2>Ruang Komunikasi Mentor</h2></div>
         {groupSummaryFailed ? (
-      <p className="muted">
-        Ringkasan grup belum bisa dimuat — grup chat mentor belum aktif di server.
-      </p>
-    ) : !groupSummary ? (
-      <p className="muted">Memuat ringkasan grup…</p>
-    ) : (
-      <>
-        <p>
-          {groupSummary.unread > 0
-          ? `${groupSummary.unread} pesan belum dibaca.`
-          : 'Semua pesan sudah dibaca.'}
-        </p>
-        {groupSummary.latest ? (
-        <p className="muted">
-          Terakhir dari {groupSummary.latest.senderName} ·{' '}
-          {fmtDate(groupSummary.latest.createdAt)}: {groupSummary.latest.body.slice(0, 120)}
-          {groupSummary.latest.body.length > 120 ? '…' : ''}
-        </p>
-      ) : (
-        <p className="muted">Belum ada pesan di grup.</p>
-      )}
-      </>
-    )}
+          <p className="muted">
+            Ringkasan grup belum bisa dimuat — grup chat mentor belum aktif di server.
+          </p>
+        ) : !groupSummary ? (
+          <p className="muted">Memuat ringkasan grup…</p>
+        ) : (
+          <>
+            <p>
+              {groupSummary.unread > 0
+                ? `${groupSummary.unread} pesan belum dibaca.`
+                : 'Semua pesan sudah dibaca.'}
+            </p>
+            {groupSummary.latest ? (
+              <p className="muted">
+                Terakhir dari {groupSummary.latest.senderName} ·{' '}
+                {fmtDate(groupSummary.latest.createdAt)}: {groupSummary.latest.body.slice(0, 120)}
+                {groupSummary.latest.body.length > 120 ? '…' : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada pesan di grup.</p>
+            )}
+          </>
+        )}
         <p>
           <Link to="/komunitas-mentor" className="btn btn-primary">
             Buka Ruang Komunikasi Mentor
           </Link>
         </p>
-        
       </section>
 
       <section className="section" id="lamaran-mentor">
@@ -1207,17 +1309,28 @@ export default function AdminPage() {
 
       <section className="section" id="pengumuman">
         <div className="dash-section-head"><h2>Pengumuman</h2></div>
-        <form className="form" onSubmit={handleCreateAnnouncement}>
+        {editingAnn && (
+          <p className="notice-box">
+            Mengedit pengumuman “{editingAnn.title}”.{' '}
+            <button type="button" className="btn btn-ghost btn-small" onClick={resetAnnouncementForm}>Batal Edit</button>
+          </p>
+        )}
+        <form className="form" onSubmit={(e) => void handleSaveAnnouncement(e, 'publish')}>
           <label>Judul<input value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} required /></label>
           <label>Isi<textarea value={annBody} onChange={(e) => setAnnBody(e.target.value)} rows={3} /></label>
           <label>
-            Cakupan
-            <select value={annScope} onChange={(e) => setAnnScope(e.target.value as 'platform' | 'course')} style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
-              <option value="platform">Platform (semua pengguna)</option>
-              <option value="course">Course tertentu</option>
+            Target
+            <select
+              value={annTarget}
+              onChange={(e) => setAnnTarget(e.target.value as AnnouncementTarget)}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            >
+              {ANNOUNCEMENT_TARGETS.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
             </select>
           </label>
-          {annScope === 'course' && (
+          {announcementTargetNeedsCourse(annTarget) && (
             <label>
               Course
               <select value={annCourse} onChange={(e) => setAnnCourse(e.target.value)} required style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}>
@@ -1226,13 +1339,59 @@ export default function AdminPage() {
               </select>
             </label>
           )}
-          <button type="submit" className="btn btn-primary">Buat Pengumuman</button>
+          <label>
+            Jadwal terbit (kosong = terbit langsung)
+            <input
+              type="datetime-local"
+              value={annPublishAt}
+              onChange={(e) => setAnnPublishAt(e.target.value)}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            />
+          </label>
+          <label>
+            Lampiran (opsional — gambar atau PDF, maks 10 MB)
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+              onChange={(e) => {
+                setAnnFile(e.target.files?.[0] ?? null)
+                setAnnRemoveAttachment(false)
+              }}
+              style={{ fontFamily: 'inherit', padding: '0.65rem 0.8rem', borderRadius: 8, border: '1px solid var(--light-grey)' }}
+            />
+          </label>
+          {annFile && <p className="muted">Lampiran: {annFile.name} ({Math.round(annFile.size / 1024)} KB)</p>}
+          {editingAnn?.attachment_name && !annFile && (
+            <p className="muted">
+              Lampiran saat ini: {editingAnn.attachment_name}{' '}
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleOpenAnnouncementAttachment(editingAnn)}>Buka</button>{' '}
+              <label style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
+                <input type="checkbox" checked={annRemoveAttachment} onChange={(e) => setAnnRemoveAttachment(e.target.checked)} />
+                Hapus lampiran
+              </label>
+            </p>
+          )}
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input type="checkbox" checked={annPinned} onChange={(e) => setAnnPinned(e.target.checked)} />
+            Sematkan di atas daftar pengumuman
+          </label>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button type="submit" className="btn btn-primary">{editingAnn ? 'Simpan & Terbitkan' : 'Terbitkan'}</button>
+            <button type="button" className="btn btn-secondary" onClick={(e) => void handleSaveAnnouncement(e, 'draft')}>Simpan Draf</button>
+          </div>
         </form>
         <ul className="list">
           {announcements.map((a) => (
             <li key={a.id}>
-              {/* B75: scope mentah ("platform"/"course") dipetakan ke label. */}
-              {a.title} ({a.scope === 'platform' ? 'Platform (semua pengguna)' : a.scope === 'course' ? 'Course tertentu' : a.scope}){' '}
+              {a.title} ({announcementStatusLabel(a.status)} · {announcementTargetLabel(a.target)}
+              {a.course_id ? ` · ${(courses.find((c) => c.id === a.course_id)?.title ?? 'Course')}` : ''}
+              {a.publish_at ? ` · Terbit ${fmtDate(a.publish_at)}` : ''}{a.is_pinned ? ' · 📌 Disematkan' : ''}){' '}
+              {a.attachment_name && (
+                <>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleOpenAnnouncementAttachment(a)}>📎 {a.attachment_name}</button>{' '}
+                </>
+              )}
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => handleEditAnnouncement(a)}>Edit</button>{' '}
               <button type="button" className="btn btn-ghost btn-small" disabled={busyKey === `ann-${a.id}`} onClick={() => void handleDeleteAnnouncement(a.id)}>{busyKey === `ann-${a.id}` ? 'Menghapus…' : 'Hapus'}</button>
             </li>
           ))}
