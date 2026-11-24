@@ -1082,6 +1082,142 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
   if (error) throw error
 }
 
+/** Notification Center (Fase 1, 24 Nov 2026) — kategori + "Penting"
+    diturunkan dari kind (D2/D3 rencana implementasi); tanpa kolom baru di DB. */
+export type NotificationCategory = 'academy' | 'komunitas' | 'proyek' | 'sinebot' | 'sistem' | 'lainnya'
+
+const NOTIFICATION_CATEGORY_MAP: Record<string, NotificationCategory> = {
+  assignment: 'academy',
+  quiz: 'academy',
+  exam: 'academy',
+  grade: 'academy',
+  revision: 'academy',
+  enrollment: 'academy',
+  certificate: 'academy',
+  reminder_assignment: 'academy',
+  reminder_live_class: 'academy',
+  reminder_grading: 'academy',
+  reminder_event: 'academy',
+  discussion: 'komunitas',
+  community: 'komunitas',
+  community_post_mention: 'komunitas',
+  community_post_reply: 'komunitas',
+  mentor_group_mention: 'komunitas',
+  mentor_group_message: 'komunitas',
+  mentor_group_announcement: 'komunitas',
+  project: 'proyek',
+  project_chat_mention: 'proyek',
+  project_chat_message: 'proyek',
+  film: 'proyek',
+  sinebot_ticket_update: 'sinebot',
+  sinebot_ticket_new: 'sinebot',
+  announcement: 'sistem',
+  announcement_published: 'sistem',
+  event: 'sistem',
+  moderation_warning: 'sistem',
+  claim_approved: 'sistem',
+  claim_rejected: 'sistem',
+  mentor_assigned: 'sistem',
+  mentor_application: 'sistem',
+  waitlist: 'sistem',
+}
+
+export function notificationCategory(kind: string): NotificationCategory {
+  return NOTIFICATION_CATEGORY_MAP[kind] ?? 'lainnya'
+}
+
+const IMPORTANT_KINDS = new Set([
+  'moderation_warning',
+  'claim_rejected',
+  'certificate',
+  'sinebot_ticket_new',
+  'announcement_published',
+  'mentor_group_announcement',
+])
+
+export function isImportantNotification(kind: string): boolean {
+  return IMPORTANT_KINDS.has(kind)
+}
+
+/** Daftar notifikasi per halaman (offset; pemanggil mendedupe berdasarkan id
+    karena baris realtime baru bisa menggeser halaman saat scroll). */
+export async function fetchNotificationsPaged(
+  userId: string,
+  page: number,
+  pageSize = 30,
+): Promise<AppNotification[]> {
+  const from = page * pageSize
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(from, from + pageSize - 1)
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  return (data ?? []) as AppNotification[]
+}
+
+/** Notification Center (Fase 1): "Bersihkan" menghapus PERMANEN baris
+    notifikasi milik sendiri (keputusan Arif 24 Nov 2026 — bukan arsip).
+    RLS notifications_delete_own mengizinkan; aktivitas sumber (pesan, tugas,
+    tiket) tidak ikut terhapus karena hanya baris notifications yang dihapus.
+    Mengembalikan jumlah baris yang terhapus. */
+export async function deleteNotifications(
+  userId: string,
+  scope: 'read' | 'all',
+): Promise<number> {
+  let q = supabase.from('notifications').delete().eq('user_id', userId)
+  if (scope === 'read') q = q.eq('is_read', true)
+  const { data, error } = await q.select('id')
+  if (error) throw error
+  return (data ?? []).length
+}
+
+export type NotificationRealtimeStatus = 'ok' | 'error'
+
+/** Langganan Realtime untuk notifikasi milik sendiri (postgres_changes INSERT;
+    butuh migrasi 075 yang menambah tabel notifications ke publikasi
+    supabase_realtime). onStatus 'error' berarti halaman menampilkan notice
+    jujur; lonceng tetap diperbarui lewat polling saat foreground. */
+export function subscribeToNotifications(
+  userId: string,
+  onInsert: (n: AppNotification) => void,
+  onStatus?: (status: NotificationRealtimeStatus) => void,
+): () => void {
+  const channel = supabase
+    .channel('notifications')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${userId}`,
+      },
+      (payload) => {
+        const row = (payload as { new?: unknown }).new
+        if (typeof row !== 'object' || row === null) return
+        const id = (row as { id?: unknown }).id
+        if (typeof id !== 'string') return
+        onInsert(row as unknown as AppNotification)
+      },
+    )
+    .subscribe((status) => {
+      if (!onStatus) return
+      if (status === 'SUBSCRIBED') onStatus('ok')
+      else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR' || status === 'CLOSED') {
+        onStatus('error')
+      }
+    })
+  return () => {
+    void supabase.removeChannel(channel)
+  }
+}
+
 export async function fetchNotificationPrefs(userId: string): Promise<NotificationPrefs | null> {
   const { data, error } = await supabase
     .from('notification_prefs')
