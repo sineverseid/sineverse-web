@@ -13,6 +13,11 @@
 //                          jumlah pengumpulan yang menunggu).
 //   reminder_event       — acara <= 24 jam yang sudah didaftarkan pengguna
 //                          (events + event_registrations, migrasi 007).
+//   reminder_final_task  — tugas proyek akhir <= 24 jam (Fase 2): penerima
+//                          pemilik + semua anggota proyek (rekomendasi audit
+//                          §7.2, dipakai sebagai default Fase 2 — Arif belum
+//                          memutuskan); dedup indeks 043 + gate prefs 'nilai'
+//                          per penerima lewat notifyIfAllowed().
 //
 // DEDUP (wajib): satu pengingat per item per hari kalender (WIB). Sebelum
 // mengirim, semua notifikasi reminder hari ini dibaca dan dicocokkan lewat
@@ -22,7 +27,7 @@
 // tidak ada pengingat; kategori 'acara' = false -> tidak ada pengingat
 // acara). Setiap kegagalan ditelan per seksi — pengingat tidak pernah
 // merusak sign-in. Tidak ada tabel baru, tidak ada penghapusan data.
-import { fetchNotificationPrefs, sendNotification, supabase } from './supabase'
+import { fetchNotificationPrefs, notifyIfAllowed, sendNotification, supabase } from './supabase'
 import { isMissingTableError } from './guarded'
 
 export const REMINDER_KINDS = [
@@ -30,6 +35,7 @@ export const REMINDER_KINDS = [
   'reminder_live_class',
   'reminder_grading',
   'reminder_event',
+  'reminder_final_task',
 ] as const
 
 export type ReminderKind = (typeof REMINDER_KINDS)[number]
@@ -62,6 +68,7 @@ type ReminderData = {
   reminder_day: string
   course_id?: string
   assignment_id?: string
+  project_id?: string
   due_date?: string
   scheduled_at?: string
   starts_at?: string
@@ -413,6 +420,116 @@ async function checkEventReminders(
   return created
 }
 
+/** Pengingat H-1 tugas proyek akhir (Fase 2) — mengikuti pola
+    checkAssignmentReminders. Tugas yang tenggatnya <= 24 jam dan belum
+    selesai ('done' dilewati). Penerima (rekomendasi audit §7.2, dipakai
+    sebagai default Fase 2 — Arif belum memutuskan): pemilik proyek +
+    semua anggota proyek — tugas tidak punya penanggung jawab tunggal
+    yang bisa diandalkan (assignee_id boleh kosong).
+    Gate prefs 'nilai' + in_app diperiksa PER PENERIMA lewat
+    notifyIfAllowed(); dedup sesi (`sent`) hanya berlaku untuk pengguna
+    sendiri — baris pengingat penerima lain tidak bisa dibaca (RLS
+    select_own); duplikat sesungguhnya dicegah indeks unik 043
+    (user_id, kind, reminder_for, reminder_day) di sisi DB. */
+async function checkFinalTaskReminders(
+  userId: string,
+  sent: Set<string>,
+  day: string,
+  now: Date,
+  horizon: Date,
+): Promise<number> {
+  // Proyek akhir yang dimiliki atau diikuti sebagai anggota tim.
+  const [{ data: ownedRows, error: ownedErr }, { data: memberRows, error: memberErr }] =
+    await Promise.all([
+      supabase.from('final_projects').select('id,title,owner_id').eq('owner_id', userId),
+      supabase.from('final_project_members').select('project_id').eq('user_id', userId),
+    ])
+  if (ownedErr) throw ownedErr
+  if (memberErr) throw memberErr
+  const memberProjectIds = ((memberRows ?? []) as { project_id: string }[]).map(
+    (r) => r.project_id,
+  )
+  let projects = ((ownedRows ?? []) as { id: string; title: string; owner_id: string }[])
+  const ownedIds = new Set(projects.map((p) => p.id))
+  const missingIds = memberProjectIds.filter((id) => !ownedIds.has(id))
+  if (missingIds.length > 0) {
+    const { data: extraRows, error: extraErr } = await supabase
+      .from('final_projects')
+      .select('id,title,owner_id')
+      .in('id', missingIds)
+    if (extraErr) throw extraErr
+    projects = [
+      ...projects,
+      ...((extraRows ?? []) as { id: string; title: string; owner_id: string }[]),
+    ]
+  }
+  if (projects.length === 0) return 0
+  const projectIds = projects.map((p) => p.id)
+  const projectById = new Map(projects.map((p) => [p.id, p]))
+
+  const { data: memRows, error: memErr } = await supabase
+    .from('final_project_members')
+    .select('project_id,user_id')
+    .in('project_id', projectIds)
+  if (memErr) throw memErr
+  const membersByProject = new Map<string, string[]>()
+  for (const m of (memRows ?? []) as { project_id: string; user_id: string }[]) {
+    const list = membersByProject.get(m.project_id) ?? []
+    list.push(m.user_id)
+    membersByProject.set(m.project_id, list)
+  }
+
+  const { data: taskRows, error: taskErr } = await supabase
+    .from('final_project_tasks')
+    .select('id,project_id,title,due_date,status')
+    .in('project_id', projectIds)
+    .not('due_date', 'is', null)
+    .neq('status', 'done')
+    .gt('due_date', now.toISOString())
+    .lte('due_date', horizon.toISOString())
+  if (taskErr) throw taskErr
+  const due = (taskRows ?? []) as {
+    id: string
+    project_id: string
+    title: string
+    due_date: string | null
+    status: string
+  }[]
+  if (due.length === 0) return 0
+
+  let created = 0
+  for (const t of due) {
+    if (!t.due_date) continue
+    const project = projectById.get(t.project_id)
+    if (!project) continue
+    const recipients = [
+      ...new Set([project.owner_id, ...(membersByProject.get(t.project_id) ?? [])]),
+    ]
+    const key = `reminder_final_task:${t.id}`
+    const data: ReminderData = {
+      reminder_for: t.id,
+      reminder_day: day,
+      project_id: t.project_id,
+    }
+    for (const recipient of recipients) {
+      if (recipient === userId && sent.has(key)) continue
+      const wasSent = await notifyIfAllowed(
+        recipient,
+        'nilai',
+        'reminder_final_task',
+        `Tugas proyek akhir tenggat besok: "${t.title}"`,
+        `Tenggat ${fmtWib(t.due_date)} WIB — proyek "${project.title}". Selesaikan sebelum tenggat.`,
+        data,
+      ).catch(() => false)
+      if (wasSent) {
+        if (recipient === userId) sent.add(key)
+        created += 1
+      }
+    }
+  }
+  return created
+}
+
 /**
  * Buat pengingat H-1 untuk pengguna yang baru masuk. Dipanggil sekali per
  * sesi (lihat Layout.tsx). Selalu resolve — kegagalan apa pun ditelan dan
@@ -459,6 +576,7 @@ export async function checkDueReminders(
       () => checkAssignmentReminders(userId, sent, day, now, horizon),
       () => checkLiveClassReminders(userId, sent, day, now, horizon),
       () => checkGradingReminders(userId, sent, day, now),
+      () => checkFinalTaskReminders(userId, sent, day, now, horizon),
     ]
     if (acaraEnabled) {
       sections.push(() =>
