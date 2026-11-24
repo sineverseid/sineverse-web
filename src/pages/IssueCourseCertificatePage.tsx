@@ -12,7 +12,7 @@ import {
   issueCourseCertificate,
 } from '../lib/certificates'
 import type { EligibilityRow } from '../lib/certificates'
-import { fetchCourses, fetchProfileNames, logAudit, supabase } from '../lib/supabase'
+import { fetchCourses, fetchProfileNames, logAudit, notifyIfAllowed, supabase } from '../lib/supabase'
 import type { Certificate, Course } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
@@ -131,6 +131,19 @@ export default function IssueCourseCertificatePage() {
         course_id: selectedCourseId,
         user_id: row.userId,
       })
+      // Fase 2 — beri tahu pemilik sertifikat, hanya bila baru terbit
+      // (alreadyIssued = serial lama, jangan kirim ulang).
+      if (!result.alreadyIssued) {
+        const courseTitle = courses.find((c) => c.id === selectedCourseId)?.title ?? 'Course'
+        void notifyIfAllowed(
+          row.userId,
+          'nilai',
+          'certificate',
+          `Sertifikat course terbit: "${courseTitle}"`,
+          `Sertifikat ${result.serial} sudah terbit dengan nilai ${result.score}. Lihat dan unduh di halaman Sertifikat.`,
+          { certificate_serial: result.serial, certificate_type: 'course', course_id: selectedCourseId },
+        ).catch(() => undefined)
+      }
       setNotice(
         result.alreadyIssued
           ? `Sertifikat sudah pernah terbit: ${result.serial}, nilai ${result.score}.`
