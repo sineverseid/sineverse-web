@@ -10,7 +10,7 @@ import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { isMissingTableError } from '../lib/guarded'
-import { fetchCompetencyExams, fetchCourses, fetchEnrollment, fetchEnrollments, fetchExamAttempts, supabase } from '../lib/supabase'
+import { fetchCompetencyExams, fetchCourses, fetchEnrollment, fetchEnrollments, fetchExamAttempts, notifyIfAllowed, supabase } from '../lib/supabase'
 import type { CompetencyExam, ExamAttempt } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
@@ -307,7 +307,7 @@ export function ExamPage() {
         } else throw rpcErr
       } else {
         const row = (Array.isArray(data) ? data[0] : data) as
-          | { score: number | null; passed: boolean | null; certificate_serial: string | null }
+          | { score: number | null; passed: boolean | null; certificate_serial: string | null; already_issued: boolean | null }
           | null
         setResult({
           score: row?.score ?? null,
@@ -315,9 +315,25 @@ export function ExamPage() {
           serial: row?.certificate_serial ?? null,
           note:
             row?.passed === true
-              ? `Selamat, kamu lulus dengan nilai ${row.score}. Sertifikat ujian diterbitkan: ${row.certificate_serial ?? '—'}.`
+              ? row?.already_issued === true
+                ? `Selamat, kamu lulus dengan nilai ${row.score}. Sertifikat ujianmu sudah pernah terbit: ${row.certificate_serial ?? '—'}.`
+                : `Selamat, kamu lulus dengan nilai ${row.score}. Sertifikat ujian diterbitkan: ${row.certificate_serial ?? '—'}.`
               : `Nilai kamu: ${row?.score ?? '—'}. Nilai lulus: ${currentExam.passing_score}.`,
         })
+        // Fase 2 (migrasi 076) — beri tahu peserta, hanya bila sertifikat
+        // BARU terbit (passed + serial + belum pernah terbit). Submit ulang
+        // ujian yang sudah lulus mengembalikan serial lama (already_issued)
+        // dan TIDAK mengirim notifikasi kedua.
+        if (row?.passed === true && row?.certificate_serial && row?.already_issued === false) {
+          void notifyIfAllowed(
+            user.id,
+            'nilai',
+            'certificate',
+            `Sertifikat ujian terbit: "${currentExam.title}"`,
+            `Selamat, kamu lulus dengan nilai ${row.score}. Sertifikat ujian diterbitkan: ${row.certificate_serial}.`,
+            { certificate_serial: row.certificate_serial, certificate_type: 'exam', exam_id: currentExam.id },
+          ).catch(() => undefined)
+        }
       }
       const atts = await fetchExamAttempts(user.id)
       setAttempts(atts.filter((a) => a.exam_id === currentExam.id))
