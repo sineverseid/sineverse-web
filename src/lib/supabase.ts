@@ -1019,6 +1019,39 @@ export async function sendNotification(
   return (id as string | null) ?? null
 }
 
+/** Notification Center Fase 2 — helper bersama semua emitter baru:
+    kirim notifikasi hanya bila preferensi penerima mengizinkan kategori
+    `prefsKey` (dan `in_app` aktif). Tanpa baris prefs = default aktif
+    (fetchNotificationPrefs mengembalikan default semua-true); tabel prefs
+    belum ada = lewati diam-diam. Mengembalikan true bila terkirim, false
+    bila dilewati gate prefs. Best-effort di call site: pemanggil memakai
+    `void notifyIfAllowed(...).catch(() => undefined)` supaya kegagalan
+    kirim tidak pernah memblokir aksi utama atau menampilkan error.
+    Peta kunci: sertifikat & proyek akhir → 'nilai'; undangan/gabung
+    proyek → 'komunitas'; reminder_final_task → 'nilai'. */
+export async function notifyIfAllowed(
+  userId: string,
+  prefsKey: string,
+  kind: string,
+  title: string,
+  body: string | null,
+  data?: Record<string, unknown> | null,
+): Promise<boolean> {
+  const prefs = await fetchNotificationPrefs(userId)
+  if (!prefs) return false
+  if (prefs.in_app === false) return false
+  const cats = prefs.categories
+  if (cats) {
+    if (Array.isArray(cats)) {
+      if (!cats.includes(prefsKey)) return false
+    } else if ((cats as Record<string, unknown>)[prefsKey] === false) {
+      return false
+    }
+  }
+  await sendNotification(userId, kind, title, body, data)
+  return true
+}
+
 export async function fetchNotifications(userId: string): Promise<AppNotification[] | null> {
   const { data, error } = await supabase
     .from('notifications')
@@ -1108,7 +1141,16 @@ const NOTIFICATION_CATEGORY_MAP: Record<string, NotificationCategory> = {
   project: 'proyek',
   project_chat_mention: 'proyek',
   project_chat_message: 'proyek',
+  project_invite: 'proyek',
+  project_invite_accepted: 'proyek',
+  project_invite_declined: 'proyek',
+  project_join_request: 'proyek',
+  project_join_approved: 'proyek',
+  project_join_rejected: 'proyek',
   film: 'proyek',
+  final_project_review: 'academy',
+  final_project_status: 'academy',
+  reminder_final_task: 'academy',
   sinebot_ticket_update: 'sinebot',
   sinebot_ticket_new: 'sinebot',
   announcement: 'sistem',
