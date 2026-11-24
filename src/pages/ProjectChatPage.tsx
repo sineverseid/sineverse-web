@@ -17,6 +17,11 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import {
+  fetchMyModerationPermission,
+  logAdminViewPrivateRoom,
+  reportContent,
+} from '../lib/moderation'
+import {
   PROJECT_CHAT_EMOJIS,
   PROJECT_CHAT_PAGE_SIZE,
   deleteMessage,
@@ -125,6 +130,14 @@ export default function ProjectChatPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [attachmentOpening, setAttachmentOpening] = useState<string | null>(null)
+  // Fase 6 (070): laporkan pesan (konfirmasi inline + alasan, pola hapus).
+  const [reportTarget, setReportTarget] = useState<ProjectChatMessage | null>(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSending, setReportSending] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
+  // Fase 6 (070): saklar can_pin mentor (null = belum dimuat / tidak ada
+  // baris = boleh, perilaku Fase 3).
+  const [pinAllowed, setPinAllowed] = useState<boolean | null>(null)
 
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -137,11 +150,15 @@ export default function ProjectChatPage() {
   projectRef.current = project
 
   const isAdmin = profile?.role === 'admin'
+  const isAdminRef = useRef(isAdmin)
+  isAdminRef.current = isAdmin
+  // Fase 6 (070): audit akses admin ke ruang privat — sekali per mount.
+  const adminAuditLoggedRef = useRef(false)
   const isOwner = project?.owner_id === user?.id
   const canView = isMember === true || isAdmin
   const canWrite = isMember === true
   const myProjectRole = members.find((m) => m.user_id === user?.id)?.role ?? null
-  const canPin = isOwner || myProjectRole === 'mentor'
+  const canPin = isOwner || (myProjectRole === 'mentor' && pinAllowed !== false)
   const backTo = projectId ? `/proyek/${projectId}` : '/proyek'
 
   function scrollToBottom() {
@@ -193,6 +210,18 @@ export default function ProjectChatPage() {
       setMembers(memberList)
       setIsMember(me)
       if (!me && profile?.role !== 'admin') return
+      // Fase 6 (070): admin membuka chat proyek yang BUKAN anggotanya —
+      // catat satu baris audit_log per pembukaan halaman.
+      if (profile?.role === 'admin' && !me && !adminAuditLoggedRef.current) {
+        adminAuditLoggedRef.current = true
+        void logAdminViewPrivateRoom('project_chat', projectId)
+      }
+      // Fase 6 (070): saklar can_pin mentor (tanpa baris = boleh).
+      if (profile?.role === 'mentor') {
+        fetchMyModerationPermission()
+          .then((perm) => setPinAllowed(perm ? perm.can_pin : true))
+          .catch(() => {})
+      }
       const asc = [...initial].reverse()
       setMessages(asc)
       setPinned(pinnedList)
@@ -246,6 +275,9 @@ export default function ProjectChatPage() {
             : null,
         }
         if (event.eventType === 'INSERT') {
+          // Fase 6 (070): bukan-admin tidak menerima baris tersembunyi
+          // (RLS juga menutupnya) — abaikan bila ada yang lolos.
+          if (enriched.is_hidden === true && !isAdminRef.current) return
           setMessages((prev) => {
             if (prev.some((m) => m.id === enriched.id)) return prev
             return [...prev, enriched]
@@ -258,6 +290,13 @@ export default function ProjectChatPage() {
             requestAnimationFrame(scrollToBottom)
           }
         } else {
+          // UPDATE (pin/unpin/hapus/sembunyikan): bila pesan disembunyikan
+          // dan saya bukan admin, hapus dari daftar.
+          if (incoming.is_hidden === true && !isAdminRef.current) {
+            setMessages((prev) => prev.filter((m) => m.id !== enriched.id))
+            setPinned((prev) => prev.filter((m) => m.id !== enriched.id))
+            return
+          }
           // UPDATE (pin/unpin/hapus): ganti di tempat.
           setMessages((prev) =>
             prev.map((m) =>
@@ -496,6 +535,28 @@ export default function ProjectChatPage() {
     }
   }
 
+  /** Fase 6 (070): laporkan pesan ke antrean moderasi admin. */
+  async function handleReport(m: ProjectChatMessage) {
+    if (!user) return
+    const reason = reportReason.trim()
+    if (reason === '') {
+      setReportError('Tulis alasan laporan dulu.')
+      return
+    }
+    setReportSending(true)
+    setReportError(null)
+    try {
+      await reportContent('project_chat_message', m.id, reason)
+      setReportTarget(null)
+      setReportReason('')
+      setNotice('Laporan terkirim. Admin akan meninjaunya.')
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Gagal mengirim laporan.')
+    } finally {
+      setReportSending(false)
+    }
+  }
+
   async function handleOpenAttachment(m: ProjectChatMessage) {
     if (!m.attachment_path) return
     setAttachmentOpening(m.id)
@@ -584,6 +645,7 @@ export default function ProjectChatPage() {
             {senderName}
             <span className="chat-chip">{senderBadge(m)}</span>
             {m.is_pinned ? <span className="chat-chip">Disematkan</span> : null}
+            {m.is_hidden ? <span className="chat-chip">Disembunyikan</span> : null}
           </p>
           {replyTarget ? (
             <p className="chat-quote">
@@ -668,7 +730,57 @@ export default function ProjectChatPage() {
                   {confirmDeleteId === m.id ? 'Yakin hapus?' : 'Hapus'}
                 </button>
               )}
+              {m.sender_id !== user?.id && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setReportTarget(reportTarget?.id === m.id ? null : m)
+                    setReportReason('')
+                    setReportError(null)
+                  }}
+                >
+                  Laporkan
+                </button>
+              )}
             </div>
+          )}
+          {reportTarget?.id === m.id && !deleted && canWrite && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                void handleReport(m)
+              }}
+              style={{ marginTop: '0.6rem' }}
+            >
+              <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600 }}>
+                Alasan laporan
+                <textarea
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  rows={2}
+                  placeholder="Contoh: pesan ini berisi konten yang tidak pantas…"
+                  style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+                />
+              </label>
+              {reportError && <p className="error-box">{reportError}</p>}
+              <p className="chat-row-actions">
+                <button type="submit" className="btn btn-small" disabled={reportSending}>
+                  {reportSending ? 'Mengirim…' : 'Kirim laporan'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setReportTarget(null)
+                    setReportReason('')
+                    setReportError(null)
+                  }}
+                >
+                  Batal
+                </button>
+              </p>
+            </form>
           )}
           {reactionPickerFor === m.id && !deleted && canWrite && (
             <p className="chat-row-actions">

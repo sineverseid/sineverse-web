@@ -39,6 +39,7 @@ const KIND_LABELS: Record<string, string> = {
   announcement_published: 'Pengumuman',
   project_chat_mention: 'Disebut di Chat Proyek',
   project_chat_message: 'Chat Proyek',
+  moderation_warning: 'Peringatan Moderasi',
   project: 'Proyek',
   film: 'Film',
   waitlist: 'Daftar Tunggu',

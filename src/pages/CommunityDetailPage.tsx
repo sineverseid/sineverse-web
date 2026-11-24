@@ -26,6 +26,11 @@ import {
 } from '../lib/communityAvatar'
 import { fmtDateOnly, isMissingTableError } from '../lib/guarded'
 import {
+  fetchMyModerationPermission,
+  logAdminViewPrivateRoom,
+  reportContent,
+} from '../lib/moderation'
+import {
   STUDENT_COMMUNITY_CATEGORIES,
   STUDENT_COMMUNITY_EMOJIS,
   STUDENT_COMMUNITY_PAGE_SIZE,
@@ -330,11 +335,21 @@ export default function CommunityDetailPage() {
   const [mentionedReplyIds, setMentionedReplyIds] = useState<string[]>([])
   const postTextareaRef = useRef<HTMLTextAreaElement>(null)
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null)
+  // Fase 6 (070): audit akses admin ke ruang privat — sekali per mount.
+  const adminAuditLoggedRef = useRef(false)
   // Reactions + hapus (dua langkah, tanpa window.confirm).
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null)
   const [confirmDeletePostId, setConfirmDeletePostId] = useState<string | null>(null)
   const [confirmDeleteReplyId, setConfirmDeleteReplyId] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  // Fase 6 (070): laporkan postingan/balasan (konfirmasi inline + alasan).
+  const [reportTarget, setReportTarget] = useState<{ kind: 'post' | 'reply'; id: string } | null>(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSending, setReportSending] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
+  // Fase 6 (070): saklar can_pin mentor (tanpa baris = tidak boleh pin
+  // community, perilaku Fase 2).
+  const [pinAllowed, setPinAllowed] = useState<boolean | null>(null)
   // Editor avatar (pembuat/admin): preset atau foto yang diunggah, saling
   // meniadakan. Diisi dari community.cover_url saat komunitas dimuat.
   const [editPreset, setEditPreset] = useState<string | null>(null)
@@ -459,6 +474,12 @@ export default function CommunityDetailPage() {
         // paralel karena tidak saling bergantung.
         const canRead =
           member || comm?.created_by === user?.id || profile?.role === 'admin'
+        // Fase 6 (070): admin membuka komunitas yang BUKAN anggotanya —
+        // catat satu baris audit_log per pembukaan halaman.
+        if (profile?.role === 'admin' && !member && comm?.created_by !== user?.id && !adminAuditLoggedRef.current) {
+          adminAuditLoggedRef.current = true
+          void logAdminViewPrivateRoom('community', communityId)
+        }
         const membersPromise = fetchMembers(communityId)
           .then((list) => {
             if (!cancelled) setMembers(list)
@@ -518,12 +539,26 @@ export default function CommunityDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user?.id])
 
+  // Fase 6 (070): saklar can_pin mentor (tanpa baris = tidak boleh pin
+  // community — perilaku Fase 2).
+  useEffect(() => {
+    if (!user || profile?.role !== 'mentor') return
+    fetchMyModerationPermission()
+      .then((perm) => setPinAllowed(perm ? perm.can_pin : false))
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, profile?.role])
+
   if (loading) return <div className="page"><p className="muted">Memuat komunitas…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (posts === null) return <div className="page"><h1>Komunitas</h1><MigrationNotice migration="004" /></div>
   if (!community) return <div className="page"><p className="empty">Komunitas tidak ditemukan.</p><Link to="/komunitas">Kembali</Link></div>
 
   const canPin = profile?.role === 'admin' || community.created_by === user?.id
+  // Fase 6 (070): mentor anggota dengan saklar can_pin boleh menyematkan
+  // (tanpa baris = tidak boleh, perilaku Fase 2). Editor avatar tetap
+  // admin/pembuat saja (canPin).
+  const canPinPost = canPin || (myRole === 'mentor' && pinAllowed === true)
   // Pembuat community, admin, DAN mentor yang sudah menjadi anggota boleh
   // menghidupkan/mematikan penanda "Mencari pembimbing" (011).
   const canManageSeeking = canPin || myRole === 'mentor'
@@ -790,8 +825,13 @@ export default function CommunityDetailPage() {
       .from('community_posts')
       .update({ is_pinned: !post.is_pinned })
       .eq('id', post.id)
-    if (updErr) setNotice('Gagal mengubah sematan. Coba lagi nanti.')
-    else await reloadFeed(currentCommunity.id)
+    if (updErr) {
+      setNotice(
+        updErr.message.includes('only an admin')
+          ? 'Hanya admin, pembuat komunitas, atau mentor yang diberi wewenang yang bisa menyematkan postingan.'
+          : 'Gagal mengubah sematan. Coba lagi nanti.',
+      )
+    } else await reloadFeed(currentCommunity.id)
   }
 
   async function handleDeletePost(post: StudentCommunityPost) {
@@ -823,6 +863,80 @@ export default function CommunityDetailPage() {
     } finally {
       setBusyAction(null)
     }
+  }
+
+  /** Fase 6 (070): laporkan postingan/balasan ke antrean moderasi admin. */
+  async function handleReport(kind: 'post' | 'reply', targetId: string) {
+    if (!user) return
+    const reason = reportReason.trim()
+    if (reason === '') {
+      setReportError('Tulis alasan laporan dulu.')
+      return
+    }
+    setReportSending(true)
+    setReportError(null)
+    try {
+      await reportContent(kind === 'post' ? 'community_post' : 'community_reply', targetId, reason)
+      setReportTarget(null)
+      setReportReason('')
+      setNotice('Laporan terkirim. Admin akan meninjaunya.')
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Gagal mengirim laporan.')
+    } finally {
+      setReportSending(false)
+    }
+  }
+
+  function toggleReport(kind: 'post' | 'reply', targetId: string) {
+    setReportTarget(
+      reportTarget?.kind === kind && reportTarget.id === targetId
+        ? null
+        : { kind, id: targetId },
+    )
+    setReportReason('')
+    setReportError(null)
+  }
+
+  /** Fase 6 (070): form alasan laporan inline (pola hapus dua langkah). */
+  function renderReportForm(kind: 'post' | 'reply', targetId: string) {
+    if (reportTarget?.kind !== kind || reportTarget.id !== targetId) return null
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void handleReport(kind, targetId)
+        }}
+        style={{ marginTop: '0.6rem' }}
+      >
+        <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600 }}>
+          Alasan laporan
+          <textarea
+            value={reportReason}
+            onChange={(e) => setReportReason(e.target.value)}
+            rows={2}
+            placeholder="Contoh: konten ini tidak pantas…"
+            style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+          />
+        </label>
+        {reportError && <p className="error-box">{reportError}</p>}
+        <p className="chat-row-actions">
+          <button type="submit" className="btn btn-small" disabled={reportSending}>
+            {reportSending ? 'Mengirim…' : 'Kirim laporan'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-small"
+            onClick={() => {
+              setReportTarget(null)
+              setReportReason('')
+              setReportError(null)
+            }}
+          >
+            Batal
+          </button>
+        </p>
+      </form>
+    )
   }
 
   async function handleToggleReaction(
@@ -968,6 +1082,7 @@ export default function CommunityDetailPage() {
             <p className="chat-name">
               {authorName}
               <RoleBadge role={reply.author?.role} />
+              {reply.is_hidden ? <span className="chat-chip">Disembunyikan</span> : null}
             </p>
             <p className="chat-text">{renderBodyWithMentions(reply.body, memberNames)}</p>
             {renderReactions({ replyId: reply.id })}
@@ -1011,8 +1126,18 @@ export default function CommunityDetailPage() {
                       Hapus
                     </button>
                   ))}
+                {reply.user_id !== user?.id && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => toggleReport('reply', reply.id)}
+                  >
+                    Laporkan
+                  </button>
+                )}
               </div>
             )}
+            {renderReportForm('reply', reply.id)}
             <p className="chat-time">{fmtTime(reply.created_at)}</p>
           </article>
         </div>
@@ -1045,6 +1170,7 @@ export default function CommunityDetailPage() {
             {authorName}
             <RoleBadge role={p.author?.role} />
             {p.is_pinned ? <span className="chat-chip">Disematkan</span> : null}
+            {p.is_hidden ? <span className="chat-chip">Disembunyikan</span> : null}
             {p.category ? <span className="chat-chip">{p.category}</span> : null}
           </p>
           {p.title && (
@@ -1075,7 +1201,7 @@ export default function CommunityDetailPage() {
                   Balas
                 </button>
               )}
-              {canPin && (
+              {canPinPost && (
                 <button
                   type="button"
                   className="btn btn-ghost btn-small"
@@ -1112,8 +1238,18 @@ export default function CommunityDetailPage() {
                     Hapus
                   </button>
                 ))}
+              {p.user_id !== user?.id && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => toggleReport('post', p.id)}
+                >
+                  Laporkan
+                </button>
+              )}
             </div>
           )}
+          {renderReportForm('post', p.id)}
           {topReplies.length > 0 && (
             <ul className="discussion-replies">
               {topReplies.map((r) => renderReply(r, 0))}

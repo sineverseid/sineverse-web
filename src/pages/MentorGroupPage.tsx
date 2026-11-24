@@ -17,6 +17,7 @@ import Icon from '../components/icons'
 import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, fmtDateOnly, isMissingTableError } from '../lib/guarded'
+import { reportContent } from '../lib/moderation'
 import {
   MENTOR_GROUP_EMOJIS,
   MENTOR_GROUP_PAGE_SIZE,
@@ -123,6 +124,11 @@ export default function MentorGroupPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [attachmentOpening, setAttachmentOpening] = useState<string | null>(null)
+  // Fase 6 (070): laporkan pesan (konfirmasi inline + alasan, pola hapus).
+  const [reportTarget, setReportTarget] = useState<MentorGroupMessage | null>(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSending, setReportSending] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   const listRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -133,6 +139,8 @@ export default function MentorGroupPage() {
   userRef.current = user
 
   const isAdmin = profile?.role === 'admin'
+  const isAdminRef = useRef(isAdmin)
+  isAdminRef.current = isAdmin
   const backTo = isAdmin ? '/admin' : '/mentor'
 
   function scrollToBottom() {
@@ -215,6 +223,9 @@ export default function MentorGroupPage() {
             : null,
         }
         if (event.eventType === 'INSERT') {
+          // Fase 6 (070): bukan-admin tidak menerima baris tersembunyi
+          // (RLS juga menutupnya) — abaikan bila ada yang lolos.
+          if (enriched.is_hidden === true && !isAdminRef.current) return
           setMessages((prev) => {
             if (prev.some((m) => m.id === enriched.id)) return prev
             return [...prev, enriched]
@@ -227,6 +238,13 @@ export default function MentorGroupPage() {
             requestAnimationFrame(scrollToBottom)
           }
         } else {
+          // UPDATE (pin/unpin/hapus/announcement/sembunyikan): bila pesan
+          // disembunyikan dan saya bukan admin, hapus dari daftar.
+          if (incoming.is_hidden === true && !isAdminRef.current) {
+            setMessages((prev) => prev.filter((m) => m.id !== enriched.id))
+            setPinned((prev) => prev.filter((m) => m.id !== enriched.id))
+            return
+          }
           // UPDATE (pin/unpin/hapus/announcement): ganti di tempat.
           setMessages((prev) =>
             prev.map((m) =>
@@ -470,6 +488,28 @@ export default function MentorGroupPage() {
     }
   }
 
+  /** Fase 6 (070): laporkan pesan ke antrean moderasi admin. */
+  async function handleReport(m: MentorGroupMessage) {
+    if (!user) return
+    const reason = reportReason.trim()
+    if (reason === '') {
+      setReportError('Tulis alasan laporan dulu.')
+      return
+    }
+    setReportSending(true)
+    setReportError(null)
+    try {
+      await reportContent('mentor_group_message', m.id, reason)
+      setReportTarget(null)
+      setReportReason('')
+      setNotice('Laporan terkirim. Admin akan meninjaunya.')
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Gagal mengirim laporan.')
+    } finally {
+      setReportSending(false)
+    }
+  }
+
   async function handleOpenAttachment(m: MentorGroupMessage) {
     if (!m.attachment_path) return
     setAttachmentOpening(m.id)
@@ -547,6 +587,7 @@ export default function MentorGroupPage() {
             {senderName}
             {m.is_announcement ? <span className="chat-chip">Pengumuman</span> : null}
             {m.is_pinned ? <span className="chat-chip">Disematkan</span> : null}
+            {m.is_hidden ? <span className="chat-chip">Disembunyikan</span> : null}
           </p>
           {replyTarget ? (
             <p className="chat-quote">
@@ -631,7 +672,57 @@ export default function MentorGroupPage() {
                   {confirmDeleteId === m.id ? 'Yakin hapus?' : 'Hapus'}
                 </button>
               )}
+              {m.sender_id !== user?.id && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setReportTarget(reportTarget?.id === m.id ? null : m)
+                    setReportReason('')
+                    setReportError(null)
+                  }}
+                >
+                  Laporkan
+                </button>
+              )}
             </div>
+          )}
+          {reportTarget?.id === m.id && !deleted && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                void handleReport(m)
+              }}
+              style={{ marginTop: '0.6rem' }}
+            >
+              <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600 }}>
+                Alasan laporan
+                <textarea
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  rows={2}
+                  placeholder="Contoh: pesan ini berisi konten yang tidak pantas…"
+                  style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+                />
+              </label>
+              {reportError && <p className="error-box">{reportError}</p>}
+              <p className="chat-row-actions">
+                <button type="submit" className="btn btn-small" disabled={reportSending}>
+                  {reportSending ? 'Mengirim…' : 'Kirim laporan'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setReportTarget(null)
+                    setReportReason('')
+                    setReportError(null)
+                  }}
+                >
+                  Batal
+                </button>
+              </p>
+            </form>
           )}
           {reactionPickerFor === m.id && !deleted && (
             <p className="chat-row-actions">

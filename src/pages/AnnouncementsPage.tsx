@@ -7,6 +7,7 @@ import MigrationNotice from '../components/MigrationNotice'
 import { useAuth } from '../context/AuthContext'
 import { fmtDate, isMissingTableError } from '../lib/guarded'
 import { listAnnouncements, signedAnnouncementUrl } from '../lib/announcements'
+import { reportContent } from '../lib/moderation'
 import { supabase } from '../lib/supabase'
 import type { Announcement } from '../lib/types'
 import PageHeader from '../components/PageHeader'
@@ -20,6 +21,12 @@ export default function AnnouncementsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Fase 6 (070): laporkan pengumuman (konfirmasi inline + alasan;
+  // hanya pengguna masuk — tamu tidak bisa melapor).
+  const [reportTargetId, setReportTargetId] = useState<string | null>(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSending, setReportSending] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -75,6 +82,28 @@ export default function AnnouncementsPage() {
     }
   }
 
+  /** Fase 6 (070): laporkan pengumuman ke antrean moderasi admin. */
+  async function handleReport(a: Announcement) {
+    if (!user) return
+    const reason = reportReason.trim()
+    if (reason === '') {
+      setReportError('Tulis alasan laporan dulu.')
+      return
+    }
+    setReportSending(true)
+    setReportError(null)
+    try {
+      await reportContent('announcement', a.id, reason)
+      setReportTargetId(null)
+      setReportReason('')
+      setNotice('Laporan terkirim. Admin akan meninjaunya.')
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Gagal mengirim laporan.')
+    } finally {
+      setReportSending(false)
+    }
+  }
+
   if (loading) return <div className="page"><p className="muted">Memuat pengumuman…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (items === null) return <div className="page"><h1>Pengumuman</h1><MigrationNotice migration="003" /></div>
@@ -101,6 +130,7 @@ export default function AnnouncementsPage() {
               <p className="discussion-meta">
                 {a.scope === 'platform' ? 'Platform' : 'Course'} · {fmtDate(a.publish_at ?? a.created_at)}
                 {a.is_pinned ? ' · 📌 Disematkan' : ''}
+                {a.is_hidden ? ' · Disembunyikan' : ''}
               </p>
               <h3>{a.title}</h3>
               {a.body && <p>{a.body}</p>}
@@ -110,6 +140,58 @@ export default function AnnouncementsPage() {
                     📎 {a.attachment_name}
                   </button>
                 </p>
+              )}
+              {user && (
+                <p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => {
+                      setReportTargetId(reportTargetId === a.id ? null : a.id)
+                      setReportReason('')
+                      setReportError(null)
+                    }}
+                  >
+                    Laporkan
+                  </button>
+                </p>
+              )}
+              {reportTargetId === a.id && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void handleReport(a)
+                  }}
+                  style={{ marginTop: '0.6rem' }}
+                >
+                  <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600 }}>
+                    Alasan laporan
+                    <textarea
+                      value={reportReason}
+                      onChange={(e) => setReportReason(e.target.value)}
+                      rows={2}
+                      placeholder="Contoh: pengumuman ini berisi konten yang tidak pantas…"
+                      style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+                    />
+                  </label>
+                  {reportError && <p className="error-box">{reportError}</p>}
+                  <p>
+                    <button type="submit" className="btn btn-small" disabled={reportSending}>
+                      {reportSending ? 'Mengirim…' : 'Kirim laporan'}
+                    </button>{' '}
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => {
+                        setReportTargetId(null)
+                        setReportReason('')
+                        setReportError(null)
+                      }}
+                    >
+                      Batal
+                    </button>
+                  </p>
+                </form>
               )}
             </li>
           ))}
