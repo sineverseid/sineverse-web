@@ -5,7 +5,7 @@
 //
 // Lupa kata sandi (Fase pendamping, 24 Nov 2026): alur 3 langkah memakai
 // kode pemulihan native Supabase — (1) masukkan email terdaftar,
-// (2) masukkan kode 6 digit dari email, (3) buat kata sandi baru.
+// (2) masukkan kode 8 digit dari email, (3) buat kata sandi baru.
 // Verifikasi memakai email terdaftar (identitas login) — bukan username,
 // supaya alamat email akun lain tidak bisa ditebak/dibocorkan.
 // Kode dikirim bila template email "Reset Password" di Dashboard memuat
@@ -110,7 +110,7 @@ export default function LoginPage() {
     }
     // Pesan generik dengan sengaja: tidak membocorkan apakah email terdaftar.
     setResetNotice(
-      'Jika email itu terdaftar, kode verifikasi 6 digit telah dikirim ke email kamu. Kode berlaku 1 jam — periksa kotak masuk (dan folder spam).',
+      'Jika email itu terdaftar, kode verifikasi 8 digit telah dikirim ke email kamu. Kode berlaku 1 jam — periksa kotak masuk (dan folder spam).',
     )
     setForgotStep(2)
   }
@@ -118,8 +118,8 @@ export default function LoginPage() {
   async function handleForgotCode(e: FormEvent) {
     e.preventDefault()
     setResetError(null)
-    if (code.trim().length < 6) {
-      setResetError('Masukkan kode 6 digit dari email kamu.')
+    if (code.trim().length < 8) {
+      setResetError('Masukkan kode 8 digit dari email kamu.')
       return
     }
     setResetBusy(true)
@@ -279,7 +279,7 @@ export default function LoginPage() {
               <>
                 <p className="muted">
                   Masukkan email yang kamu pakai saat mendaftar (siswa maupun mentor). Kami akan
-                  mengirim kode verifikasi 6 digit ke email itu.
+                  mengirim kode verifikasi 8 digit ke email itu.
                 </p>
                 <label>
                   Email Terdaftar
@@ -300,7 +300,7 @@ export default function LoginPage() {
             ) : forgotStep === 2 ? (
               <>
                 <p className="muted">
-                  Masukkan kode 6 digit yang dikirim ke <strong>{resetEmail}</strong>. Kode
+                  Masukkan kode 8 digit yang dikirim ke <strong>{resetEmail}</strong>. Kode
                   berlaku 1 jam.
                 </p>
                 <label>
@@ -310,9 +310,9 @@ export default function LoginPage() {
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                    onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
                     required
-                    placeholder="123456"
+                    placeholder="12345678"
                   />
                 </label>
                 {resetNotice && <p className="notice-box">{resetNotice}</p>}
