@@ -27,6 +27,18 @@ function isVideoName(name: string): boolean {
   return ['mp4', 'webm', 'mov', 'm4v'].includes(ext)
 }
 
+const LIBRARY_IMAGES_BUCKET = 'library-images'
+
+function randomId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function sanitizeFileName(name: string): string {
+  const base = (name || 'gambar').split(/[\\/]/).pop() || 'gambar'
+  return base.replace(/[^a-zA-Z0-9._-]/g, '_')
+}
+
 function LibraryThumb({ item }: { item: LibraryItem }) {
   const [broken, setBroken] = useState(false)
   if (!item.image_url || broken) {
@@ -188,6 +200,9 @@ export function LibraryDetailPage() {
   const [editLegal, setEditLegal] = useState('')
   const [editAttr, setEditAttr] = useState('')
   const [editLimits, setEditLimits] = useState('')
+  const [posterFile, setPosterFile] = useState<File | null>(null)
+  const [posterPreview, setPosterPreview] = useState<string | null>(null)
+  const [uploadingPoster, setUploadingPoster] = useState(false)
   // P50: gambar detail yang gagal dimuat jatuh ke placeholder inisial.
   const [imageBroken, setImageBroken] = useState(false)
 
@@ -257,19 +272,72 @@ export function LibraryDetailPage() {
     }
   }
 
+  function handlePosterSelect(file: File | undefined) {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setNotice('Poster harus berupa gambar (JPG, PNG, atau sejenisnya).')
+      return
+    }
+    // TANPA batas ukuran (Arif, 24 Nov 2026): poster JPG boleh berapa pun MB.
+    if (posterPreview) URL.revokeObjectURL(posterPreview)
+    setPosterFile(file)
+    setPosterPreview(URL.createObjectURL(file))
+    setNotice(null)
+  }
+
+  function clearPosterSelection() {
+    if (posterPreview) URL.revokeObjectURL(posterPreview)
+    setPosterFile(null)
+    setPosterPreview(null)
+  }
+
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault()
+    // Poster baru diunggah dulu, baru update — bila upload gagal, simpan dibatalkan.
+    let imageUrlToSave: string | null | undefined
+    const oldImageUrl = currentItem.image_url
+    if (posterFile) {
+      setUploadingPoster(true)
+      try {
+        const path = `${randomId()}-${sanitizeFileName(posterFile.name)}`
+        const { error: upErr } = await supabase.storage
+          .from(LIBRARY_IMAGES_BUCKET)
+          .upload(path, posterFile, { upsert: false, contentType: posterFile.type })
+        if (upErr) {
+          setNotice(`Poster gagal diunggah (${upErr.message}).`)
+          return
+        }
+        const { data } = supabase.storage.from(LIBRARY_IMAGES_BUCKET).getPublicUrl(path)
+        imageUrlToSave = data.publicUrl
+      } finally {
+        setUploadingPoster(false)
+      }
+    }
     const { error: updErr } = await supabase.from('library_items').update({
       title: editTitle.trim(),
       body: editBody,
       legal_basis: editLegal.trim() || null,
       attribution: editAttr.trim() || null,
       usage_limits: editLimits.trim() || null,
+      ...(imageUrlToSave !== undefined ? { image_url: imageUrlToSave } : {}),
     }).eq('id', currentItem.id)
     if (updErr) setNotice('Gagal menyimpan perubahan. Coba lagi nanti.')
     else {
+      // Best-effort: hapus poster lama dari bucket bila diganti dan berasal dari sana.
+      if (imageUrlToSave && oldImageUrl && oldImageUrl !== imageUrlToSave && oldImageUrl.includes('/library-images/')) {
+        const path = oldImageUrl.split('/library-images/')[1]?.split('?')[0]
+        if (path) {
+          try {
+            await supabase.storage.from(LIBRARY_IMAGES_BUCKET).remove([path])
+          } catch {
+            // File yatim di bucket bukan kegagalan simpan — abaikan.
+          }
+        }
+      }
       invalidateCatalogCache()
-      setItem({ ...currentItem, title: editTitle.trim(), body: editBody, legal_basis: editLegal.trim() || null, attribution: editAttr.trim() || null, usage_limits: editLimits.trim() || null })
+      setItem({ ...currentItem, title: editTitle.trim(), body: editBody, legal_basis: editLegal.trim() || null, attribution: editAttr.trim() || null, usage_limits: editLimits.trim() || null, image_url: imageUrlToSave !== undefined ? imageUrlToSave : currentItem.image_url })
+      setImageBroken(false)
+      clearPosterSelection()
       setEditing(false)
       setNotice('Item Pustaka diperbarui.')
     }
@@ -360,17 +428,35 @@ export function LibraryDetailPage() {
             <form className="form" onSubmit={handleSaveEdit}>
               <label>Judul<input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required /></label>
               <label>Isi<textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={8} /></label>
+              <label>
+                Ganti poster (JPG)
+                <input type="file" accept="image/*" onChange={(e) => handlePosterSelect(e.target.files?.[0])} />
+              </label>
+              {posterPreview ? (
+                <div>
+                  <img src={posterPreview} alt="Pratinjau poster baru" style={{ width: '100%', borderRadius: 8 }} />
+                  <p>
+                    <button type="button" className="btn btn-ghost btn-small" onClick={clearPosterSelection}>
+                      Hapus poster pilihan
+                    </button>
+                  </p>
+                </div>
+              ) : currentItem.image_url ? (
+                <p className="muted">Poster saat ini tetap dipakai bila tidak memilih file baru. Tanpa batas ukuran.</p>
+              ) : (
+                <p className="muted">Belum ada poster. Pilih file JPG untuk menambahkan poster. Tanpa batas ukuran.</p>
+              )}
               <label>Dasar hukum<input value={editLegal} onChange={(e) => setEditLegal(e.target.value)} placeholder="Wajib untuk naskah" /></label>
               <label>Atribusi<input value={editAttr} onChange={(e) => setEditAttr(e.target.value)} /></label>
               <label>Batas pakai<input value={editLimits} onChange={(e) => setEditLimits(e.target.value)} /></label>
               <div className="form-actions">
-                <button type="submit" className="btn btn-primary btn-small">Simpan</button>
-                <button type="button" className="btn btn-ghost btn-small" onClick={() => setEditing(false)}>Batal</button>
+                <button type="submit" className="btn btn-primary btn-small" disabled={uploadingPoster}>{uploadingPoster ? 'Mengunggah poster…' : 'Simpan'}</button>
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => { clearPosterSelection(); setEditing(false) }}>Batal</button>
               </div>
             </form>
           ) : (
             <div className="form-actions">
-              <button type="button" className="btn btn-secondary btn-small" onClick={() => setEditing(true)}>Edit Item</button>
+              <button type="button" className="btn btn-secondary btn-small" onClick={() => { clearPosterSelection(); setEditing(true) }}>Edit Item</button>
               <button type="button" className="btn btn-ghost btn-small" onClick={handleDelete}>Hapus Item</button>
             </div>
           )}
