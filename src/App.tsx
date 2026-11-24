@@ -15,7 +15,6 @@ const RegisterPage = lazy(() => import('./pages/RegisterPage'))
 const AdminAnalyticsPage = lazy(() => import('./pages/AdminAnalyticsPage'))
 const AdminAssignmentsPage = lazy(() => import('./pages/AdminAssignmentsPage'))
 const AdminCertificatesPage = lazy(() => import('./pages/AdminCertificatesPage'))
-const AdminDiscussionsPage = lazy(() => import('./pages/AdminDiscussionsPage'))
 const AdminEnrollmentsPage = lazy(() => import('./pages/AdminEnrollmentsPage'))
 const AdminEventsPage = lazy(() => import('./pages/AdminEventsPage'))
 const AdminLibraryPage = lazy(() => import('./pages/AdminLibraryPage'))
@@ -333,14 +332,6 @@ export default function App() {
               element={
                 <RoleRoute roles={['admin']}>
                   <RpsEditorPage />
-                </RoleRoute>
-              }
-            />
-            <Route
-              path="admin/diskusi-mentor"
-              element={
-                <RoleRoute roles={['admin', 'mentor']}>
-                  <AdminDiscussionsPage />
                 </RoleRoute>
               }
             />
