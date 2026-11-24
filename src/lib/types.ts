@@ -399,6 +399,10 @@ export interface Community {
   // Opsional karena baris yang diambil sebelum migrasi 011 diterapkan
   // belum punya kolom ini (select * tidak mengembalikannya).
   seeking_mentor?: boolean
+  // 063 (Fase 2): ruang resmi Student Community — paling banyak satu
+  // komunitas yang ditandai. Opsional karena kolom belum ada sebelum
+  // migrasi 063 diterapkan.
+  is_student_community?: boolean
   created_at: string
 }
 
@@ -427,7 +431,17 @@ export interface CommunityPost {
   body: string
   is_pinned: boolean
   created_at: string
-  author?: { name: string | null; photo_url: string | null } | null
+  // 063 (Fase 2): judul opsional, kategori (11 nama di
+  // STUDENT_COMMUNITY_CATEGORIES), lampiran di bucket privat
+  // community-post-files, dan id anggota yang disebut (@mention).
+  // Semua opsional: baris sebelum 063 belum punya kolom-kolom ini.
+  title?: string | null
+  category?: string | null
+  attachment_path?: string | null
+  attachment_name?: string | null
+  attachment_type?: string | null
+  mentioned_user_ids?: string[]
+  author?: { name: string | null; photo_url: string | null; role?: string | null } | null
 }
 
 export interface CommunityPostReply {
@@ -436,7 +450,11 @@ export interface CommunityPostReply {
   user_id: string
   body: string
   created_at: string
-  author?: { name: string | null; photo_url: string | null } | null
+  // 063 (Fase 2): parent_id = balasan atas balasan (null = balasan
+  // langsung ke postingan); mentioned_user_ids untuk @mention.
+  parent_id?: string | null
+  mentioned_user_ids?: string[]
+  author?: { name: string | null; photo_url: string | null; role?: string | null } | null
 }
 
 export interface School {
