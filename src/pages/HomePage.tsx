@@ -1302,6 +1302,9 @@ function MentorHome(props: {
   // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
   const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
   const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
+  // Ringkasan Student Community (Fase 2, migrasi 063).
+  const [communitySummary, setCommunitySummary] = useState<StudentCommunitySummary | null>(null)
+  const [communitySummaryFailed, setCommunitySummaryFailed] = useState(false)
 
   async function load() {
     try {
@@ -1519,6 +1522,23 @@ function MentorHome(props: {
     }
   }, [userId])
 
+  // Ringkasan komunitas dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 063 belum ada / belum ada ruang resmi, kartu menampilkan
+  // pesan jujur.
+  useEffect(() => {
+    let cancelled = false
+    fetchStudentCommunitySummary(userId)
+      .then((s) => {
+        if (!cancelled) setCommunitySummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setCommunitySummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
   async function handleClaim(courseId: string) {
     if (claimingId) return
     setClaimingId(courseId)
@@ -1664,6 +1684,60 @@ function MentorHome(props: {
         <p>
           <Link to="/komunitas-mentor" className="btn btn-primary">
             Buka Ruang Komunikasi Mentor
+          </Link>
+        </p>
+      </section>
+
+      {/* Student Community (Fase 2, migrasi 063) — ruang resmi siswa +
+          mentor + admin; aktivitas terbaru + diskusi baru + unread. */}
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Student Community</h2>
+        </div>
+        {communitySummaryFailed ? (
+          <p className="muted">
+            Ringkasan komunitas belum bisa dimuat — komunitas siswa belum aktif di server.
+          </p>
+        ) : !communitySummary ? (
+          <p className="muted">Memuat ringkasan komunitas…</p>
+        ) : !communitySummary.communityId ? (
+          <p className="muted">Ruang resmi Student Community belum diaktifkan oleh admin.</p>
+        ) : (
+          <>
+            <p>
+              {communitySummary.newCount > 0
+                ? `${communitySummary.newCount} diskusi baru 7 hari terakhir.`
+                : 'Belum ada diskusi baru 7 hari terakhir.'}
+              {communitySummary.unread > 0
+                ? ` ${communitySummary.unread} balasan/mention belum dibaca.`
+                : ''}
+            </p>
+            {communitySummary.latest ? (
+              <p className="muted">
+                Terakhir dari {communitySummary.latest.authorName} ·{' '}
+                {fmtDate(communitySummary.latest.createdAt)}:{' '}
+                {communitySummary.latest.title ??
+                  communitySummary.latest.body.slice(0, 120)}
+                {!communitySummary.latest.title &&
+                communitySummary.latest.body.length > 120
+                  ? '…'
+                  : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada postingan di komunitas.</p>
+            )}
+          </>
+        )}
+        <p>
+          <Link
+            to={
+              communitySummary?.communityId
+                ? `/komunitas/${communitySummary.communityId}`
+                : '/komunitas'
+            }
+            className="btn btn-primary"
+          >
+            Buka Student Community
           </Link>
         </p>
       </section>
@@ -1963,6 +2037,9 @@ function AdminHome(props: {
   // Ringkasan Ruang Komunikasi Mentor (Fase 1, migrasi 060/061).
   const [groupSummary, setGroupSummary] = useState<MentorGroupSummary | null>(null)
   const [groupSummaryFailed, setGroupSummaryFailed] = useState(false)
+  // Ringkasan Student Community (Fase 2, migrasi 063).
+  const [communitySummary, setCommunitySummary] = useState<StudentCommunitySummary | null>(null)
+  const [communitySummaryFailed, setCommunitySummaryFailed] = useState(false)
 
   async function load() {
     try {
@@ -2345,6 +2422,23 @@ function AdminHome(props: {
     }
   }, [userId])
 
+  // Ringkasan komunitas dimuat terpisah dan TIDAK boleh merusak halaman:
+  // bila migrasi 063 belum ada / belum ada ruang resmi, kartu menampilkan
+  // pesan jujur.
+  useEffect(() => {
+    let cancelled = false
+    fetchStudentCommunitySummary(userId)
+      .then((s) => {
+        if (!cancelled) setCommunitySummary(s)
+      })
+      .catch(() => {
+        if (!cancelled) setCommunitySummaryFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
   async function decideApp(
     app: MentorApplication,
     decision: 'approved' | 'rejected' | 'revision_required',
@@ -2603,6 +2697,60 @@ function AdminHome(props: {
         <p>
           <Link to="/komunitas-mentor" className="btn btn-primary">
             Buka Ruang Komunikasi Mentor
+          </Link>
+        </p>
+      </section>
+
+      {/* Student Community (Fase 2, migrasi 063) — ruang resmi siswa +
+          mentor + admin; aktivitas terbaru + diskusi baru + unread. */}
+      <section className="section">
+        <div className="dash-section-head">
+          <h2>Student Community</h2>
+        </div>
+        {communitySummaryFailed ? (
+          <p className="muted">
+            Ringkasan komunitas belum bisa dimuat — komunitas siswa belum aktif di server.
+          </p>
+        ) : !communitySummary ? (
+          <p className="muted">Memuat ringkasan komunitas…</p>
+        ) : !communitySummary.communityId ? (
+          <p className="muted">Ruang resmi Student Community belum diaktifkan oleh admin.</p>
+        ) : (
+          <>
+            <p>
+              {communitySummary.newCount > 0
+                ? `${communitySummary.newCount} diskusi baru 7 hari terakhir.`
+                : 'Belum ada diskusi baru 7 hari terakhir.'}
+              {communitySummary.unread > 0
+                ? ` ${communitySummary.unread} balasan/mention belum dibaca.`
+                : ''}
+            </p>
+            {communitySummary.latest ? (
+              <p className="muted">
+                Terakhir dari {communitySummary.latest.authorName} ·{' '}
+                {fmtDate(communitySummary.latest.createdAt)}:{' '}
+                {communitySummary.latest.title ??
+                  communitySummary.latest.body.slice(0, 120)}
+                {!communitySummary.latest.title &&
+                communitySummary.latest.body.length > 120
+                  ? '…'
+                  : ''}
+              </p>
+            ) : (
+              <p className="muted">Belum ada postingan di komunitas.</p>
+            )}
+          </>
+        )}
+        <p>
+          <Link
+            to={
+              communitySummary?.communityId
+                ? `/komunitas/${communitySummary.communityId}`
+                : '/komunitas'
+            }
+            className="btn btn-primary"
+          >
+            Buka Student Community
           </Link>
         </p>
       </section>
