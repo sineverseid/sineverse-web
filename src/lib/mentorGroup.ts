@@ -540,12 +540,16 @@ export async function unpinMessage(messageId: string): Promise<void> {
   if (error) throw friendlyError(error, 'Gagal melepas sematan.')
 }
 
-/** Hapus pesan (admin saja — soft delete via deleted_at). */
+/**
+ * Hapus pesan (pengirim sendiri atau admin — soft delete via deleted_at).
+ * Lewat RPC delete_own_mentor_message, BUKAN UPDATE langsung: UPDATE
+ * deleted_at selalu ditolak 42501 untuk non-admin karena kebijakan SELECT
+ * mensyaratkan deleted_at IS NULL (lihat migrasi 066).
+ */
 export async function deleteMessage(messageId: string): Promise<void> {
-  const { error } = await supabase
-    .from('mentor_group_messages')
-    .update({ deleted_at: new Date().toISOString() })
-    .eq('id', messageId)
+  const { error } = await supabase.rpc('delete_own_mentor_message', {
+    p_message_id: messageId,
+  })
   if (error) throw friendlyError(error, 'Gagal menghapus pesan.')
 }
 
