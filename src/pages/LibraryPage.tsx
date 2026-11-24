@@ -21,6 +21,12 @@ function itemInitial(title: string): string {
   return first ? first.toUpperCase() : 'S'
 }
 
+function isVideoName(name: string): boolean {
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+  return ['mp4', 'webm', 'mov', 'm4v'].includes(ext)
+}
+
 function LibraryThumb({ item }: { item: LibraryItem }) {
   const [broken, setBroken] = useState(false)
   if (!item.image_url || broken) {
@@ -135,6 +141,12 @@ export function LibraryPage() {
                   <div className="course-card-body">
                   <h3>{it.title}</h3>
                   <p>{it.category ?? 'Pustaka'}</p>
+                  {it.attachment_url && (
+                    <p className="muted">
+                      {isVideoName(it.attachment_name ?? '') ? 'Video' : 'Lampiran'}
+                      {it.attachment_name ? `: ${it.attachment_name}` : ''}
+                    </p>
+                  )}
                   {rejected && <p className="muted">Naskah ini belum bisa ditampilkan: dasar hukum belum tercatat.</p>}
                   </div>
                 </Link>
@@ -268,6 +280,22 @@ export function LibraryDetailPage() {
     const { error: delErr } = await supabase.from('library_items').delete().eq('id', currentItem.id)
     if (delErr) setNotice('Gagal menghapus item. Coba lagi nanti.')
     else {
+      // Best-effort: hapus juga file gambar/lampirannya dari bucket bila berasal dari sana.
+      for (const [url, bucket] of [
+        [currentItem.image_url, 'library-images'],
+        [currentItem.attachment_url, 'library-files'],
+      ] as const) {
+        if (url && url.includes(`/${bucket}/`)) {
+          const path = url.split(`/${bucket}/`)[1]?.split('?')[0]
+          if (path) {
+            try {
+              await supabase.storage.from(bucket).remove([path])
+            } catch {
+              // File yatim di bucket bukan kegagalan hapus item — abaikan.
+            }
+          }
+        }
+      }
       invalidateCatalogCache()
       setNotice('Item dihapus. Kembali ke daftar Pustaka…')
       window.location.hash = '#/pustaka'
@@ -288,6 +316,16 @@ export function LibraryDetailPage() {
         <div className="media-placeholder" style={{ marginBottom: '1rem' }} aria-label="Gambar tidak dapat dimuat">
           <span>{itemInitial(currentItem.title)}</span>
         </div>
+      ) : null}
+      {currentItem.attachment_url && isVideoName(currentItem.attachment_name ?? '') ? (
+        <video src={currentItem.attachment_url} controls style={{ width: '100%', borderRadius: 12, marginBottom: '1rem' }} />
+      ) : currentItem.attachment_url ? (
+        <p>
+          Lampiran:{' '}
+          <a href={currentItem.attachment_url} target="_blank" rel="noreferrer">
+            {currentItem.attachment_name ?? 'Unduh lampiran'}
+          </a>
+        </p>
       ) : null}
       {rejected ? (
         <p className="error-box">

@@ -14,6 +14,30 @@ import WorkspaceNav from '../components/WorkspaceNav'
 import { ADMIN_NAV } from '../lib/workspaceNav'
 import EmptyState from '../components/EmptyState'
 
+const LIBRARY_IMAGES_BUCKET = 'library-images'
+const LIBRARY_FILES_BUCKET = 'library-files'
+/** Batas ukuran gambar ilustrasi Pustaka (sama seperti gambar materi lesson). */
+const LIBRARY_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+/** Batas ukuran lampiran (sama seperti materi lesson: video 100 MB, file 20 MB). */
+const LIBRARY_VIDEO_MAX_BYTES = 100 * 1024 * 1024
+const LIBRARY_FILE_MAX_BYTES = 20 * 1024 * 1024
+const LIBRARY_FILE_EXTENSIONS = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'zip', 'txt']
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
+
+function isVideoName(name: string): boolean {
+  return ['mp4', 'webm', 'mov', 'm4v'].includes(fileExtension(name))
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${bytes} B`
+}
+
 export default function AdminLibraryPage() {
   const { user, profile } = useAuth()
   const [items, setItems] = useState<LibraryItem[] | null>(null)
@@ -29,6 +53,11 @@ export default function AdminLibraryPage() {
   const [attribution, setAttribution] = useState('')
   const [usageLimits, setUsageLimits] = useState('')
   const [imageUrl, setImageUrl] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
+  const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   async function load() {
     try {
@@ -51,6 +80,74 @@ export default function AdminLibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
+  function randomId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  }
+
+  function sanitizeFileName(name: string): string {
+    const base = (name || 'gambar').split(/[\\/]/).pop() || 'gambar'
+    return base.replace(/[^a-zA-Z0-9._-]/g, '_')
+  }
+
+  function handleImageSelect(file: File | undefined) {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setNotice('File harus berupa gambar.')
+      return
+    }
+    if (file.size > LIBRARY_IMAGE_MAX_BYTES) {
+      setNotice('Ukuran gambar maksimal 10 MB.')
+      return
+    }
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
+    setImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
+    setNotice(null)
+  }
+
+  function clearImageSelection() {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
+    setImageFile(null)
+    setImagePreview(null)
+  }
+
+  function handleAttachmentSelect(file: File | undefined) {
+    if (!file) return
+    const video = file.type.startsWith('video/') || isVideoName(file.name)
+    const max = video ? LIBRARY_VIDEO_MAX_BYTES : LIBRARY_FILE_MAX_BYTES
+    if (!video && !LIBRARY_FILE_EXTENSIONS.includes(fileExtension(file.name))) {
+      setNotice('Jenis file tidak didukung. Pilih video atau dokumen (PDF, Word, PowerPoint, Excel, ZIP, TXT).')
+      return
+    }
+    if (file.size > max) {
+      setNotice(`Ukuran ${video ? 'video' : 'file'} maksimal ${formatFileSize(max)}.`)
+      return
+    }
+    if (attachmentPreview) URL.revokeObjectURL(attachmentPreview)
+    setAttachmentFile(file)
+    setAttachmentPreview(video ? URL.createObjectURL(file) : null)
+    setNotice(null)
+  }
+
+  function clearAttachmentSelection() {
+    if (attachmentPreview) URL.revokeObjectURL(attachmentPreview)
+    setAttachmentFile(null)
+    setAttachmentPreview(null)
+  }
+
+  /** Hapus satu objek dari bucket pustaka (best-effort). */
+  async function removeLibraryObject(url: string | null, bucket: string) {
+    if (!url || !url.includes(`/${bucket}/`)) return
+    const path = url.split(`/${bucket}/`)[1]?.split('?')[0]
+    if (!path) return
+    try {
+      await supabase.storage.from(bucket).remove([path])
+    } catch {
+      // File yatim di bucket bukan kegagalan hapus item — abaikan.
+    }
+  }
+
   async function handleAdd(e: FormEvent) {
     e.preventDefault()
     if (!title.trim()) return
@@ -61,6 +158,43 @@ export default function AdminLibraryPage() {
       setNotice('Dasar hukum wajib diisi untuk kategori Naskah.')
       return
     }
+    // Upload dulu, baru insert — bila file dipilih, URL publiknya yang
+    // disimpan ke image_url; bila tidak, pakai tautan yang ditempel.
+    let imageUrlToSave: string | null = imageUrl.trim() || null
+    let attachmentUrlToSave: string | null = null
+    let attachmentNameToSave: string | null = null
+    if (imageFile || attachmentFile) {
+      setUploading(true)
+      try {
+        if (imageFile) {
+          const path = `${randomId()}-${sanitizeFileName(imageFile.name)}`
+          const { error: upErr } = await supabase.storage
+            .from(LIBRARY_IMAGES_BUCKET)
+            .upload(path, imageFile, { upsert: false, contentType: imageFile.type })
+          if (upErr) {
+            setNotice(`Gambar gagal diunggah (${upErr.message}).`)
+            return
+          }
+          const { data } = supabase.storage.from(LIBRARY_IMAGES_BUCKET).getPublicUrl(path)
+          imageUrlToSave = data.publicUrl
+        }
+        if (attachmentFile) {
+          const path = `${randomId()}-${sanitizeFileName(attachmentFile.name)}`
+          const { error: upErr } = await supabase.storage
+            .from(LIBRARY_FILES_BUCKET)
+            .upload(path, attachmentFile, { upsert: false, contentType: attachmentFile.type })
+          if (upErr) {
+            setNotice(`Lampiran gagal diunggah (${upErr.message}).`)
+            return
+          }
+          const { data } = supabase.storage.from(LIBRARY_FILES_BUCKET).getPublicUrl(path)
+          attachmentUrlToSave = data.publicUrl
+          attachmentNameToSave = attachmentFile.name
+        }
+      } finally {
+        setUploading(false)
+      }
+    }
     const { error: insErr } = await supabase.from('library_items').insert({
       title: title.trim(),
       category: category.trim() || null,
@@ -69,7 +203,9 @@ export default function AdminLibraryPage() {
       legal_basis: legalBasis.trim() || null,
       attribution: attribution.trim() || null,
       usage_limits: usageLimits.trim() || null,
-      image_url: imageUrl.trim() || null,
+      image_url: imageUrlToSave,
+      attachment_url: attachmentUrlToSave,
+      attachment_name: attachmentNameToSave,
     })
     if (insErr) {
       setNotice(insErr.message)
@@ -85,16 +221,21 @@ export default function AdminLibraryPage() {
     setAttribution('')
     setUsageLimits('')
     setImageUrl('')
+    clearImageSelection()
+    clearAttachmentSelection()
     await load()
   }
 
-  async function handleDelete(id: string, itemTitle: string) {
+  async function handleDelete(id: string, itemTitle: string, itemImageUrl: string | null, itemAttachmentUrl: string | null) {
     if (!window.confirm(`Hapus "${itemTitle}" dari Pustaka? Tindakan ini tidak bisa dibatalkan.`)) return
     const { error: delErr } = await supabase.from('library_items').delete().eq('id', id)
     if (delErr) {
       setNotice(delErr.message)
       return
     }
+    // Best-effort: hapus juga file gambar/lampirannya dari bucket bila berasal dari sana.
+    await removeLibraryObject(itemImageUrl, LIBRARY_IMAGES_BUCKET)
+    await removeLibraryObject(itemAttachmentUrl, LIBRARY_FILES_BUCKET)
     invalidateCatalogCache()
     setNotice(`"${itemTitle}" dihapus dari Pustaka.`)
     await load()
@@ -157,10 +298,61 @@ export default function AdminLibraryPage() {
                 <input value={usageLimits} onChange={(e) => setUsageLimits(e.target.value)} placeholder="Mis. Hanya untuk pembelajaran, bukan komersial" />
               </label>
               <label>
-                Tautan gambar (opsional)
+                Gambar ilustrasi (upload file)
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleImageSelect(e.target.files?.[0])}
+                />
+              </label>
+              {imagePreview && (
+                <div>
+                  <img
+                    src={imagePreview}
+                    alt="Pratinjau gambar ilustrasi"
+                    style={{ width: '100%', display: 'block', aspectRatio: '16/9', objectFit: 'cover', borderRadius: 8 }}
+                  />
+                  <p>
+                    <button type="button" className="btn btn-ghost btn-small" onClick={clearImageSelection}>
+                      Hapus gambar pilihan
+                    </button>
+                  </p>
+                </div>
+              )}
+              <label>
+                Tautan gambar (opsional — dipakai bila tidak upload file)
                 <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://… (gambar ilustrasi item)" />
               </label>
-              <button type="submit" className="btn btn-primary">Tambah ke Pustaka</button>
+              <label>
+                Lampiran (video atau file)
+                <input
+                  type="file"
+                  accept="video/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.txt"
+                  onChange={(e) => handleAttachmentSelect(e.target.files?.[0])}
+                />
+              </label>
+              {attachmentPreview && (
+                <div>
+                  <video src={attachmentPreview} controls style={{ width: '100%', display: 'block', borderRadius: 8 }} />
+                  <p>
+                    <button type="button" className="btn btn-ghost btn-small" onClick={clearAttachmentSelection}>
+                      Hapus lampiran pilihan
+                    </button>
+                  </p>
+                </div>
+              )}
+              {attachmentFile && !attachmentPreview && (
+                <p className="muted">
+                  Lampiran dipilih: {attachmentFile.name} ({formatFileSize(attachmentFile.size)})
+                  {' '}
+                  <button type="button" className="btn btn-ghost btn-small" onClick={clearAttachmentSelection}>
+                    Hapus lampiran pilihan
+                  </button>
+                </p>
+              )}
+              <button type="submit" className="btn btn-primary" disabled={uploading}>
+                {uploading ? 'Mengunggah…' : 'Tambah ke Pustaka'}
+              </button>
             </form>
           </section>
 
@@ -193,11 +385,19 @@ export default function AdminLibraryPage() {
                         <Link to={`/pustaka/${it.id}`}>{it.title}</Link>
                       </h3>
                       {it.attribution && <p className="muted">Atribusi: {it.attribution}</p>}
+                      {it.attachment_url && (
+                        <p className="muted">
+                          {isVideoName(it.attachment_name ?? '') ? 'Video' : 'Lampiran'}:{' '}
+                          <a href={it.attachment_url} target="_blank" rel="noreferrer">
+                            {it.attachment_name ?? 'Unduh lampiran'}
+                          </a>
+                        </p>
+                      )}
                       <p>
                         <button
                           type="button"
                           className="btn btn-ghost btn-small"
-                          onClick={() => void handleDelete(it.id, it.title)}
+                          onClick={() => void handleDelete(it.id, it.title, it.image_url, it.attachment_url)}
                         >
                           Hapus
                         </button>
