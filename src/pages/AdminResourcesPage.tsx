@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, supabase } from '../lib/supabase'
+import { deleteLessonFile } from '../lib/lessonResources'
 import type { Lesson, LessonResource, Module } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 
@@ -112,6 +113,8 @@ export default function AdminResourcesPage() {
       setNotice(`Gagal menghapus materi: ${delErr.message}`)
       return
     }
+    // Hapus juga file di bucket (bila ada) — tanpa ini file jadi yatim.
+    if (row.resource.file_path) await deleteLessonFile(row.resource.file_path)
     setNotice(`Materi "${row.resource.title}" dihapus.`)
     await load()
   }

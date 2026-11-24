@@ -7,6 +7,7 @@ import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchCourses, supabase } from '../lib/supabase'
+import { deleteLessonFile } from '../lib/lessonResources'
 import type { Course, Lesson, LessonResource } from '../lib/types'
 import PageHeader from '../components/PageHeader'
 import WorkspaceNav from '../components/WorkspaceNav'
@@ -183,6 +184,8 @@ export default function MentorMaterialsPage() {
       setNotice(`Gagal menghapus materi: ${delErr.message}`)
       return
     }
+    // Hapus juga file di bucket (bila ada) — tanpa ini file jadi yatim.
+    if (r.file_path) await deleteLessonFile(r.file_path)
     setNotice(`Materi "${r.title}" dihapus.`)
     // P41: perbarui local state, bukan reload penuh (tanpa flash "Memuat…").
     // Grup lesson yang kehabisan materi ikut hilang dari daftar.
