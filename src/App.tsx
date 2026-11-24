@@ -2,6 +2,7 @@
 // so BrowserRouter would 404 on refresh).
 import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
+import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import ProtectedRoute, { RoleRoute } from './components/ProtectedRoute'
 import { AuthProvider } from './context/AuthContext'
@@ -109,6 +110,7 @@ export default function App() {
   return (
     <AuthProvider>
       <HashRouter>
+        <ErrorBoundary>
         <Suspense fallback={<div className="page"><p className="muted">Memuat halaman…</p></div>}>
         <Routes>
           <Route element={<Layout />}>
@@ -443,6 +445,7 @@ export default function App() {
           </Route>
         </Routes>
         </Suspense>
+        </ErrorBoundary>
       </HashRouter>
     </AuthProvider>
   )
