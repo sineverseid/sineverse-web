@@ -697,6 +697,8 @@ export interface LibraryItem {
   attribution: string | null
   usage_limits: string | null
   image_url: string | null
+  attachment_url: string | null
+  attachment_name: string | null
   created_at: string
 }
 
