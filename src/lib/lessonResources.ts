@@ -133,9 +133,14 @@ export async function uploadLessonFile(
     contentType: file.type,
   })
   if (error) {
+    // Tampilkan detail teknis dari Supabase — pesan generik saja pernah
+    // menyembunyikan penolakan RLS selama 3x percobaan gagal (migrasi 064).
+    const detail = (error as { message?: string }).message?.trim()
     throw new LessonResourceError(
       'generic',
-      'File gagal diunggah. Periksa koneksi internet lalu coba lagi.',
+      detail
+        ? `File gagal diunggah (${detail}).`
+        : 'File gagal diunggah. Periksa koneksi internet lalu coba lagi.',
     )
   }
   const { data } = supabase.storage.from(LESSON_RESOURCES_BUCKET).getPublicUrl(path)
