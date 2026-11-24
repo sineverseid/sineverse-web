@@ -44,6 +44,8 @@ export type IconName =
   | 'fileText'
   | 'play'
   | 'download'
+  | 'send'
+  | 'kebab'
 
 const PATHS: Record<IconName, ReactNode> = {
   home: (
@@ -294,6 +296,20 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </>
+  ),
+  // Pesawat kertas (tombol kirim chat) + tiga titik vertikal (menu grup).
+  send: (
+    <>
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </>
+  ),
+  kebab: (
+    <>
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="19" r="1" />
     </>
   ),
 }
