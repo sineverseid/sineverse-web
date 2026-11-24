@@ -913,6 +913,17 @@ export interface Announcement {
   body: string | null
   created_by: string | null
   created_at: string
+  /** Fase 4 (067): target penerima; null = baris lama (semua pengguna). */
+  target?: string | null
+  /** Fase 4 (067): lampiran di bucket privat announcement-files. */
+  attachment_path?: string | null
+  attachment_name?: string | null
+  /** Fase 4 (067): tersemat di atas. */
+  is_pinned?: boolean
+  /** Fase 4 (067): jadwal terbit (ISO); null = terbit langsung. */
+  publish_at?: string | null
+  /** Fase 4 (067): 'draft' | 'scheduled' | 'published'. */
+  status?: string
 }
 
 export interface CourseAnnouncement {
