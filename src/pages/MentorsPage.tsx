@@ -47,10 +47,12 @@ export default function MentorsPage() {
             .select('id,name,role,photo_url,city,bio,skills,interests,school,school_id,created_at')
             .eq('role', 'mentor')
             .order('name'),
+          // 082 (D-14, 25 Nov 2026): direktori hanya butuh user_id mentor
+          // approved — dibaca lewat view approved_mentor_ids agar reason /
+          // experience / decision_note lamaran tidak bisa dibaca lewat REST.
           supabase
-            .from('mentor_applications')
+            .from('approved_mentor_ids')
             .select('user_id')
-            .eq('status', 'approved')
             .then(
               (r) => ({ ok: !r.error, data: r.data }) as const,
               () => ({ ok: false, data: null }) as const,
