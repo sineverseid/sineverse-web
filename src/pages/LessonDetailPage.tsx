@@ -1,7 +1,11 @@
-// SINEVERSE, Halaman lesson: strip Tonton → Baca → Cek → Kerjakan,
-// embed video (YouTube/Vimeo) atau kartu tautan eksternal, navigasi
-// prev/next, "Tandai Selesai", dan diskusi lesson (baca + kirim, balasan
-// bersarang via parent_id).
+// SINEVERSE, Halaman lesson — ALUR MENTARI 11 LANGKAH (pilot, RENCANA.md):
+// Pretest → Materi (Buku ISBN → Video Ajar → Power Point → Artikel Riset →
+// Materi Lainnya) → Penugasan Terstruktur → LINK VCON → Forum Diskusi →
+// Posttest → Kuesioner. Tiap langkah terkunci sampai langkah sebelumnya
+// selesai (hanya untuk siswa peserta; admin/mentor tidak dikunci).
+// Embed video (YouTube/Vimeo) atau kartu tautan eksternal, navigasi
+// prev/next, "Tandai Selesai", dan diskusi lesson gaya Mentari (pengantar +
+// tabel Topik + tampilan thread + lampiran gambar/file).
 //
 // Akses: lesson hanya untuk peserta course, mentor pengampu, atau admin.
 // Companion fetch (tugas, kuis, diskusi, progres) dimuat independen:
@@ -15,6 +19,7 @@ import {
   fetchAssignmentsForLessons,
   fetchCourse,
   fetchCourseLessons,
+  fetchDiscussionAttachments,
   fetchDiscussions,
   fetchEnrollment,
   fetchLesson,
@@ -22,7 +27,11 @@ import {
   fetchLessonProgressFor,
   fetchLessonResources,
   fetchLessons,
+  fetchLiveClasses,
   fetchModules,
+  fetchQuestionnaireQuestions,
+  fetchQuestionnaireResponses,
+  fetchQuestionnairesForLessons,
   fetchQuizAttempts,
   fetchQuizzesForLessons,
   fetchSubmissions,
@@ -30,15 +39,27 @@ import {
   markLessonStarted,
   postDiscussion,
   sendNotification,
+  submitQuestionnaireResponse,
   supabase,
 } from '../lib/supabase'
+import {
+  DiscussionAttachmentError,
+  formatAttachmentSize,
+  isImageAttachment,
+  uploadDiscussionAttachment,
+} from '../lib/discussionAttachments'
 import { isMissingTableError } from '../lib/guarded'
 import type {
   Assignment,
   Discussion,
+  DiscussionAttachment,
   Lesson,
   LessonProgressStatus,
   LessonResource,
+  LiveClass,
+  Questionnaire,
+  QuestionnaireQuestion,
+  QuestionnaireResponse,
   Quiz,
   QuizAttempt,
 } from '../lib/types'
@@ -76,9 +97,23 @@ export default function LessonDetailPage() {
   const [assignError, setAssignError] = useState<string | null>(null)
   const [quizError, setQuizError] = useState<string | null>(null)
   const [discussionError, setDiscussionError] = useState<string | null>(null)
-  const [passedQuiz, setPassedQuiz] = useState(false)
   const [submittedAssignment, setSubmittedAssignment] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Mentari 11 langkah: kuesioner (084), kelas live (015), lampiran diskusi (086).
+  const [mentorId, setMentorId] = useState<string | null>(null)
+  const [questionnaires, setQuestionnaires] = useState<Questionnaire[]>([])
+  const [questionnaireQuestions, setQuestionnaireQuestions] = useState<QuestionnaireQuestion[]>([])
+  const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([])
+  const [questionnaireError, setQuestionnaireError] = useState<string | null>(null)
+  const [questionnaireAnswers, setQuestionnaireAnswers] = useState<Record<string, boolean>>({})
+  const [questionnaireSubmitting, setQuestionnaireSubmitting] = useState(false)
+  const [liveClasses, setLiveClasses] = useState<LiveClass[]>([])
+  const [liveClassesError, setLiveClassesError] = useState<string | null>(null)
+  const [vconAcknowledged, setVconAcknowledged] = useState(false)
+  const [attachments, setAttachments] = useState<DiscussionAttachment[]>([])
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  const [newPostFile, setNewPostFile] = useState<File | null>(null)
+  const [replyFile, setReplyFile] = useState<File | null>(null)
 
   const [newPost, setNewPost] = useState('')
   const [discussionQuery, setDiscussionQuery] = useState('')
@@ -140,7 +175,6 @@ export default function LessonDetailPage() {
       setResources([])
       setResourcesError(null)
       setSequentialLocked(false)
-      setPassedQuiz(false)
       setSubmittedAssignment(false)
       // Reset status + konten lesson sebelumnya: tanpa ini, pindah lesson
       // di komponen yang sama menampilkan status/konten lesson lama
@@ -154,6 +188,19 @@ export default function LessonDetailPage() {
       setSiblings([])
       setNotice(null)
       setLockedReason(null)
+      setMentorId(null)
+      setQuestionnaires([])
+      setQuestionnaireQuestions([])
+      setQuestionnaireResponses([])
+      setQuestionnaireError(null)
+      setQuestionnaireAnswers({})
+      setLiveClasses([])
+      setLiveClassesError(null)
+      setVconAcknowledged(false)
+      setAttachments([])
+      setSelectedThreadId(null)
+      setNewPostFile(null)
+      setReplyFile(null)
 
       // 1. Lesson dulu. Hanya kegagalan di sini yang boleh menampilkan
       // error seluruh halaman.
@@ -202,6 +249,7 @@ export default function LessonDetailPage() {
         } else {
           try {
             const course = await fetchCourse(courseInfo.courseId)
+            if (course?.mentor_id && !cancelled) setMentorId(course.mentor_id)
             if (course && course.mentor_id === user.id) {
               allowed = true
             } else if (course && !course.mentor_id) {
@@ -236,13 +284,16 @@ export default function LessonDetailPage() {
       // error halaman. Kuis/tugas dibutuhkan tahap berikutnya, jadi
       // hasilnya disimpan ke variabel lokal juga.
       let assigns: Assignment[] = []
-      let qs: Quiz[] = []
+      // Thread diskusi + kuesioner lesson disimpan ke variabel lokal juga:
+      // lampiran + pertanyaan kuesioner dimuat tahap berikutnya.
+      let threadsLocal: Discussion[] = []
+      let qnrsLocal: Questionnaire[] = []
       // Kunci berurutan (migrasi 013): hanya untuk peserta biasa, bukan
       // admin / mentor pengampu. Gagal membaca mode akses = fail-open:
       // lesson tetap tampil, tidak terkunci.
       let seqLocked = false
       {
-        const [, assignsRes, qsRes] = await Promise.all([
+        const [, assignsRes, , threadsRes, , , qnrsRes] = await Promise.all([
           (async () => {
             try {
               const sibs = await fetchCourseLessons(courseInfo.courseId)
@@ -275,8 +326,10 @@ export default function LessonDetailPage() {
             try {
               const threads = await fetchDiscussions(l.id)
               if (!cancelled) setDiscussions(threads)
+              return threads
             } catch {
               if (!cancelled) setDiscussionError('Diskusi gagal dimuat. Coba muat ulang halaman.')
+              return [] as Discussion[]
             }
           })(),
           (async () => {
@@ -313,9 +366,38 @@ export default function LessonDetailPage() {
               // Fail-open: kunci tidak diterapkan bila datanya gagal dibaca.
             }
           })(),
+          (async () => {
+            // Kuesioner lesson ini (migrasi 084): satu per lesson.
+            try {
+              const qnrs = await fetchQuestionnairesForLessons([l.id])
+              if (!cancelled) setQuestionnaires(qnrs)
+              return qnrs
+            } catch (err) {
+              if (!cancelled) {
+                setQuestionnaireError(
+                  isMissingTableError(err)
+                    ? 'Kuesioner belum tersedia (migrasi 084 belum dijalankan).'
+                    : 'Kuesioner gagal dimuat. Coba muat ulang halaman.',
+                )
+              }
+              return [] as Questionnaire[]
+            }
+          })(),
+          (async () => {
+            // Kelas live course ini (migrasi 015): dipakai langkah LINK VCON.
+            try {
+              const lcs = await fetchLiveClasses(courseInfo.courseId)
+              if (!cancelled) setLiveClasses(lcs)
+              return lcs
+            } catch {
+              if (!cancelled) setLiveClassesError('Kelas live gagal dimuat.')
+              return [] as LiveClass[]
+            }
+          })(),
         ])
         assigns = assignsRes
-        qs = qsRes
+        threadsLocal = threadsRes
+        qnrsLocal = qnrsRes
       }
 
       if (seqLocked) {
@@ -352,16 +434,9 @@ export default function LessonDetailPage() {
           (async () => {
             try {
               const attempts = await fetchQuizAttempts(user.id)
-              if (!cancelled) {
-                setQuizAttempts(attempts)
-                setPassedQuiz(
-                  attempts.some((a) =>
-                    qs.some((q) => q.id === a.quiz_id && a.score != null && a.score >= q.passing_score),
-                  ),
-                )
-              }
+              if (!cancelled) setQuizAttempts(attempts)
             } catch {
-              if (!cancelled) setPassedQuiz(false)
+              // Percobaan gagal dimuat: derivasi langkah kuis fail-open.
             }
           })(),
           (async () => {
@@ -373,6 +448,37 @@ export default function LessonDetailPage() {
               }
             } catch {
               if (!cancelled) setSubmittedAssignment(false)
+            }
+          })(),
+          (async () => {
+            // Kuesioner: pertanyaan + respons milik user (bila ada kuesioner).
+            if (qnrsLocal.length === 0) return
+            try {
+              const [qq, rr] = await Promise.all([
+                fetchQuestionnaireQuestions(qnrsLocal[0].id),
+                fetchQuestionnaireResponses(user.id),
+              ])
+              if (cancelled) return
+              setQuestionnaireQuestions(qq)
+              setQuestionnaireResponses(rr.filter((r) => r.questionnaire_id === qnrsLocal[0].id))
+            } catch (err) {
+              if (!cancelled) {
+                setQuestionnaireError(
+                  isMissingTableError(err)
+                    ? 'Kuesioner belum tersedia (migrasi 084 belum dijalankan).'
+                    : 'Kuesioner gagal dimuat. Coba muat ulang halaman.',
+                )
+              }
+            }
+          })(),
+          (async () => {
+            // Lampiran diskusi (migrasi 086): gagal dimuat bukan error halaman.
+            if (threadsLocal.length === 0) return
+            try {
+              const atts = await fetchDiscussionAttachments(threadsLocal.map((d) => d.id))
+              if (!cancelled) setAttachments(atts)
+            } catch {
+              if (!cancelled) setAttachments([])
             }
           })(),
         ])
@@ -457,22 +563,115 @@ export default function LessonDetailPage() {
       })
     : topLevel
 
-  // Strip mencerminkan penyelesaian nyata, bukan sekadar konten ada:
-  // WATCH/READ menyala saat lesson sudah dimulai (in_progress/completed;
-  // in_progress dipakai sebagai proksi "sudah dibaca" karena pembacaan
-  // tidak dilacak per baris). CHECK hanya saat ada percobaan kuis lulus,
-  // DO hanya saat tugas sudah dikirim. Bila percobaan/submission gagal
-  // dimuat, strip tampil belum selesai, bukan menyala.
-  const watchDone = status === 'in_progress' || status === 'completed'
-  const readDone = watchDone
-  const checkDone = passedQuiz
-  const doDone = submittedAssignment
-
   // Kuis dipisah menurut jenisnya (migrasi 015): kuis lama tanpa kind
   // dibaca sebagai 'quiz'. Satu kuis hanya muncul di satu seksi.
   const pretests = quizzes.filter((q) => (q.kind ?? 'quiz') === 'pretest')
   const posttests = quizzes.filter((q) => (q.kind ?? 'quiz') === 'posttest')
   const plainQuizzes = quizzes.filter((q) => (q.kind ?? 'quiz') === 'quiz')
+
+  // --- Derivasi status 11 langkah Mentari (RENCANA.md §2) ---
+  // Kunci hanya berlaku untuk siswa peserta (bukan admin, bukan mentor
+  // pengampu course). Fail-open: langkah yang datanya gagal dimuat, atau
+  // yang tidak punya konten, dianggap selesai supaya lesson tidak macet.
+  const applyLocks = !!user && !isAdmin && mentorId !== user.id
+  const attemptedQuiz = (list: Quiz[]) =>
+    list.some((q) => quizAttempts.some((a) => a.quiz_id === q.id))
+  const pretestDone = pretests.length === 0 || attemptedQuiz(pretests) || !!quizError
+  const materiDone = status === 'in_progress' || status === 'completed'
+  const tugasDone = assignments.length === 0 || submittedAssignment || !!assignError
+  const upcomingLive = liveClasses.filter(
+    (lc) => lc.scheduled_at && new Date(lc.scheduled_at).getTime() >= Date.now(),
+  )
+  const vconDone = upcomingLive.length === 0 || vconAcknowledged || !!liveClassesError
+  const myDiscussionCount = user
+    ? discussions.filter((d) => d.user_id === user.id).length
+    : 0
+  const diskusiDone = myDiscussionCount >= 2 || !!discussionError
+  const posttestDone = posttests.length === 0 || attemptedQuiz(posttests) || !!quizError
+  const questionnaire = questionnaires[0] ?? null
+  const myQuestionnaireResponse = questionnaire
+    ? questionnaireResponses.find((r) => r.questionnaire_id === questionnaire.id) ?? null
+    : null
+  const kuesionerDone = myQuestionnaireResponse !== null || !!questionnaireError
+  // Kehadiran 1 pertemuan = langkah 1 s.d. 10 (Pre Test s.d. Post Test).
+  const attendanceDone =
+    pretestDone && materiDone && tugasDone && vconDone && diskusiDone && posttestDone
+  const unfinishedSteps: string[] = []
+  if (!pretestDone) unfinishedSteps.push('Pretest')
+  if (!materiDone) unfinishedSteps.push('Materi')
+  if (!tugasDone) unfinishedSteps.push('Penugasan Terstruktur')
+  if (!vconDone) unfinishedSteps.push('LINK VCON')
+  if (!diskusiDone) unfinishedSteps.push('Forum Diskusi')
+  if (!posttestDone) unfinishedSteps.push('Posttest')
+
+  // Kunci per langkah: langkah N terkunci sampai langkah N-1 selesai.
+  const lockedMateri = applyLocks && !pretestDone
+  const lockedTugas = applyLocks && !materiDone
+  const lockedVcon = applyLocks && !tugasDone
+  const lockedDiskusi = applyLocks && !vconDone
+  const lockedPosttest = applyLocks && !diskusiDone
+  const lockedKuesioner = applyLocks && !posttestDone
+
+  // Perangkat Pembelajaran (langkah 2-6) dipetakan dari lesson_resources
+  // menurut kind (D20): reading → Buku ISBN; video → Video Ajar;
+  // pdf → Power Point; link → Artikel Riset; image/file → Materi Lainnya.
+  // Resource 'Topik diskusi' disembunyikan di sini (tampil di Forum Diskusi).
+  const discussionPrompt = resources.find(
+    (r) => r.kind === 'reading' && r.title === 'Topik diskusi',
+  )
+  const materiResources = resources.filter((r) => r !== discussionPrompt)
+  const bukuResources = materiResources.filter((r) => r.kind === 'reading')
+  const videoResources = materiResources.filter((r) => r.kind === 'video')
+  const pptResources = materiResources.filter((r) => r.kind === 'pdf')
+  const artikelResources = materiResources.filter((r) => r.kind === 'link')
+  const lainResources = materiResources.filter((r) => r.kind === 'image' || r.kind === 'file')
+
+  // Badge peran di forum (Mentari: "Mahasiswa"): "Mentor" bila penulis =
+  // mentor course, kalau tidak "Siswa". Keterbatasan: admin yang menulis
+  // ikut tampil "Siswa" (Discussion.author hanya membawa nama + foto).
+  const roleBadge = (authorId: string) => (authorId === mentorId ? 'Mentor' : 'Siswa')
+
+  const excerpt = (text: string, n = 80) =>
+    text.length > n ? `${text.slice(0, n).trim()}…` : text
+
+  const attachmentFor = (discussionId: string) =>
+    attachments.find((a) => a.discussion_id === discussionId) ?? null
+
+  // Lampiran di kartu postingan (referensi Mentari 6): gambar tampil inline
+  // lebar penuh; file lain tampil sebagai tautan unduh.
+  const attachmentBlock = (att: DiscussionAttachment | null) => {
+    if (!att || !att.url) return null
+    if (isImageAttachment(att.mime_type)) {
+      return (
+        <div style={{ margin: '0.5rem 0' }}>
+          <img src={att.url} alt={att.file_name} style={{ maxWidth: '100%' }} />
+        </div>
+      )
+    }
+    return (
+      <p>
+        <a href={att.url} target="_blank" rel="noreferrer" download={att.file_name}>
+          <Icon name="download" size={18} /> {att.file_name}
+          {att.size_bytes ? ` (${formatAttachmentSize(att.size_bytes)})` : ''}
+        </a>
+      </p>
+    )
+  }
+
+  const lockBox = (prevStep: string) => (
+    <p className="notice-box">Terkunci. Selesaikan dulu: {prevStep}.</p>
+  )
+
+  // Thread yang sedang dibuka di tampilan thread forum (null = daftar topik).
+  const selectedThread = selectedThreadId
+    ? topLevel.find((d) => d.id === selectedThreadId) ?? null
+    : null
+
+  const initialsOf = (name: string | null | undefined) => {
+    const parts = (name ?? 'Anggota').trim().split(/\s+/)
+    const ini = parts.slice(0, 2).map((w) => w[0] ?? '').join('').toUpperCase()
+    return ini || 'A'
+  }
 
   const bestAttemptScore = (quizId: string): number | null => {
     let best: number | null = null
@@ -517,6 +716,46 @@ export default function LessonDetailPage() {
       setNotice('Gagal menandai lesson selesai. Periksa koneksi lalu coba lagi.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleQuestionnaireSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!user || !questionnaire || questionnaireQuestions.length === 0) return
+    if (isAdmin) {
+      setNotice('Kamu masuk sebagai admin (mode pantau). Admin tidak mengisi kuesioner.')
+      return
+    }
+    const unanswered = questionnaireQuestions.filter((q) => questionnaireAnswers[q.id] === undefined)
+    if (unanswered.length > 0) {
+      setNotice(`Masih ada ${unanswered.length} pernyataan yang belum dijawab. Jawab semua dulu, ya.`)
+      return
+    }
+    setQuestionnaireSubmitting(true)
+    try {
+      const row = await submitQuestionnaireResponse(questionnaire.id, user.id, questionnaireAnswers)
+      setQuestionnaireResponses((rs) => [...rs, row])
+      setNotice('Kuesioner terkirim. Terima kasih atas evaluasimu.')
+    } catch {
+      setNotice('Gagal mengirim kuesioner. Periksa koneksi lalu coba lagi.')
+    } finally {
+      setQuestionnaireSubmitting(false)
+    }
+  }
+
+  async function handleRefreshDiscussions() {
+    if (!lesson) return
+    try {
+      const threads = await fetchDiscussions(lesson.id)
+      setDiscussions(threads)
+      try {
+        setAttachments(await fetchDiscussionAttachments(threads.map((d) => d.id)))
+      } catch {
+        setAttachments([])
+      }
+      setNotice('Diskusi dimuat ulang.')
+    } catch {
+      setNotice('Gagal memuat ulang diskusi. Periksa koneksi lalu coba lagi.')
     }
   }
 
@@ -586,12 +825,26 @@ export default function LessonDetailPage() {
     e.preventDefault()
     if (!user || !lesson || !newPost.trim()) return
     const l = lesson
+    const file = newPostFile
     setPosting(true)
     try {
       const row = await postDiscussion(l.id, user.id, newPost.trim(), null)
       row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null }
       setDiscussions((d) => [...d, row])
       setNewPost('')
+      setNewPostFile(null)
+      if (file) {
+        try {
+          const att = await uploadDiscussionAttachment(file, l.id, user.id, row.id)
+          setAttachments((as) => [...as, att])
+        } catch (err) {
+          setNotice(
+            err instanceof DiscussionAttachmentError
+              ? `Diskusi terkirim, tetapi lampiran gagal diunggah: ${err.message}`
+              : 'Diskusi terkirim, tetapi lampiran gagal diunggah.',
+          )
+        }
+      }
       // Beri tahu mentor course (best-effort; gagal kirim tidak
       // membatalkan kiriman dan tidak memblokir UI).
       if (courseId) {
@@ -621,6 +874,7 @@ export default function LessonDetailPage() {
     e.preventDefault()
     if (!user || !lesson || !replyBody.trim()) return
     const l = lesson
+    const file = replyFile
     setPosting(true)
     try {
       const row = await postDiscussion(l.id, user.id, replyBody.trim(), parentId)
@@ -628,6 +882,19 @@ export default function LessonDetailPage() {
       setDiscussions((d) => [...d, row])
       setReplyBody('')
       setReplyTo(null)
+      setReplyFile(null)
+      if (file) {
+        try {
+          const att = await uploadDiscussionAttachment(file, l.id, user.id, row.id)
+          setAttachments((as) => [...as, att])
+        } catch (err) {
+          setNotice(
+            err instanceof DiscussionAttachmentError
+              ? `Balasan terkirim, tetapi lampiran gagal diunggah: ${err.message}`
+              : 'Balasan terkirim, tetapi lampiran gagal diunggah.',
+          )
+        }
+      }
       // Beri tahu penulis thread induk dan mentor course (best-effort;
       // gagal kirim tidak membatalkan balasan dan tidak memblokir UI).
       // Penerima dideduplikasi dan pengirim sendiri tidak pernah diberi tahu.
@@ -698,16 +965,26 @@ export default function LessonDetailPage() {
         </span>
       </p>
 
-      <ol className="flow-strip" aria-label="Alur belajar">
-        {/* LC6: label langkah berbahasa Indonesia. */}
-        <li className={watchDone ? 'flow-done' : ''} title="Tonton">Tonton</li>
-        <li className={readDone ? 'flow-done' : ''} title="Baca">Baca</li>
-        <li className={checkDone ? 'flow-done' : ''} title="Cek Pemahaman">Cek</li>
-        <li className={doDone ? 'flow-done' : ''} title="Kerjakan">Kerjakan</li>
+      <ol className="flow-strip" aria-label="Alur belajar Mentari">
+        {/* 11 langkah Mentari (RENCANA.md §2): status dari derivasi nyata. */}
+        <li className={pretestDone ? 'flow-done' : ''} title="Pretest">Pretest</li>
+        <li className={materiDone ? 'flow-done' : ''} title="Buku ISBN">Buku ISBN</li>
+        <li className={materiDone ? 'flow-done' : ''} title="Video Ajar">Video Ajar</li>
+        <li className={materiDone ? 'flow-done' : ''} title="Power Point">Power Point</li>
+        <li className={materiDone ? 'flow-done' : ''} title="Artikel Riset">Artikel Riset</li>
+        <li className={materiDone ? 'flow-done' : ''} title="Materi Lainnya">Materi Lainnya</li>
+        <li className={tugasDone ? 'flow-done' : ''} title="Penugasan Terstruktur">Tugas</li>
+        <li className={vconDone ? 'flow-done' : ''} title="LINK VCON">LINK VCON</li>
+        <li className={diskusiDone ? 'flow-done' : ''} title="Forum Diskusi">Forum</li>
+        <li className={posttestDone ? 'flow-done' : ''} title="Posttest">Posttest</li>
+        <li className={kuesionerDone ? 'flow-done' : ''} title="Kuesioner">Kuesioner</li>
       </ol>
+      <p className="muted">
+        Kehadiran pertemuan ini: {attendanceDone ? 'Hadir' : 'Belum (selesaikan Pre Test sampai Post Test)'}
+      </p>
 
       <section className="section" aria-label="Pretest">
-        <h2>Pretest</h2>
+        <h2>1. Pretest</h2>
         <p className="muted">Kerjakan pretest sebelum mulai belajar untuk mengukur pengetahuan awalmu.</p>
         {quizError ? (
           <p className="error-box">{quizError}</p>
@@ -718,136 +995,137 @@ export default function LessonDetailPage() {
         )}
       </section>
 
-      <section className="section" aria-label="Video">
+      <section className="section" aria-label="Materi">
         <div className="dash-section-head">
-          <h2>Video Materi</h2>
+          <h2>2–6. Materi (Perangkat Pembelajaran)</h2>
         </div>
-        {!lesson.video_url ? (
-          <div className="lesson-video-empty">Materi ini tidak memiliki video. Baca materi di bawah ini.</div>
-        ) : embed && embed.kind !== 'link' && embed.embedUrl ? (
-          <div className="lesson-video">
-            <iframe
-              src={embed.embedUrl}
-              title={`Video: ${lesson.title}`}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          </div>
+        {lockedMateri ? (
+          lockBox('Pretest')
         ) : (
-          <p>
-            <a href={lesson.video_url} target="_blank" rel="noreferrer" className="btn-mint">
-              Buka Video (tautan eksternal)
-            </a>
-          </p>
+          <>
+            <h3>Video Ajar</h3>
+            {!lesson.video_url ? (
+              <div className="lesson-video-empty">Materi ini tidak memiliki video. Baca materi di bawah ini.</div>
+            ) : embed && embed.kind !== 'link' && embed.embedUrl ? (
+              <div className="lesson-video">
+                <iframe
+                  src={embed.embedUrl}
+                  title={`Video: ${lesson.title}`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            ) : (
+              <p>
+                <a href={lesson.video_url} target="_blank" rel="noreferrer" className="btn-mint">
+                  Buka Video (tautan eksternal)
+                </a>
+              </p>
+            )}
+            {videoResources.length > 0 && (
+              <ul className="list">
+                {videoResources.map((r) => (
+                  <li key={r.id}>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">{r.title} (Video)</a>
+                    ) : (
+                      <span>{r.title} (Video)</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3>Tentang Materi</h3>
+            {lesson.content ? (
+              <div className="lesson-content">{lesson.content}</div>
+            ) : (
+              <p className="empty">Belum ada materi bacaan untuk lesson ini.</p>
+            )}
+            {resourcesError && <p className="muted">{resourcesError}</p>}
+            <h3>Buku ISBN</h3>
+            {bukuResources.length === 0 ? (
+              <p className="empty">Belum tersedia.</p>
+            ) : (
+              <ul className="list">
+                {bukuResources.map((r) => (
+                  <li key={r.id}>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                    ) : (
+                      <span>{r.title}</span>
+                    )}
+                    {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3>Power Point</h3>
+            {pptResources.length === 0 ? (
+              <p className="empty">Belum tersedia.</p>
+            ) : (
+              <ul className="list">
+                {pptResources.map((r) => (
+                  <li key={r.id}>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">{r.title} (PDF)</a>
+                    ) : (
+                      <span>{r.title} (PDF)</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3>Artikel Riset</h3>
+            {artikelResources.length === 0 ? (
+              <p className="empty">Belum tersedia.</p>
+            ) : (
+              <ul className="list">
+                {artikelResources.map((r) => (
+                  <li key={r.id}>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                    ) : (
+                      <span>{r.title}</span>
+                    )}
+                    {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3>Materi Lainnya</h3>
+            {lainResources.length === 0 ? (
+              <p className="empty">Belum tersedia.</p>
+            ) : (
+              <ul className="list">
+                {lainResources.map((r) => (
+                  <li key={r.id}>
+                    {r.url ? (
+                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                    ) : (
+                      <span>{r.title}</span>
+                    )}
+                    {r.kind === 'image' && r.url ? (
+                      <div>
+                        <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </section>
 
-      <section className="section" aria-label="Tentang Materi">
-        <div className="dash-section-head">
-          <h2>Tentang Materi</h2>
-        </div>
-        {lesson.content ? (
-          <div className="lesson-content">{lesson.content}</div>
-        ) : (
-          <p className="empty">Belum ada materi bacaan untuk lesson ini.</p>
-        )}
-      </section>
-
-      {resourcesError && <p className="muted">{resourcesError}</p>}
-      {resources.length > 0 && (
-        <section className="section" aria-label="File Pendukung">
-          <div className="dash-section-head">
-            <h2>File Pendukung</h2>
-          </div>
-          <ul className="list">
-            {resources.map((r) => {
-              const kindLabel =
-                r.kind === 'pdf'
-                  ? 'PDF'
-                  : r.kind === 'reading'
-                    ? 'Bacaan'
-                    : r.kind === 'video'
-                      ? 'Video'
-                      : r.kind === 'image'
-                        ? 'Gambar'
-                        : r.kind === 'link'
-                          ? 'Tautan'
-                          : 'File'
-              const iconName = r.kind === 'reading' ? 'book' : r.kind === 'video' ? 'film' : 'fileText'
-              const rowBody = (
-                <>
-                  <span className="file-icon">
-                    <Icon name={iconName} size={20} />
-                  </span>
-                  <span className="file-body">
-                    <strong>{r.title}</strong>
-                    <span>{kindLabel}</span>
-                  </span>
-                  {r.url ? <Icon name="download" size={18} /> : null}
-                </>
-              )
-              return (
-                <li key={r.id}>
-                  {r.url ? (
-                    <a className="file-row" href={r.url} target="_blank" rel="noreferrer">
-                      {rowBody}
-                    </a>
-                  ) : (
-                    <div className="file-row">{rowBody}</div>
-                  )}
-                  {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
-                  {r.kind === 'image' && r.url ? (
-                    <div>
-                      <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
-                    </div>
-                  ) : null}
-                  {r.kind === 'video' && r.url ? (
-                  <div>
-                    <video controls preload="metadata" src={r.url} style={{ maxWidth: '100%' }} />
-                  </div>
-                ) : null}
-                  {r.kind === 'pdf' && r.url ? (
-                  <div>
-                    <iframe src={r.url} title={r.title} style={{ width: '100%', height: 480, border: 0 }} />
-                    <p className="muted">Bila PDF tidak tampil, buka lewat tautan di atas.</p>
-                  </div>
-                ) : null}
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      )}
-
-      <section className="section" aria-label="Posttest">
-        <h2>Posttest</h2>
-        <p className="muted">Kerjakan posttest setelah selesai mempelajari materi untuk mengukur pemahamanmu.</p>
-        {quizError ? (
-          <p className="error-box">{quizError}</p>
-        ) : posttests.length === 0 ? (
-          <p className="empty">Belum tersedia.</p>
-        ) : (
-          quizItems(posttests)
-        )}
-      </section>
-
-      <section className="section" aria-label="Cek pemahaman">
-        <h2>Cek, Kuis</h2>
-        {quizError ? (
-          <p className="error-box">{quizError}</p>
-        ) : plainQuizzes.length === 0 ? (
-          <p className="empty">Belum ada kuis untuk lesson ini.</p>
-        ) : (
-          quizItems(plainQuizzes)
-        )}
-      </section>
-
-      <section className="section" aria-label="Tugas">
-        <h2>Kerjakan, Tugas</h2>
-        {assignError ? (
+      <section className="section" aria-label="Penugasan Terstruktur">
+        <h2>7. Penugasan Terstruktur</h2>
+        <p className="muted">Kirim tugas project course bila ada. Bila lesson ini tidak punya tugas, langkah ini otomatis terpenuhi.</p>
+        {lockedTugas ? (
+          lockBox('Materi')
+        ) : assignError ? (
           <p className="error-box">{assignError}</p>
         ) : assignments.length === 0 ? (
-          <p className="empty">Belum ada tugas untuk lesson ini.</p>
+          <p className="empty">Tidak ada tugas di lesson ini — lanjut ke LINK VCON.</p>
         ) : (
           <ul>
             {assignments.map((a) => (
@@ -860,6 +1138,461 @@ export default function LessonDetailPage() {
         )}
       </section>
 
+      <section className="section" aria-label="LINK VCON">
+        <h2>8. LINK VCON</h2>
+        <p className="muted">Kelas live via Zoom atau Google Meet. Bila tidak ada kelas live yang dijadwalkan, langkah ini otomatis terpenuhi.</p>
+        {lockedVcon ? (
+          lockBox('Penugasan Terstruktur')
+        ) : liveClassesError ? (
+          <p className="error-box">{liveClassesError}</p>
+        ) : upcomingLive.length === 0 ? (
+          <p className="empty">Tidak ada kelas live — lanjut ke Forum Diskusi.</p>
+        ) : (
+          <ul>
+            {upcomingLive.map((lc) => {
+              const url = lc.meet_url ?? ''
+              const joinLabel = url.includes('zoom.us')
+                ? 'Gabung Zoom'
+                : url.includes('meet.google.com')
+                  ? 'Gabung Google Meet'
+                  : 'Gabung Kelas Live'
+              return (
+                <li key={lc.id}>
+                  <strong>{lc.title}</strong>
+                  {lc.scheduled_at ? ` — ${new Date(lc.scheduled_at).toLocaleString('id-ID')}` : ''}
+                  {url ? (
+                    <p>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-mint"
+                        onClick={() => setVconAcknowledged(true)}
+                      >
+                        {joinLabel}
+                      </a>
+                    </p>
+                  ) : (
+                    <p className="muted">Tautan kelas live belum tersedia.</p>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="section" aria-label="Forum Diskusi">
+        <h2>9. Forum Diskusi</h2>
+        {lockedDiskusi ? (
+          lockBox('LINK VCON')
+        ) : (
+          <>
+            <p>
+              Selamat datang di forum diskusi lesson {lesson.title}. Untuk pengerjaan
+              forum, tolong diperhatikan beberapa hal di bawah ini:
+            </p>
+            <ol>
+              <li>Sebelum mengerjakan forum diskusi, pastikan kamu sudah membaca materi.</li>
+              <li>
+                Kerjakan pretest, lalu forum diskusi, kemudian posttest supaya presensi
+                terdeteksi otomatis. Jika salah satunya tidak dikerjakan, presensi
+                tidak akan terdeteksi.
+              </li>
+              <li>Jangan mengerjakan forum diskusi mepet hari terakhir untuk menghindari error sistem.</li>
+            </ol>
+            <p className="muted">
+              Diskusi selesai bila kamu menulis minimal 2 tanggapan (postingan atau
+              balasan). Progresmu: {myDiscussionCount}/2.
+            </p>
+            {discussionPrompt?.body ? (
+              <div className="notice-box">
+                <strong>Topik diskusi</strong>
+                <p>{discussionPrompt.body}</p>
+              </div>
+            ) : null}
+            {notice && <p className="notice-box">{notice}</p>}
+            {discussionError ? (
+              <p className="error-box">{discussionError}</p>
+            ) : selectedThread ? (
+              <>
+                <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(null)}>
+                    ← Kembali ke daftar topik
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleRefreshDiscussions()}>
+                    ⟳ Muat ulang
+                  </button>
+                </div>
+                <div className="discussion-item">
+                  <p><strong>{excerpt(selectedThread.body, 120)}</strong></p>
+                  <p className="discussion-meta">
+                    {selectedThread.author?.name ?? 'Anggota'} ·{' '}
+                    <span className="chip">{roleBadge(selectedThread.user_id)}</span> ·{' '}
+                    {new Date(selectedThread.created_at).toLocaleString('id-ID')}
+                    {selectedThread.is_pinned ? ' · Disematkan' : ''}
+                    {selectedThread.is_resolved ? ' · Selesai' : ''}
+                  </p>
+                  {attachmentBlock(attachmentFor(selectedThread.id))}
+                  <p>{selectedThread.body}</p>
+                  <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
+                    {user && !isAdmin && (
+                      <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(selectedThread.id)}>
+                        Bermanfaat ({helpfulCounts[selectedThread.id] ?? 0})
+                      </button>
+                    )}
+                    {canModerate && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => void updateDiscussionFlags(selectedThread.id, { is_pinned: !(selectedThread.is_pinned ?? false) }, selectedThread.is_pinned ? 'Diskusi dilepas dari sematan.' : 'Diskusi disematkan.')}
+                      >
+                        {selectedThread.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
+                      </button>
+                    )}
+                    {user && selectedThread.user_id === user.id && !selectedThread.is_resolved && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => void updateDiscussionFlags(selectedThread.id, { is_resolved: true }, 'Diskusi ditandai selesai.')}
+                      >
+                        Tandai Selesai
+                      </button>
+                    )}
+                    {user && !isAdmin && reportingId !== selectedThread.id && (
+                      <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(selectedThread.id)}>
+                        Laporkan
+                      </button>
+                    )}
+                  </div>
+                  {user && !isAdmin && reportingId === selectedThread.id && reportForm(selectedThread.id)}
+                  {user && !isAdmin && replyTo !== selectedThread.id && (
+                    <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo(selectedThread.id)}>
+                      ↩ Balas
+                    </button>
+                  )}
+                  {user && !isAdmin && replyTo === selectedThread.id && (
+                    <form className="form" onSubmit={(e) => handleReply(e, selectedThread.id)}>
+                      <label>
+                        Balasan
+                        <textarea
+                          value={replyBody}
+                          onChange={(e) => setReplyBody(e.target.value)}
+                          rows={3}
+                          required
+                          placeholder="Tulis balasan…"
+                        />
+                      </label>
+                      <label>
+                        Lampiran (opsional, maks. 20 MB)
+                        <input
+                          type="file"
+                          onChange={(e) => setReplyFile(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                      {replyFile && (
+                        <p className="muted">
+                          Lampiran: {replyFile.name}{' '}
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyFile(null)}>
+                            Hapus
+                          </button>
+                        </p>
+                      )}
+                      <div className="form-actions">
+                        <button type="submit" className="btn btn-primary btn-small" disabled={posting}>
+                          Kirim Balasan
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          onClick={() => { setReplyTo(null); setReplyFile(null) }}
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+                <ul className="discussion-replies">
+                  {replies(selectedThread.id).map((r) => (
+                    <li key={r.id}>
+                      <p className="discussion-meta">
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: '2rem',
+                            height: '2rem',
+                            lineHeight: '2rem',
+                            textAlign: 'center',
+                            borderRadius: '50%',
+                            background: 'var(--light-grey)',
+                            fontWeight: 700,
+                            marginRight: '0.5rem',
+                          }}
+                        >
+                          {initialsOf(r.author?.name)}
+                        </span>
+                        {r.author?.name ?? 'Anggota'} ·{' '}
+                        <span className="chip">{roleBadge(r.user_id)}</span> ·{' '}
+                        {new Date(r.created_at).toLocaleString('id-ID')}
+                        {selectedThread.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
+                      </p>
+                      {attachmentBlock(attachmentFor(r.id))}
+                      <p>{r.body}</p>
+                      <div className="form-actions">
+                        {user && !isAdmin && (
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
+                            Bermanfaat ({helpfulCounts[r.id] ?? 0})
+                          </button>
+                        )}
+                        {canModerate && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => void updateDiscussionFlags(r.id, { is_pinned: !(r.is_pinned ?? false) }, r.is_pinned ? 'Balasan dilepas dari sematan.' : 'Balasan disematkan.')}
+                          >
+                            {r.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
+                          </button>
+                        )}
+                        {user && selectedThread.user_id === user.id && selectedThread.accepted_answer_id !== r.id && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => void updateDiscussionFlags(selectedThread.id, { accepted_answer_id: r.id, is_resolved: true }, 'Balasan ditandai sebagai jawaban yang diterima.')}
+                          >
+                            Terima sebagai Jawaban
+                          </button>
+                        )}
+                        {user && !isAdmin && reportingId !== r.id && (
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
+                            Laporkan
+                          </button>
+                        )}
+                      </div>
+                      {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
+                      {user && !isAdmin && replyTo !== r.id && (
+                        <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(r.id)}>
+                          Balas
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <>
+                {topLevel.length === 0 ? (
+                  <p className="empty">Belum ada diskusi. Jadilah yang pertama bertanya.</p>
+                ) : (
+                  <>
+                    <label>
+                      Cari diskusi
+                      <input
+                        type="search"
+                        value={discussionQuery}
+                        onChange={(e) => setDiscussionQuery(e.target.value)}
+                        placeholder="Cari diskusi…"
+                      />
+                    </label>
+                    {searchText && (
+                      <p className="muted">
+                        Menampilkan {visibleTopLevel.length} dari {topLevel.length} diskusi
+                      </p>
+                    )}
+                    {visibleTopLevel.length === 0 ? (
+                      <p className="empty">Tidak ada diskusi yang cocok dengan pencarian.</p>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>JUDUL</th>
+                            <th style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>AKSI</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleTopLevel.map((d) => (
+                            <tr key={d.id}>
+                              <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                                {excerpt(d.body, 80)}
+                                <span className="muted"> · {d.author?.name ?? 'Anggota'}</span>
+                                {replies(d.id).length > 0 ? ` · ${replies(d.id).length} balasan` : ''}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                                <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(d.id)}>
+                                  Buka
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                )}
+                {user ? (
+                  isAdmin ? (
+                    <p className="muted">
+                      Kamu masuk sebagai admin (mode pantau): diskusi hanya bisa dibaca dan dimoderasi, tidak bisa ikut menulis.
+                    </p>
+                  ) : (
+                    <form className="form" onSubmit={handlePost}>
+                      <label>
+                        Tulis pertanyaan atau komentar
+                        <textarea
+                          value={newPost}
+                          onChange={(e) => setNewPost(e.target.value)}
+                          rows={3}
+                          required
+                          placeholder="Apa yang ingin kamu tanyakan tentang lesson ini?"
+                        />
+                      </label>
+                      <label>
+                        Lampiran (opsional, maks. 20 MB)
+                        <input
+                          type="file"
+                          onChange={(e) => setNewPostFile(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                      {newPostFile && (
+                        <p className="muted">
+                          Lampiran: {newPostFile.name}{' '}
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setNewPostFile(null)}>
+                            Hapus
+                          </button>
+                        </p>
+                      )}
+                      <button type="submit" className="btn btn-primary" disabled={posting}>
+                        {posting ? 'Mengirim…' : 'Kirim Diskusi'}
+                      </button>
+                    </form>
+                  )
+                ) : (
+                  <p className="muted">
+                    <Link to="/login">Masuk</Link> untuk ikut berdiskusi.
+                  </p>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="section" aria-label="Posttest">
+        <h2>10. Posttest</h2>
+        <p className="muted">Kerjakan posttest setelah selesai mempelajari materi untuk mengukur pemahamanmu.</p>
+        {lockedPosttest ? (
+          lockBox('Forum Diskusi')
+        ) : quizError ? (
+          <p className="error-box">{quizError}</p>
+        ) : posttests.length === 0 ? (
+          <p className="empty">Belum tersedia.</p>
+        ) : (
+          quizItems(posttests)
+        )}
+      </section>
+
+      <section className="section" aria-label="Kuesioner">
+        <h2>11. Kuesioner Pertemuan {lesson.order_index}</h2>
+        <p className="muted">Penilaian terhadap mentor dan pembelajaran di pertemuan ini. Jawab Ya atau Tidak untuk tiap pernyataan.</p>
+        {lockedKuesioner ? (
+          lockBox('Posttest')
+        ) : questionnaireError ? (
+          <p className="error-box">{questionnaireError}</p>
+        ) : !questionnaire ? (
+          <p className="empty">Belum tersedia.</p>
+        ) : !user ? (
+          <p className="muted">
+            <Link to="/login">Masuk</Link> untuk mengisi kuesioner.
+          </p>
+        ) : myQuestionnaireResponse ? (
+          <>
+            <p className="notice-box">Kuesioner sudah diisi. Terima kasih atas evaluasimu.</p>
+            {questionnaireQuestions.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>NO</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>KUESIONER</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>JAWABAN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {questionnaireQuestions.map((q, i) => (
+                    <tr key={q.id}>
+                      <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>{i + 1}</td>
+                      <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>{q.question}</td>
+                      <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                        {myQuestionnaireResponse.answers[q.id] === true
+                          ? 'Ya'
+                          : myQuestionnaireResponse.answers[q.id] === false
+                            ? 'Tidak'
+                            : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        ) : questionnaireQuestions.length === 0 ? (
+          <p className="empty">Belum ada pernyataan kuesioner.</p>
+        ) : (
+          <form className="form" onSubmit={handleQuestionnaireSubmit}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>NO</th>
+                  <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>KUESIONER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {questionnaireQuestions.map((q, i) => (
+                  <tr key={q.id}>
+                    <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>{i + 1}</td>
+                    <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                      {q.question}
+                      <p className="muted">Jawaban</p>
+                      <label style={{ fontWeight: 400, marginRight: '1rem' }}>
+                        <input
+                          type="radio"
+                          name={q.id}
+                          checked={questionnaireAnswers[q.id] === true}
+                          onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: true }))}
+                        />{' '}
+                        Ya
+                      </label>
+                      <label style={{ fontWeight: 400 }}>
+                        <input
+                          type="radio"
+                          name={q.id}
+                          checked={questionnaireAnswers[q.id] === false}
+                          onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: false }))}
+                        />{' '}
+                        Tidak
+                      </label>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button type="submit" className="btn btn-primary" disabled={questionnaireSubmitting}>
+              {questionnaireSubmitting ? 'Mengirim…' : 'Kirim Kuesioner'}
+            </button>
+          </form>
+        )}
+      </section>
+
+      {plainQuizzes.length > 0 && (
+        <section className="section" aria-label="Cek pemahaman">
+          <h2>Cek, Kuis</h2>
+          {quizError ? (
+            <p className="error-box">{quizError}</p>
+          ) : (
+            quizItems(plainQuizzes)
+          )}
+        </section>
+      )}
+
       {user && (
         <section className="section" aria-label="Selesai dan Lanjutkan">
           <div className="dash-section-head">
@@ -871,20 +1604,25 @@ export default function LessonDetailPage() {
               Kamu masuk sebagai admin (mode pantau): progres lesson hanya bisa dibaca, tidak bisa ditandai selesai.
             </p>
           ) : (
-            <button
-              type="button"
-              className="btn-mint"
-              onClick={handleComplete}
-              disabled={status === 'completed' || saving}
-            >
-              {saving
-                ? 'Menyimpan…'
-                : status === 'completed'
-                  ? 'Lesson Selesai'
-                  : next
-                    ? 'Selesai & Lanjutkan →'
-                    : 'Tandai Selesai'}
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn-mint"
+                onClick={handleComplete}
+                disabled={status === 'completed' || saving || !attendanceDone}
+              >
+                {saving
+                  ? 'Menyimpan…'
+                  : status === 'completed'
+                    ? 'Lesson Selesai'
+                    : next
+                      ? 'Selesai & Lanjutkan →'
+                      : 'Tandai Selesai'}
+              </button>
+              {!attendanceDone && status !== 'completed' && (
+                <p className="muted">Selesaikan dulu: {unfinishedSteps.join(', ')}.</p>
+              )}
+            </>
           )}
         </section>
       )}
@@ -918,184 +1656,6 @@ export default function LessonDetailPage() {
         )}
       </nav>
 
-      <section className="section" aria-label="Diskusi lesson">
-        <h2>Diskusi Lesson</h2>
-        {discussionError ? (
-          <p className="error-box">{discussionError}</p>
-        ) : topLevel.length === 0 ? (
-          <p className="empty">Belum ada diskusi. Jadilah yang pertama bertanya.</p>
-        ) : (
-          <>
-            <label>
-              Cari diskusi
-              <input
-                type="search"
-                value={discussionQuery}
-                onChange={(e) => setDiscussionQuery(e.target.value)}
-                placeholder="Cari diskusi…"
-              />
-            </label>
-            {searchText && (
-              <p className="muted">
-                Menampilkan {visibleTopLevel.length} dari {topLevel.length} diskusi
-              </p>
-            )}
-            {visibleTopLevel.length === 0 ? (
-              <p className="empty">Tidak ada diskusi yang cocok dengan pencarian.</p>
-            ) : (
-              <ul className="discussion-list">
-                {visibleTopLevel.map((d) => (
-              <li key={d.id} className="discussion-item">
-                <p className="discussion-meta">
-                  {d.author?.name ?? 'Anggota'} ·{' '}
-                  {new Date(d.created_at).toLocaleString('id-ID')}
-                  {d.is_pinned ? ' · Disematkan' : ''}
-                  {d.is_resolved ? ' · Selesai' : ''}
-                </p>
-                <p>{d.body}</p>
-                <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
-                  {/* P27: admin mode pantau tidak ikut "Bermanfaat"/"Laporkan" —
-                      sama seperti form balas/kirim yang disembunyikan untuk admin. */}
-                  {user && !isAdmin && (
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(d.id)}>
-                      Bermanfaat ({helpfulCounts[d.id] ?? 0})
-                    </button>
-                  )}
-                  {canModerate && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      onClick={() => void updateDiscussionFlags(d.id, { is_pinned: !(d.is_pinned ?? false) }, d.is_pinned ? 'Diskusi dilepas dari sematan.' : 'Diskusi disematkan.')}
-                    >
-                      {d.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
-                    </button>
-                  )}
-                  {user && d.user_id === user.id && !d.is_resolved && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small"
-                      onClick={() => void updateDiscussionFlags(d.id, { is_resolved: true }, 'Diskusi ditandai selesai.')}
-                    >
-                      Tandai Selesai
-                    </button>
-                  )}
-                  {user && !isAdmin && reportingId !== d.id && (
-                    <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(d.id)}>
-                      Laporkan
-                    </button>
-                  )}
-                </div>
-                {user && !isAdmin && reportingId === d.id && reportForm(d.id)}
-                <ul className="discussion-replies">
-                  {replies(d.id).map((r) => (
-                    <li key={r.id}>
-                      <p className="discussion-meta">
-                        {r.author?.name ?? 'Anggota'} ·{' '}
-                        {new Date(r.created_at).toLocaleString('id-ID')}
-                        {r.is_pinned ? ' · Disematkan' : ''}
-                        {d.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
-                      </p>
-                      <p>{r.body}</p>
-                      <div className="form-actions">
-                        {user && !isAdmin && (
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
-                            Bermanfaat ({helpfulCounts[r.id] ?? 0})
-                          </button>
-                        )}
-                        {canModerate && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-small"
-                            onClick={() => void updateDiscussionFlags(r.id, { is_pinned: !(r.is_pinned ?? false) }, r.is_pinned ? 'Balasan dilepas dari sematan.' : 'Balasan disematkan.')}
-                          >
-                            {r.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
-                          </button>
-                        )}
-                        {user && d.user_id === user.id && d.accepted_answer_id !== r.id && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-small"
-                            onClick={() => void updateDiscussionFlags(d.id, { accepted_answer_id: r.id, is_resolved: true }, 'Balasan ditandai sebagai jawaban yang diterima.')}
-                          >
-                            Terima sebagai Jawaban
-                          </button>
-                        )}
-                        {user && !isAdmin && reportingId !== r.id && (
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
-                            Laporkan
-                          </button>
-                        )}
-                      </div>
-                      {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
-                    </li>
-                  ))}
-                </ul>
-                {user && !isAdmin && replyTo !== d.id && (
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(d.id)}>
-                    Balas
-                  </button>
-                )}
-                {user && !isAdmin && replyTo === d.id && (
-                  <form className="form" onSubmit={(e) => handleReply(e, d.id)}>
-                    <label>
-                      Balasan
-                      <textarea
-                        value={replyBody}
-                        onChange={(e) => setReplyBody(e.target.value)}
-                        rows={3}
-                        required
-                        placeholder="Tulis balasan…"
-                      />
-                    </label>
-                    <div className="form-actions">
-                      <button type="submit" className="btn btn-primary btn-small" disabled={posting}>
-                        Kirim Balasan
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-small"
-                        onClick={() => setReplyTo(null)}
-                      >
-                        Batal
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </li>
-                ))}
-              </ul>
-            )}
-          </>
-        )}
-        {user ? (
-          isAdmin ? (
-            <p className="muted">
-              Kamu masuk sebagai admin (mode pantau): diskusi hanya bisa dibaca dan dimoderasi, tidak bisa ikut menulis.
-            </p>
-          ) : (
-          <form className="form" onSubmit={handlePost}>
-            {notice && <p className="notice-box">{notice}</p>}
-            <label>
-              Tulis pertanyaan atau komentar
-              <textarea
-                value={newPost}
-                onChange={(e) => setNewPost(e.target.value)}
-                rows={3}
-                required
-                placeholder="Apa yang ingin kamu tanyakan tentang lesson ini?"
-              />
-            </label>
-            <button type="submit" className="btn btn-primary" disabled={posting}>
-              {posting ? 'Mengirim…' : 'Kirim Diskusi'}
-            </button>
-          </form>
-          )
-        ) : (
-          <p className="muted">
-            <Link to="/login">Masuk</Link> untuk ikut berdiskusi.
-          </p>
-        )}
-      </section>
     </div>
   )
 }

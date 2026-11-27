@@ -12,6 +12,7 @@ import type {
   Community,
   Course,
   Discussion,
+  DiscussionAttachment,
   Enrollment,
   ExamAttempt,
   Lesson,
@@ -23,6 +24,9 @@ import type {
   MentorApplicationInput,
   Module,
   Profile,
+  Questionnaire,
+  QuestionnaireQuestion,
+  QuestionnaireResponse,
   Quiz,
   QuizAttempt,
   RefProvince,
@@ -705,6 +709,99 @@ export async function fetchSubmissions(userId: string): Promise<Submission[]> {
     .eq('user_id', userId)
   if (error) throw error
   return (data ?? []) as Submission[]
+}
+
+// ---------------------------------------------------------------------------
+// Kuesioner evaluasi mentor (migrasi 084, pilot Mentari).
+// Pola fetch mengikuti fetchQuizzesForLessons / fetchQuizAttempts di atas.
+// Bila migrasi 084 belum dijalankan, pemanggil menangkap
+// isMissingTableError dan menampilkan "Belum tersedia".
+// ---------------------------------------------------------------------------
+
+/** Kuesioner untuk daftar lesson (satu per lesson). */
+export async function fetchQuestionnairesForLessons(
+  lessonIds: string[],
+): Promise<Questionnaire[]> {
+  if (lessonIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('questionnaires')
+    .select('*')
+    .in('lesson_id', lessonIds)
+  if (error) throw error
+  return (data ?? []) as Questionnaire[]
+}
+
+/** 10 pernyataan Ya/Tidak satu kuesioner, urut. */
+export async function fetchQuestionnaireQuestions(
+  questionnaireId: string,
+): Promise<QuestionnaireQuestion[]> {
+  const { data, error } = await supabase
+    .from('questionnaire_questions')
+    .select('*')
+    .eq('questionnaire_id', questionnaireId)
+    .order('order_index', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as QuestionnaireQuestion[]
+}
+
+/** Respons kuesioner milik satu pengguna (0 atau 1 baris per kuesioner). */
+export async function fetchQuestionnaireResponses(
+  userId: string,
+): Promise<QuestionnaireResponse[]> {
+  const { data, error } = await supabase
+    .from('questionnaire_responses')
+    .select('*')
+    .eq('user_id', userId)
+  if (error) throw error
+  return (data ?? []) as QuestionnaireResponse[]
+}
+
+/**
+ * Kirim satu respons kuesioner. Semua pertanyaan wajib dijawab (10 Ya/Tidak).
+ * Satu pengiriman, final — tidak ada update untuk siswa (unique constraint
+ * questionnaire_id + user_id menolak kiriman kedua).
+ */
+export async function submitQuestionnaireResponse(
+  questionnaireId: string,
+  userId: string,
+  answers: Record<string, boolean>,
+): Promise<QuestionnaireResponse> {
+  const { data, error } = await supabase
+    .from('questionnaire_responses')
+    .insert({ questionnaire_id: questionnaireId, user_id: userId, answers })
+    .select()
+    .single()
+  if (error) throw error
+  return data as QuestionnaireResponse
+}
+
+// ---------------------------------------------------------------------------
+// Lampiran diskusi (migrasi 086, pilot Mentari).
+// Bila migrasi 086 belum dijalankan, kembalikan [] supaya halaman lesson
+// tetap tampil tanpa lampiran (bukan error halaman).
+// ---------------------------------------------------------------------------
+
+/** Lampiran untuk daftar postingan diskusi (URL publik diisi di sini). */
+export async function fetchDiscussionAttachments(
+  discussionIds: string[],
+): Promise<DiscussionAttachment[]> {
+  if (discussionIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('discussion_attachments')
+    .select('*')
+    .in('discussion_id', discussionIds)
+  if (error) {
+    if (isMissingTableError(error)) return []
+    throw error
+  }
+  const rows = (data ?? []) as DiscussionAttachment[]
+  for (const row of rows) {
+    const { data: urlData } = supabase.storage
+      .from('discussion-attachments')
+      .getPublicUrl(row.file_path)
+    row.url = urlData.publicUrl
+  }
+  return rows
 }
 
 // ---------------------------------------------------------------------------

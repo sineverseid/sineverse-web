@@ -174,8 +174,9 @@ export interface Quiz {
   title: string
   passing_score: number
   created_at: string
-  // NOT in the written schema: quizzes have no max_attempts column
-  // (only competency_exams do). Quiz history is shown; no cap is enforced.
+  // max_attempts ditambahkan migrasi 009 (NULL = tanpa batas). Komentar
+  // lama yang menyebut quizzes tidak punya kolom ini sudah basi.
+  max_attempts?: number | null
   // kind ditambahkan migrasi 015 (Tahap 3): 'quiz' (default), 'pretest',
   // atau 'posttest'. Opsional: kuis lama yang dibuat sebelum 015 dibaca
   // sebagai 'quiz' (pakai q.kind ?? 'quiz' di pemakaian).
@@ -234,6 +235,40 @@ export interface QuizAttempt {
   attempted_at: string
 }
 
+/**
+ * Kuesioner evaluasi mentor per pertemuan (migrasi 084, pilot Mentari).
+ * Satu kuesioner per lesson; 10 pernyataan Ya/Tidak (referensi Mentari
+ * "Kuesioner Pertemuan 18"). Instrumen ini menilai MENTOR, bukan materi.
+ */
+export interface Questionnaire {
+  id: string
+  lesson_id: string
+  title: string
+  created_at: string
+}
+
+/** Jenis pertanyaan kuesioner (migrasi 084): hanya 'yes_no'. */
+export type QuestionnaireQuestionKind = 'yes_no'
+
+export interface QuestionnaireQuestion {
+  id: string
+  questionnaire_id: string
+  kind: QuestionnaireQuestionKind
+  question: string
+  options: unknown
+  order_index: number
+  created_at: string
+}
+
+export interface QuestionnaireResponse {
+  id: string
+  questionnaire_id: string
+  user_id: string
+  /** Peta {question_id: boolean} — Ya = true, Tidak = false. */
+  answers: Record<string, boolean>
+  submitted_at: string
+}
+
 export interface CompetencyExam {
   id: string
   course_id: string | null
@@ -265,6 +300,23 @@ export interface Discussion {
   is_resolved?: boolean | null
   accepted_answer_id?: string | null
   author?: { name: string | null; photo_url: string | null } | null
+}
+
+/**
+ * Lampiran gambar/file di satu postingan diskusi (migrasi 086, pilot
+ * Mentari). Satu lampiran per postingan di pilot. Gambar tampil inline di
+ * kartu postingan; file lain tampil sebagai tautan unduh. `url` diisi
+ * client-side dari getPublicUrl (bukan kolom tabel).
+ */
+export interface DiscussionAttachment {
+  id: string
+  discussion_id: string
+  file_path: string
+  file_name: string
+  mime_type: string | null
+  size_bytes: number | null
+  created_at: string
+  url?: string
 }
 
 export interface DiscussionReaction {
