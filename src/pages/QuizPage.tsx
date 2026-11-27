@@ -10,7 +10,7 @@
 // ulang — tombol utama Mentari yang biru dipetakan ke .btn-primary
 // SINEVERSE (film green), dan tombol outline biru ke .btn-ghost dengan
 // aksen film green.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import MigrationNotice from '../components/MigrationNotice'
@@ -86,13 +86,24 @@ export default function QuizPage() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ score: number | null; note: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  // (a) Label pertemuan: "Materi {order_index} · {judul lesson}".
-  const [lessonInfo, setLessonInfo] = useState<{ order_index: number; title: string } | null>(null)
+  // (a) Label pertemuan: "Pertemuan {N} · {judul lesson}".
+  // N = posisi 1-based lesson di dalam course (urut modul + order_index),
+  // dihitung saat load dari modules + lessons course pemilik kuis — BUKAN
+  // order_index mentah (Orientasi order_index 0, jadi "Pertemuan 0" salah).
+  // null bila posisi tidak bisa dihitung (fetch gagal): tampilan memakai
+  // judul kuis tersimpan / label "Materi {order_index}" sebagai fallback.
+  const [lessonInfo, setLessonInfo] = useState<{ order_index: number; title: string; meetingNumber: number | null } | null>(null)
   // (a) Timer hitung NAIK (elapsed), BUKAN countdown: skema SINEVERSE
   // tidak punya batas waktu kuis (tidak ada kolom durasi di quizzes),
   // jadi tidak ada "waktu tersisa" yang bisa dihitung mundur. Timer
-  // berjalan sejak halaman dimuat dan berhenti saat jawaban dikirim.
+  // HANYA berjalan saat tampilan soal terbuka (showQuestions) dan hanya
+  // untuk siswa yang mengerjakan — tidak jalan di halaman detail, tidak
+  // jalan saat pratinjau admin/mentor; berhenti saat jawaban dikirim.
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  // (D23) Pisah halaman detail vs soal (state toggle, tanpa route baru):
+  // false = tampilan detail (kartu Detail + CTA + riwayat + peserta),
+  // true = tampilan soal gaya Mentari (kembali + judul + timer + soal).
+  const [showQuestions, setShowQuestions] = useState(false)
   // (d) Satu soal per layar: indeks soal yang sedang ditampilkan.
   const [currentIndex, setCurrentIndex] = useState(0)
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
@@ -102,7 +113,6 @@ export default function QuizPage() {
   const [pSearch, setPSearch] = useState('')
   const [pStatus, setPStatus] = useState<'all' | 'done' | 'not'>('all')
   const [pSort, setPSort] = useState<'name' | 'score' | 'recent'>('name')
-  const questionsRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!id || !user) return
@@ -135,8 +145,8 @@ export default function QuizPage() {
         setAttempts(atts.filter((a) => a.quiz_id === quizId))
         // K4: tentukan course pemilik kuis lewat lesson -> module -> course,
         // lalu cek enrollment + apakah pengguna mentor course ini.
-        // Select diperluas: title + order_index lesson untuk label
-        // pertemuan "Materi {order_index} · {judul lesson}".
+        // Select diperluas: title + order_index lesson + posisi lesson di
+        // dalam course untuk nomor pertemuan (D23).
         try {
           const { data: lRow } = await supabase
             .from('lessons')
@@ -145,12 +155,39 @@ export default function QuizPage() {
             .maybeSingle()
           const typedRow = lRow as unknown as {
             modules?: { course_id?: string }
+            module_id?: string
             title?: string
             order_index?: number
           } | null
           const cid = typedRow?.modules?.course_id
           if (!cancelled && typeof typedRow?.title === 'string' && typeof typedRow?.order_index === 'number') {
-            setLessonInfo({ order_index: typedRow.order_index, title: typedRow.title })
+            // Nomor pertemuan = posisi 1-based lesson di dalam course
+            // (urut module.order_index lalu lesson.order_index) — sama
+            // dengan urutan fetchCourseLessons. Gagal hitung = null.
+            let meetingNumber: number | null = null
+            if (cid) {
+              try {
+                const { data: mods } = await supabase
+                  .from('modules')
+                  .select('id, order_index')
+                  .eq('course_id', cid)
+                  .order('order_index', { ascending: true })
+                const modRows = (mods ?? []) as { id: string; order_index: number }[]
+                const modOrder = new Map(modRows.map((m) => [m.id, m.order_index ?? 0]))
+                const { data: lRows } = await supabase
+                  .from('lessons')
+                  .select('id, module_id, order_index')
+                  .in('module_id', modRows.map((m) => m.id))
+                const sorted = ((lRows ?? []) as { id: string; module_id: string; order_index: number }[])
+                  .sort((a, b) => (modOrder.get(a.module_id) ?? 0) - (modOrder.get(b.module_id) ?? 0)
+                    || (a.order_index ?? 0) - (b.order_index ?? 0))
+                const pos = sorted.findIndex((r) => r.id === (q as Quiz).lesson_id)
+                if (pos >= 0) meetingNumber = pos + 1
+              } catch {
+                meetingNumber = null
+              }
+            }
+            setLessonInfo({ order_index: typedRow.order_index, title: typedRow.title, meetingNumber })
           }
           if (cid) {
             const [enr, { data: cRow }] = await Promise.all([
@@ -182,42 +219,53 @@ export default function QuizPage() {
     }
   }, [id, user])
 
-  // (a) Timer hitung naik: berhenti saat jawaban dikirim (result terisi);
-  // "Kerjakan ulang" mengeset result null + elapsed 0 sehingga timer
-  // berjalan lagi dari awal.
+  // (a) Timer hitung naik: HANYA berjalan saat tampilan soal terbuka
+  // (showQuestions) dan hanya untuk siswa yang mengerjakan — tidak jalan
+  // di halaman detail, tidak jalan saat pratinjau admin/mentor; berhenti
+  // saat jawaban dikirim (result terisi). "Kerjakan ulang" mengeset
+  // result null + elapsed 0 sehingga timer berjalan lagi dari awal.
   useEffect(() => {
-    if (result !== null) return
+    if (!showQuestions || result !== null || isAdmin || isCourseMentor || enrolled !== true) return
     const t = window.setInterval(() => setElapsedSeconds((s) => s + 1), 1000)
     return () => window.clearInterval(t)
-  }, [result])
+  }, [showQuestions, result, isAdmin, isCourseMentor, enrolled])
 
   // (f) List Data Peserta via RPC get_quiz_participants (migrasi 085).
   // Hanya untuk yang terdaftar / mentor course / admin. Bila RPC belum
   // ada (PGRST202 / error lain), seksi disembunyikan diam-diam.
-  useEffect(() => {
+  // refreshParticipants dipakai juga setelah submit (D23, butir 7): kartu
+  // Detail + List Data Peserta harus langsung menampilkan hasil terbaru
+  // tanpa reload.
+  async function refreshParticipants() {
     if (!id) return
     if (!(enrolled === true || isCourseMentor || isAdmin)) return
-    const quizId = id
-    let cancelled = false
-    async function loadParticipants() {
-      try {
-        const { data, error: rpcErr } = await supabase.rpc('get_quiz_participants', { p_quiz_id: quizId })
-        if (rpcErr || !data) return
-        if (!cancelled) setParticipants(data as QuizParticipantRow[])
-      } catch {
-        // RPC belum ada: sembunyikan seksi tanpa merusak halaman.
-      }
+    try {
+      const { data, error: rpcErr } = await supabase.rpc('get_quiz_participants', { p_quiz_id: id })
+      if (rpcErr || !data) return
+      setParticipants(data as QuizParticipantRow[])
+    } catch {
+      // RPC belum ada: sembunyikan seksi tanpa merusak halaman.
     }
-    void loadParticipants()
-    return () => {
-      cancelled = true
-    }
+  }
+  useEffect(() => {
+    void refreshParticipants()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, enrolled, isCourseMentor, isAdmin])
+
+  // (D23) Judul tampil (display, bukan di DB): "Pretest - Pertemuan N" /
+  // "Posttest - Pertemuan N" untuk kind pretest/posttest; kind 'quiz'
+  // biasa memakai judul tersimpan. Bila N tidak diketahui, judul
+  // tersimpan dipakai apa adanya (tanpa mengarang nomor pertemuan).
+  const meetingNumber = lessonInfo?.meetingNumber ?? null
+  const displayTitle =
+    quiz && (quiz.kind === 'pretest' || quiz.kind === 'posttest') && meetingNumber !== null
+      ? `${quizKindLabel(quiz.kind)} - Pertemuan ${meetingNumber}`
+      : (quiz?.title ?? 'Kuis')
 
   if (loading) return <div className="page"><p className="muted">Memuat kuis…</p></div>
   if (error) return <div className="page"><p className="error-box">{error}</p></div>
   if (!quiz) return <div className="page"><p className="empty">Kuis tidak ditemukan.</p><Link to="/akademi">Kembali ke Akademi</Link></div>
-  if (missing) return <div className="page"><h1>{quiz.title}</h1><p className="muted">{quizKindLabel(quiz.kind)}</p><MigrationNotice migration="003" /></div>
+  if (missing) return <div className="page"><h1>{displayTitle}</h1><p className="muted">{quizKindLabel(quiz.kind)}</p><MigrationNotice migration="003" /></div>
 
   const maxAttempts = (quiz as Quiz & { max_attempts?: number | null }).max_attempts ?? null
   const blocked = maxAttempts !== null && attempts.length >= maxAttempts
@@ -229,7 +277,11 @@ export default function QuizPage() {
     (acc, a) => (!acc || new Date(a.attempted_at).getTime() > new Date(acc.attempted_at).getTime() ? a : acc),
     null,
   )
-  const lessonLabel = lessonInfo ? `Materi ${lessonInfo.order_index} · ${lessonInfo.title}` : null
+  const lessonLabel = lessonInfo
+    ? meetingNumber !== null
+      ? `Pertemuan ${meetingNumber} · ${lessonInfo.title}`
+      : `Materi ${lessonInfo.order_index} · ${lessonInfo.title}`
+    : null
   const totalQuestions = questions?.length ?? 0
   // Indeks aman: bila soal berkurang (mis. setelah muat ulang), jangan
   // keluar dari rentang.
@@ -245,8 +297,12 @@ export default function QuizPage() {
     setValidationMsg(null)
     setCurrentIndex((i) => Math.min(totalQuestions - 1, i + 1))
   }
-  function scrollToQuestions() {
-    questionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // (D23) Buka tampilan soal: mulai dari soal pertama, timer dari 0.
+  function openQuestions() {
+    setValidationMsg(null)
+    setCurrentIndex(0)
+    setElapsedSeconds(0)
+    setShowQuestions(true)
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -313,6 +369,12 @@ export default function QuizPage() {
       }
       const atts = await fetchQuizAttempts(user.id)
       setAttempts(atts.filter((a) => a.quiz_id === currentQuiz.id))
+      // (D23, butir 7) Refetch peserta juga, supaya kartu Detail + List
+      // Data Peserta langsung menampilkan hasil terbaru tanpa reload
+      // (sebelumnya basi sampai reload — LAPORAN.md §8.4 butir 4).
+      await refreshParticipants()
+      // Kembali ke tampilan detail dengan hasil terbaru.
+      setShowQuestions(false)
     } catch (err) {
       setResult({ score: null, note: err instanceof Error ? err.message : 'Gagal mengirim jawaban.' })
     } finally {
@@ -437,26 +499,18 @@ export default function QuizPage() {
 
   return (
     <div className="page">
-      {/* (a) Bar atas: tombol kembali + judul + label pertemuan, kotak
-          timer hitung naik di kanan atas. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-        <div>
-          <Link to="/akademi" className="back-link">← Akademi</Link>
-          <h1>{quiz.title}</h1>
-          {lessonLabel && <p className="muted" style={{ marginBottom: 0 }}>{lessonLabel}</p>}
-        </div>
-        <p
-          style={{
-            border: '1px solid var(--light-grey)',
-            borderRadius: 8,
-            padding: '0.5rem 0.75rem',
-            margin: 0,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          Waktu pengerjaan: <strong>{formatElapsed(elapsedSeconds)}</strong>
-        </p>
+      {/* (a) Bar atas tampilan DETAIL: tombol kembali + judul tampil +
+          label pertemuan. Tanpa kotak timer — timer hanya tampil dan
+          berjalan di tampilan soal (D23). */}
+      <div>
+        <Link to="/akademi" className="back-link">← Akademi</Link>
+        <h1>{displayTitle}</h1>
+        {lessonLabel && <p className="muted" style={{ marginBottom: 0 }}>{lessonLabel}</p>}
       </div>
+      {/* Instruksi Mentari di bawah judul, halaman detail pretest/posttest. */}
+      {(quiz.kind === 'pretest' || quiz.kind === 'posttest') && (
+        <p><strong>KERJAKAN DENGAN CEPAT DAN TEPAT</strong></p>
+      )}
       <p className="muted">
         {quizKindLabel(quiz.kind)} · Nilai lulus: {quiz.passing_score}
         {maxAttempts !== null ? ` · Maks. percobaan: ${maxAttempts}` : ' · Tanpa batas percobaan di skema'}
@@ -480,6 +534,7 @@ export default function QuizPage() {
               setCurrentIndex(0)
               setElapsedSeconds(0)
               setValidationMsg(null)
+              setShowQuestions(true)
             }}
           >
             Kerjakan ulang
@@ -499,12 +554,14 @@ export default function QuizPage() {
         }}
       >
         <h2 style={{ marginTop: 0 }}>Detail Pengerjaan Quiz</h2>
-        <p style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* Pil status gaya OUTLINE di kanan atas (ala kartu Mentari):
+            hijau outline bila sudah, outline redup bila belum. */}
+        <p style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <strong>Quiz</strong>
           {hasAttempts ? (
-            <span className="badge-pass">Sudah Mengerjakan Quiz</span>
+            <span className="badge-outline-pass">Sudah Mengerjakan Quiz</span>
           ) : (
-            <span className="badge-fail">Belum Mengerjakan Quiz</span>
+            <span className="badge-outline-idle">Belum Mengerjakan Quiz</span>
           )}
         </p>
         <p className="muted" style={{ marginBottom: 0 }}>Grade</p>
@@ -515,8 +572,10 @@ export default function QuizPage() {
         {/* quiz_attempts TIDAK punya kolom durasi/started_at — jangan
             dikarang; tampilkan "—" sampai skema mencatat durasi. */}
         <p style={{ marginTop: 0 }}>—</p>
-        <button type="button" className="btn btn-primary" onClick={scrollToQuestions}>
-          ▶ KERJAKAN QUIZ
+        {/* Admin/mentor (mode pantau/pratinjau) melihat soal read-only:
+            tombolnya "LIHAT SOAL", bukan "KERJAKAN QUIZ". */}
+        <button type="button" className="btn btn-primary" onClick={openQuestions}>
+          {isAdmin || isCourseMentor ? 'LIHAT SOAL' : '▶ KERJAKAN QUIZ'}
         </button>
       </section>
 
@@ -527,8 +586,36 @@ export default function QuizPage() {
         <p className="notice-box">Quiz Sudah Selesai</p>
       )}
 
-      <div ref={questionsRef}>
-        {/* K3: "Belum ada soal" hanya tampil untuk yang memang boleh melihat
+      {/* (D23) Soal HANYA tampil setelah klik KERJAKAN QUIZ / LIHAT SOAL
+          (showQuestions): tampilan soal gaya Mentari — tombol kembali ke
+          detail + judul Pretest/Posttest + timer kanan atas. Tampilan
+          detail di atas tidak lagi memuat soal. */}
+      {showQuestions && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowQuestions(false)}>
+                ←
+              </button>
+              <h2 style={{ margin: 0 }}>{quizKindLabel(quiz.kind)}</h2>
+            </div>
+            <p
+              style={{
+                border: '1px solid var(--light-grey)',
+                borderRadius: 8,
+                padding: '0.5rem 0.75rem',
+                margin: 0,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Waktu pengerjaan: <strong>{formatElapsed(elapsedSeconds)}</strong>
+            </p>
+          </div>
+          {lessonLabel && <p className="muted">{lessonLabel}</p>}
+          {hasAttempts && result === null && (
+            <p className="notice-box">Quiz Sudah Selesai</p>
+          )}
+          {/* K3: "Belum ada soal" hanya tampil untuk yang memang boleh melihat
             soal (admin / mentor course / siswa terdaftar). Siswa belum
             terdaftar harus melihat pesan enrollment di bawah, bukan status
             kosong soal — walau soalnya ada. */}
@@ -565,8 +652,12 @@ export default function QuizPage() {
             {renderNav(true)}
           </form>
         )}
-      </div>
+        </div>
+      )}
 
+      {/* Riwayat + peserta hanya di tampilan detail, bukan di tampilan soal. */}
+      {!showQuestions && (
+        <>
       <section className="section">
         <h2>Riwayat Percobaan</h2>
         {attempts.length === 0 ? (
@@ -629,34 +720,41 @@ export default function QuizPage() {
                   key={p.user_id}
                   style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '1rem', background: '#fff' }}
                 >
-                  <p style={{ margin: '0 0 0.5rem' }}><strong>{p.name}</strong></p>
+                  {/* Nama HURUF BESAR ala kartu peserta Mentari. */}
+                  <p style={{ margin: '0 0 0.5rem' }}><strong>{p.name.toUpperCase()}</strong></p>
                   <p className="muted" style={{ marginBottom: 0 }}>Provinsi</p>
                   <p style={{ marginTop: 0 }}>{p.province ?? '—'}</p>
                   <p className="muted" style={{ marginBottom: 0 }}>Kab/Kota</p>
                   <p style={{ marginTop: 0 }}>{p.regency ?? '—'}</p>
                   <p className="muted" style={{ marginBottom: 0 }}>Asal Sekolah</p>
                   <p style={{ marginTop: 0 }}>{p.school ?? '—'}</p>
-                  <p style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', margin: '0 0 0.5rem' }}>
-                    <strong>Quiz</strong>
-                    {p.has_attempt ? (
-                      <span className="badge-pass">Sudah Mengerjakan Quiz</span>
-                    ) : (
-                      <span className="badge-fail">Belum Mengerjakan Quiz</span>
-                    )}
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>Grade</p>
-                  <p style={{ marginTop: 0 }}><strong>{p.score === null ? '—' : p.score}</strong></p>
-                  <p className="muted" style={{ marginBottom: 0 }}>Selesai</p>
-                  <p style={{ marginTop: 0 }}>{p.attempted_at ? new Date(p.attempted_at).toLocaleString('id-ID') : '—'}</p>
-                  <p className="muted" style={{ marginBottom: 0 }}>Waktu Penyelesaian</p>
-                  {/* RPC tidak mengembalikan durasi (quiz_attempts tidak
-                      punya kolom durasi/started_at) — tampilkan "—". */}
-                  <p style={{ marginBottom: 0 }}>—</p>
+                  {/* Kotak dalam berbingkai berisi pil status + Grade +
+                      Selesai + Waktu Penyelesaian (ala kartu Mentari). */}
+                  <div style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '0.75rem' }}>
+                    <p style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 0.5rem' }}>
+                      <strong>Quiz</strong>
+                      {p.has_attempt ? (
+                        <span className="badge-outline-pass">Sudah Mengerjakan Quiz</span>
+                      ) : (
+                        <span className="badge-outline-idle">Belum Mengerjakan Quiz</span>
+                      )}
+                    </p>
+                    <p className="muted" style={{ marginBottom: 0 }}>Grade</p>
+                    <p style={{ marginTop: 0 }}><strong>{p.score === null ? '—' : p.score}</strong></p>
+                    <p className="muted" style={{ marginBottom: 0 }}>Selesai</p>
+                    <p style={{ marginTop: 0 }}>{p.attempted_at ? new Date(p.attempted_at).toLocaleString('id-ID') : '—'}</p>
+                    <p className="muted" style={{ marginBottom: 0 }}>Waktu Penyelesaian</p>
+                    {/* RPC tidak mengembalikan durasi (quiz_attempts tidak
+                        punya kolom durasi/started_at) — tampilkan "—". */}
+                    <p style={{ marginBottom: 0 }}>—</p>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </section>
+      )}
+        </>
       )}
     </div>
   )

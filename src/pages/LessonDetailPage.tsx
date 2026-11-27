@@ -10,7 +10,7 @@
 // Akses: lesson hanya untuk peserta course, mentor pengampu, atau admin.
 // Companion fetch (tugas, kuis, diskusi, progres) dimuat independen:
 // satu gagal tidak boleh menenggelamkan lesson.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Icon from '../components/icons'
@@ -116,6 +116,9 @@ export default function LessonDetailPage() {
   const [replyFile, setReplyFile] = useState<File | null>(null)
 
   const [newPost, setNewPost] = useState('')
+  // (D23) Ref textarea form diskusi baru: tombol "Buka" pada baris prompt
+  // di tabel Topik mengarahkan ke sini (lihat openPromptTopic).
+  const newPostRef = useRef<HTMLTextAreaElement | null>(null)
   const [discussionQuery, setDiscussionQuery] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [replyBody, setReplyBody] = useState('')
@@ -543,6 +546,12 @@ export default function LessonDetailPage() {
   const idx = siblings.findIndex((l) => l.id === lesson.id)
   const prev = idx > 0 ? siblings[idx - 1] : null
   const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null
+  // (D23) Nomor pertemuan = posisi 1-based lesson di dalam course
+  // (siblings sudah urut modul + order_index via fetchCourseLessons).
+  // BUKAN lesson.order_index mentah (Orientasi order_index 0 → jangan
+  // tampil "Pertemuan 0"). null bila posisi tidak diketahui (siblings
+  // gagal dimuat): judul tampil tanpa nomor, tanpa mengarang angka.
+  const meetingNumber = idx >= 0 ? idx + 1 : null
   const embed = lesson.video_url ? videoEmbed(lesson.video_url) : null
   const topLevel = [...discussions.filter((d) => d.parent_id === null)].sort(
     (a, b) => Number(b.is_pinned ?? false) - Number(a.is_pinned ?? false),
@@ -662,6 +671,12 @@ export default function LessonDetailPage() {
     <p className="notice-box">Terkunci. Selesaikan dulu: {prevStep}.</p>
   )
 
+  // (D23) Warna tile strip mengikuti status: selesai = hijau (flow-done),
+  // terkunci = redup (flow-locked), terbuka-belum-selesai = netral/putih.
+  // Pretest tidak pernah terkunci (langkah pertama, selalu terbuka).
+  const flowClass = (done: boolean, locked: boolean) =>
+    done ? 'flow-done' : locked ? 'flow-locked' : ''
+
   // Thread yang sedang dibuka di tampilan thread forum (null = daftar topik).
   const selectedThread = selectedThreadId
     ? topLevel.find((d) => d.id === selectedThreadId) ?? null
@@ -682,13 +697,27 @@ export default function LessonDetailPage() {
     return best
   }
 
+  // (D23) Judul kuis TAMPIL (display, bukan di DB): "Pretest - Pertemuan N"
+  // / "Posttest - Pertemuan N" untuk kind pretest/posttest; kind 'quiz'
+  // biasa memakai judul tersimpan. CATATAN: kuis lama di lesson 2
+  // ("Dasar Sinematografi", kind pretest) tampil dengan judul yang sama
+  // persis seperti pretest seed ("Pretest - Pertemuan 2") — konsekuensi
+  // data lama, judul di DB TIDAK diubah.
+  const quizDisplayTitle = (q: Quiz) => {
+    const kind = q.kind ?? 'quiz'
+    if ((kind === 'pretest' || kind === 'posttest') && meetingNumber !== null) {
+      return `${kind === 'pretest' ? 'Pretest' : 'Posttest'} - Pertemuan ${meetingNumber}`
+    }
+    return q.title
+  }
+
   const quizItems = (list: Quiz[]) => (
     <ul>
       {list.map((q) => {
         const best = bestAttemptScore(q.id)
         return (
           <li key={q.id}>
-            <Link to={`/kuis/${q.id}`}>{q.title}</Link> (nilai lulus: {q.passing_score}
+            <Link to={`/kuis/${q.id}`}>{quizDisplayTitle(q)}</Link> (nilai lulus: {q.passing_score}
             {best !== null ? ` · nilai terbaikmu: ${best}` : ''})
           </li>
         )
@@ -741,6 +770,17 @@ export default function LessonDetailPage() {
     } finally {
       setQuestionnaireSubmitting(false)
     }
+  }
+
+  // (D23) "Buka" pada baris prompt tabel Topik: prompt BUKAN baris
+  // discussions, jadi tidak ada thread yang bisa dibuka — tombol ini
+  // mengarahkan ke kotak tulis diskusi (scroll + fokus) supaya siswa
+  // menjawab topik itu dengan postingan baru. Thread yang sudah ada
+  // tetap dibuka lewat tombol "Buka" di barisnya masing-masing.
+  function openPromptTopic() {
+    setNotice('Tulis jawabanmu atas topik ini pada kotak diskusi di bawah.')
+    document.getElementById('forum-new-post')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    newPostRef.current?.focus()
   }
 
   async function handleRefreshDiscussions() {
@@ -966,18 +1006,20 @@ export default function LessonDetailPage() {
       </p>
 
       <ol className="flow-strip" aria-label="Alur belajar Mentari">
-        {/* 11 langkah Mentari (RENCANA.md §2): status dari derivasi nyata. */}
-        <li className={pretestDone ? 'flow-done' : ''} title="Pretest">Pretest</li>
-        <li className={materiDone ? 'flow-done' : ''} title="Buku ISBN">Buku ISBN</li>
-        <li className={materiDone ? 'flow-done' : ''} title="Video Ajar">Video Ajar</li>
-        <li className={materiDone ? 'flow-done' : ''} title="Power Point">Power Point</li>
-        <li className={materiDone ? 'flow-done' : ''} title="Artikel Riset">Artikel Riset</li>
-        <li className={materiDone ? 'flow-done' : ''} title="Materi Lainnya">Materi Lainnya</li>
-        <li className={tugasDone ? 'flow-done' : ''} title="Penugasan Terstruktur">Tugas</li>
-        <li className={vconDone ? 'flow-done' : ''} title="LINK VCON">LINK VCON</li>
-        <li className={diskusiDone ? 'flow-done' : ''} title="Forum Diskusi">Forum</li>
-        <li className={posttestDone ? 'flow-done' : ''} title="Posttest">Posttest</li>
-        <li className={kuesionerDone ? 'flow-done' : ''} title="Kuesioner">Kuesioner</li>
+        {/* 11 langkah Mentari (RENCANA.md §2): status dari derivasi nyata;
+            warna tile mengikuti status (D23): hijau = selesai, redup =
+            terkunci, putih = terbuka-belum-selesai. */}
+        <li className={flowClass(pretestDone, false)} title="Pretest">Pretest</li>
+        <li className={flowClass(materiDone, lockedMateri)} title="Buku ISBN">Buku ISBN</li>
+        <li className={flowClass(materiDone, lockedMateri)} title="Video Ajar">Video Ajar</li>
+        <li className={flowClass(materiDone, lockedMateri)} title="Power Point">Power Point</li>
+        <li className={flowClass(materiDone, lockedMateri)} title="Artikel Riset">Artikel Riset</li>
+        <li className={flowClass(materiDone, lockedMateri)} title="Materi Lainnya">Materi Lainnya</li>
+        <li className={flowClass(tugasDone, lockedTugas)} title="Penugasan Terstruktur">Tugas</li>
+        <li className={flowClass(vconDone, lockedVcon)} title="LINK VCON">LINK VCON</li>
+        <li className={flowClass(diskusiDone, lockedDiskusi)} title="Forum Diskusi">Forum</li>
+        <li className={flowClass(posttestDone, lockedPosttest)} title="Posttest">Posttest</li>
+        <li className={flowClass(kuesionerDone, lockedKuesioner)} title="Kuesioner">Kuesioner</li>
       </ol>
       <p className="muted">
         Kehadiran pertemuan ini: {attendanceDone ? 'Hadir' : 'Belum (selesaikan Pre Test sampai Post Test)'}
@@ -1183,15 +1225,17 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Forum Diskusi">
-        <h2>9. Forum Diskusi</h2>
+        <h2>{meetingNumber !== null ? `Forum Diskusi - Pertemuan ${meetingNumber}` : 'Forum Diskusi'}</h2>
         {lockedDiskusi ? (
           lockBox('LINK VCON')
         ) : (
           <>
             <p>
-              Selamat datang di forum diskusi lesson {lesson.title}. Untuk pengerjaan
-              forum, tolong diperhatikan beberapa hal di bawah ini:
+              {meetingNumber !== null && courseTitle
+                ? `Saat ini kita memasuki pertemuan ke-${meetingNumber} ${courseTitle} dengan materi ${lesson.title}.`
+                : `Saat ini kita memasuki pertemuan ini dengan materi ${lesson.title}.`}
             </p>
+            <p>Untuk pengerjaan forum, tolong diperhatikan beberapa hal di bawah ini:</p>
             <ol>
               <li>Sebelum mengerjakan forum diskusi, pastikan kamu sudah membaca materi.</li>
               <li>
@@ -1205,12 +1249,6 @@ export default function LessonDetailPage() {
               Diskusi selesai bila kamu menulis minimal 2 tanggapan (postingan atau
               balasan). Progresmu: {myDiscussionCount}/2.
             </p>
-            {discussionPrompt?.body ? (
-              <div className="notice-box">
-                <strong>Topik diskusi</strong>
-                <p>{discussionPrompt.body}</p>
-              </div>
-            ) : null}
             {notice && <p className="notice-box">{notice}</p>}
             {discussionError ? (
               <p className="error-box">{discussionError}</p>
@@ -1381,9 +1419,11 @@ export default function LessonDetailPage() {
               </>
             ) : (
               <>
-                {topLevel.length === 0 ? (
-                  <p className="empty">Belum ada diskusi. Jadilah yang pertama bertanya.</p>
-                ) : (
+                {/* (D23) Tabel Topik selalu tampil (bukan hanya bila sudah
+                    ada thread): baris pertama = prompt "Topik diskusi",
+                    lalu satu baris per thread top-level yang sudah ada.
+                    JUDUL = kutipan awal isi; AKSI = "Buka". */}
+                {topLevel.length > 0 && (
                   <>
                     <label>
                       Cari diskusi
@@ -1399,35 +1439,51 @@ export default function LessonDetailPage() {
                         Menampilkan {visibleTopLevel.length} dari {topLevel.length} diskusi
                       </p>
                     )}
-                    {visibleTopLevel.length === 0 ? (
+                    {searchText && visibleTopLevel.length === 0 && (
                       <p className="empty">Tidak ada diskusi yang cocok dengan pencarian.</p>
-                    ) : (
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr>
-                            <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>JUDUL</th>
-                            <th style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>AKSI</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {visibleTopLevel.map((d) => (
-                            <tr key={d.id}>
-                              <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                                {excerpt(d.body, 80)}
-                                <span className="muted"> · {d.author?.name ?? 'Anggota'}</span>
-                                {replies(d.id).length > 0 ? ` · ${replies(d.id).length} balasan` : ''}
-                              </td>
-                              <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                                <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(d.id)}>
-                                  Buka
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
                     )}
                   </>
+                )}
+                <h3>Topik</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>JUDUL</th>
+                      <th style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>AKSI</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {discussionPrompt?.body ? (
+                      <tr>
+                        <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                          {excerpt(discussionPrompt.body, 80)}
+                          <span className="muted"> · Topik diskusi</span>
+                        </td>
+                        <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                          <button type="button" className="btn btn-ghost btn-small" onClick={openPromptTopic}>
+                            Buka
+                          </button>
+                        </td>
+                      </tr>
+                    ) : null}
+                    {visibleTopLevel.map((d) => (
+                      <tr key={d.id}>
+                        <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                          {excerpt(d.body, 80)}
+                          <span className="muted"> · {d.author?.name ?? 'Anggota'}</span>
+                          {replies(d.id).length > 0 ? ` · ${replies(d.id).length} balasan` : ''}
+                        </td>
+                        <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
+                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(d.id)}>
+                            Buka
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {topLevel.length === 0 && (
+                  <p className="empty">Belum ada diskusi dari siswa. Jadilah yang pertama menjawab topik di atas.</p>
                 )}
                 {user ? (
                   isAdmin ? (
@@ -1435,10 +1491,11 @@ export default function LessonDetailPage() {
                       Kamu masuk sebagai admin (mode pantau): diskusi hanya bisa dibaca dan dimoderasi, tidak bisa ikut menulis.
                     </p>
                   ) : (
-                    <form className="form" onSubmit={handlePost}>
+                    <form className="form" id="forum-new-post" onSubmit={handlePost}>
                       <label>
                         Tulis pertanyaan atau komentar
                         <textarea
+                          ref={newPostRef}
                           value={newPost}
                           onChange={(e) => setNewPost(e.target.value)}
                           rows={3}
@@ -1492,7 +1549,7 @@ export default function LessonDetailPage() {
       </section>
 
       <section className="section" aria-label="Kuesioner">
-        <h2>11. Kuesioner Pertemuan {lesson.order_index}</h2>
+        <h2>{meetingNumber !== null ? `Kuesioner Pertemuan ${meetingNumber}` : 'Kuesioner'}</h2>
         <p className="muted">Penilaian terhadap mentor dan pembelajaran di pertemuan ini. Jawab Ya atau Tidak untuk tiap pernyataan.</p>
         {lockedKuesioner ? (
           lockBox('Posttest')

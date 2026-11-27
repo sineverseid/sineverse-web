@@ -1752,6 +1752,14 @@ p {
   color: #0c5c40;
 }
 
+/* Perbaikan tampilan pasca-live (D23): tile langkah yang masih terkunci
+   tampil redup + garis putus-putus, bukan hijau — hijau hanya untuk yang
+   sudah selesai (flow-done). Tile terbuka-belum-selesai tetap putih. */
+.flow-strip li.flow-locked {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
 @media (max-width: 640px) {
   .flow-strip {
     grid-template-columns: repeat(2, 1fr);
@@ -1878,6 +1886,32 @@ p {
 .badge-fail {
   background: var(--danger-bg);
   color: var(--danger);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Perbaikan tampilan pasca-live (D23): pil status gaya OUTLINE ala kartu
+   peserta Mentari — hijau outline bila sudah mengerjakan, outline redup
+   (abu) bila belum. Dipakai di kartu Detail Pengerjaan Quiz + kartu
+   peserta (QuizPage). Tetap hijau SINEVERSE, tanpa biru Mentari. */
+.badge-outline-pass {
+  background: #fff;
+  color: var(--film-green);
+  border: 1px solid var(--film-green);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.badge-outline-idle {
+  background: #fff;
+  color: var(--muted);
+  border: 1px solid var(--light-grey);
   border-radius: 999px;
   padding: 0.2rem 0.7rem;
   font-weight: 700;
