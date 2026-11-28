@@ -712,17 +712,18 @@ export default function LessonDetailPage() {
   const artikelResources = materiResources.filter((r) => r.kind === 'link')
   const lainResources = materiResources.filter((r) => r.kind === 'image' || r.kind === 'file')
 
-  // Badge peran di forum (D26, keputusan Arif 28 Nov 2026): berdasarkan
-  // profiles.role penulis — siswa = "Mahasiswa", mentor = "Dosen",
+  // Badge peran di forum (D26, keputusan Arif 28 Nov 2026; label diubah
+  // 28 Nov 08:57 atas perintah Arif: JANGAN pakai "Dosen"/"Mahasiswa"):
+  // profiles.role penulis — siswa = "Siswa", mentor = "Mentor",
   // admin = "Admin". Bila role tidak tersedia (baris baru yang author-nya
   // diisi client-side tanpa role), pakai perbandingan mentorId sebagai
-  // fallback (mentor course = "Dosen", sisanya "Mahasiswa").
+  // fallback (mentor course = "Mentor", sisanya "Siswa").
   const roleBadge = (d: Discussion) => {
     const role = d.author?.role
-    if (role === 'mentor') return 'Dosen'
+    if (role === 'mentor') return 'Mentor'
     if (role === 'admin') return 'Admin'
-    if (role === 'siswa') return 'Mahasiswa'
-    return d.user_id === mentorId ? 'Dosen' : 'Mahasiswa'
+    if (role === 'siswa') return 'Siswa'
+    return d.user_id === mentorId ? 'Mentor' : 'Siswa'
   }
 
   const excerpt = (text: string, n = 80) =>
@@ -1796,7 +1797,7 @@ export default function LessonDetailPage() {
                   <p><strong className="topic-prompt">Topik diskusi</strong></p>
                   <p className="discussion-meta">
                     <span className="discussion-author">{mentorName ?? 'Mentor'}</span> ·{' '}
-                    <span className="chip">Dosen</span> ·{' '}
+                    <span className="chip">Mentor</span> ·{' '}
                     {new Date(discussionPrompt.created_at).toLocaleString('id-ID')}
                   </p>
                   <p>{discussionPrompt.body}</p>
@@ -1854,7 +1855,7 @@ export default function LessonDetailPage() {
                     prompt → buka thread topik D26); kolom AKSI menampilkan
                     "—" seperti Mentari; judul baris prompt + nama penulis
                     HURUF BESAR (CSS uppercase); tiap baris membawa badge
-                    peran (Mahasiswa/Dosen/Admin). */}
+                    peran (Siswa/Mentor/Admin). */}
                 <div id="forum-topik">
                 <h3>Topik</h3>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1872,7 +1873,7 @@ export default function LessonDetailPage() {
                             {excerpt(discussionPrompt.body, 80)}
                           </button>
                           <span className="muted"> · Topik diskusi</span>{' '}
-                          <span className="chip">Dosen</span>
+                          <span className="chip">Mentor</span>
                         </td>
                         <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
                           —

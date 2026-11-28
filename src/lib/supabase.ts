@@ -1009,7 +1009,7 @@ export async function fetchDiscussions(lessonId: string): Promise<Discussion[]> 
   const userIds = [...new Set(rows.map((r) => r.user_id))]
   if (userIds.length > 0) {
     // (D26) Role penulis ikut diambil untuk badge peran forum
-    // (profiles.role: siswa = "Mahasiswa", mentor = "Dosen", admin = "Admin").
+    // (profiles.role: siswa = "Siswa", mentor = "Mentor", admin = "Admin").
     const { data: profiles, error: profErr } = await supabase
       .from('public_profiles')
       .select('id,name,photo_url,role')

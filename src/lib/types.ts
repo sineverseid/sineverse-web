@@ -342,7 +342,7 @@ export interface Discussion {
   is_resolved?: boolean | null
   accepted_answer_id?: string | null
   // (D26) Role penulis (profiles.role) untuk badge peran forum —
-  // siswa = "Mahasiswa", mentor = "Dosen", admin = "Admin".
+  // siswa = "Siswa", mentor = "Mentor", admin = "Admin".
   author?: { name: string | null; photo_url: string | null; role?: Role | null } | null
 }
 
