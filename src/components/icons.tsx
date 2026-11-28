@@ -46,6 +46,8 @@ export type IconName =
   | 'download'
   | 'send'
   | 'kebab'
+  | 'link'
+  | 'clipboard'
 
 const PATHS: Record<IconName, ReactNode> = {
   home: (
@@ -310,6 +312,20 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="12" r="1" />
       <circle cx="12" cy="5" r="1" />
       <circle cx="12" cy="19" r="1" />
+    </>
+  ),
+  // (D24) Rantai tautan (item bertipe link / LINK VCON) + papan klip
+  // (Penugasan Terstruktur) — pola inline SVG yang sama, tanpa library.
+  link: (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
     </>
   ),
 }

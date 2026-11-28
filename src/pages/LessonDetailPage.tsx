@@ -11,8 +11,9 @@
 // Companion fetch (tugas, kuis, diskusi, progres) dimuat independen:
 // satu gagal tidak boleh menenggelamkan lesson.
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import CourseIndexDrawer from '../components/CourseIndexDrawer'
 import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -72,6 +73,43 @@ function videoEmbed(url: string): { kind: 'youtube' | 'vimeo' | 'link'; embedUrl
   return { kind: 'link' }
 }
 
+/** (D24.2) Sapaan menurut jam saat halaman dibuka: pagi 04–11, siang
+    11–15, sore 15–19, malam selebihnya. */
+function greetingForHour(hour: number): string {
+  if (hour >= 4 && hour < 11) return 'Selamat pagi'
+  if (hour >= 11 && hour < 15) return 'Selamat siang'
+  if (hour >= 15 && hour < 19) return 'Selamat sore'
+  return 'Selamat malam'
+}
+
+/** (D24.14) Format closes_at ala Mentari: "Sabtu, 28 November 2026,
+    pukul 19.00 WIB" (id-ID, zona Asia/Jakarta). */
+function formatClosesAt(iso: string): string {
+  const d = new Date(iso)
+  const datePart = new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(d)
+  const timePart = new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Jakarta',
+  }).format(d).replace(':', '.')
+  return `${datePart}, pukul ${timePart} WIB`
+}
+
+/** (D24.14) Nilai input datetime-local (waktu lokal perangkat) dari
+    closes_at ISO. Dipakai mengisi draft editor mentor/admin. */
+function toLocalInputValue(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function LessonDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -127,6 +165,12 @@ export default function LessonDetailPage() {
   const [helpfulMine, setHelpfulMine] = useState<Set<string>>(new Set())
   const [reportingId, setReportingId] = useState<string | null>(null)
   const [reportReason, setReportReason] = useState('')
+  // (D24.14) Tanggal penutupan forum (lessons.closes_at, migrasi 087):
+  // draft input datetime-local + status simpan; hanya mentor pengampu/admin.
+  const [closesAtDraft, setClosesAtDraft] = useState('')
+  const [savingClosesAt, setSavingClosesAt] = useState(false)
+  // (D24.13) Drawer Course Index.
+  const [indexOpen, setIndexOpen] = useState(false)
 
   const canModerate = profile?.role === 'mentor' || profile?.role === 'admin'
   // Mode pantau (migrasi 022): admin boleh MEMBUKA lesson untuk memantau,
@@ -204,6 +248,8 @@ export default function LessonDetailPage() {
       setSelectedThreadId(null)
       setNewPostFile(null)
       setReplyFile(null)
+      setClosesAtDraft('')
+      setSavingClosesAt(false)
 
       // 1. Lesson dulu. Hanya kegagalan di sini yang boleh menampilkan
       // error seluruh halaman.
@@ -227,6 +273,8 @@ export default function LessonDetailPage() {
       }
       if (cancelled) return
       setLesson(l)
+      // (D24.14) Isi draft editor tanggal penutupan dari closes_at lesson.
+      setClosesAtDraft(l.closes_at ? toLocalInputValue(l.closes_at) : '')
 
       // 2. Resolve course (module → course), lalu cek akses. Tamu dan
       // pengguna yang tidak terdaftar tidak boleh melihat isi lesson.
@@ -552,6 +600,11 @@ export default function LessonDetailPage() {
   // tampil "Pertemuan 0"). null bila posisi tidak diketahui (siblings
   // gagal dimuat): judul tampil tanpa nomor, tanpa mengarang angka.
   const meetingNumber = idx >= 0 ? idx + 1 : null
+  // (D24.2) Sapaan forum menurut jam saat halaman dibuka.
+  const greeting = greetingForHour(new Date().getHours())
+  // (D24.14) Yang boleh mengatur tanggal penutupan forum: admin, atau
+  // mentor pengampu course ini (bukan siswa, bukan mentor lain).
+  const canEditClosesAt = isAdmin || (user !== null && mentorId !== null && mentorId === user.id)
   const embed = lesson.video_url ? videoEmbed(lesson.video_url) : null
   const topLevel = [...discussions.filter((d) => d.parent_id === null)].sort(
     (a, b) => Number(b.is_pinned ?? false) - Number(a.is_pinned ?? false),
@@ -670,6 +723,119 @@ export default function LessonDetailPage() {
   const lockBox = (prevStep: string) => (
     <p className="notice-box">Terkunci. Selesaikan dulu: {prevStep}.</p>
   )
+
+  // (D24.1/D24.12) Ikon per langkah (samakan dengan kartu course):
+  // "?" untuk kuis, dokumen untuk materi, clipboard untuk tugas,
+  // tautan untuk VCON, pesan untuk forum, grafik untuk kuesioner.
+  // "?" adalah lencana teks (bukan emoji); link/clipboard adalah SVG
+  // inline mengikuti pola icons.tsx — tanpa library ikon.
+  const stepIcon = (step: number) => {
+    switch (step) {
+      case 0: // Pretest
+      case 9: // Posttest
+        return <span className="step-icon-q" aria-hidden="true">?</span>
+      case 6: // Penugasan Terstruktur
+        return <Icon name="clipboard" size={22} />
+      case 7: // LINK VCON
+        return <Icon name="link" size={22} />
+      case 8: // Forum Diskusi
+        return <Icon name="message" size={22} />
+      case 10: // Kuesioner
+        return <Icon name="chart" size={22} />
+      default: // 1–5 materi: ikon dokumen
+        return <Icon name="fileText" size={22} />
+    }
+  }
+
+  // (D24.1) Kartu aktivitas gaya Mentari: border; bila langkah selesai,
+  // border hijau + lingkaran centang hijau MENEMPEL di sudut kiri atas
+  // garis border (absolute, overlap — bukan di dalam kartu); ikon +
+  // judul di kepala; isi; tombol aksi kanan bawah bila relevan.
+  // `step` = indeks 0-based langkah (untuk id anchor drawer D24.13).
+  const activityCard = (
+    step: number,
+    title: string,
+    done: boolean,
+    children: ReactNode,
+    action?: ReactNode,
+  ) => (
+    <section className={`activity-card${done ? ' activity-done' : ''}`} aria-label={title} id={`step-${step}`}>
+      {done && (
+        <span className="activity-check" aria-label="Selesai">✓</span>
+      )}
+      <div className="activity-card-head">
+        <span className="activity-icon">{stepIcon(step)}</span>
+        <h2>{title}</h2>
+      </div>
+      {children}
+      {action && <div className="activity-action">{action}</div>}
+    </section>
+  )
+
+  // (D24.1/D24.12) Baris kuis di kartu aktivitas: judul + "Kerjakan
+  // Dengan Cepat dan Tepat" + tombol QUIZ › (hijau) langsung ke halaman
+  // kuis. Satu baris per kuis (lesson 2 punya 2 pretest — masing-masing
+  // dapat tombolnya sendiri).
+  const quizCardItems = (list: Quiz[]) => (
+    <ul className="list">
+      {list.map((q) => {
+        const best = bestAttemptScore(q.id)
+        return (
+          <li key={q.id}>
+            <p style={{ margin: '0 0 0.25rem' }}>
+              <Link to={`/kuis/${q.id}`}><strong>{quizDisplayTitle(q)}</strong></Link>
+              {' '} (nilai lulus: {q.passing_score}
+              {best !== null ? ` · nilai terbaikmu: ${best}` : ''})
+            </p>
+            <p style={{ margin: '0 0 0.5rem' }}>Kerjakan Dengan Cepat dan Tepat</p>
+            <div className="activity-action" style={{ marginTop: 0 }}>
+              <Link to={`/kuis/${q.id}`} className="btn btn-primary btn-small">
+                QUIZ ›
+              </Link>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
+  // (D24.1) Tombol FORUM di kartu forum: lompat ke tabel Topik.
+  function scrollToForumTopics() {
+    document.getElementById('forum-topik')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // (D24.14) Simpan tanggal penutupan forum via RPC
+  // set_lesson_forum_closes_at (migrasi 087): hanya closes_at yang
+  // berubah. Draft kosong = hapus tenggat (null). `explicitDraft`
+  // dipakai tombol Hapus (state draft belum tentu sudah ter-update).
+  async function handleSaveClosesAt(explicitDraft?: string) {
+    if (!lesson || !canEditClosesAt) return
+    setSavingClosesAt(true)
+    try {
+      const raw = explicitDraft !== undefined ? explicitDraft : closesAtDraft
+      const value = raw.trim() === '' ? null : new Date(raw).toISOString()
+      const { error } = await supabase.rpc('set_lesson_forum_closes_at', {
+        p_lesson_id: lesson.id,
+        p_closes_at: value,
+      })
+      if (error) throw error
+      setLesson({ ...lesson, closes_at: value })
+      if (value) setClosesAtDraft(toLocalInputValue(value))
+      setNotice(
+        value
+          ? `Tanggal penutupan forum disimpan: ${formatClosesAt(value)}.`
+          : 'Tanggal penutupan forum dihapus.',
+      )
+    } catch (err) {
+      setNotice(
+        err instanceof Error
+          ? `Gagal menyimpan tanggal penutupan: ${err.message}`
+          : 'Gagal menyimpan tanggal penutupan forum. Periksa koneksi lalu coba lagi.',
+      )
+    } finally {
+      setSavingClosesAt(false)
+    }
+  }
 
   // (D23) Warna tile strip mengikuti status: selesai = hijau (flow-done),
   // terkunci = redup (flow-locked), terbuka-belum-selesai = netral/putih.
@@ -983,11 +1149,17 @@ export default function LessonDetailPage() {
 
   return (
     <div className="page">
-      {courseId && (
-        <Link to={`/course/${courseId}`} className="back-link">
-          ← {courseTitle || 'Course'}
-        </Link>
-      )}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        {courseId && (
+          <Link to={`/course/${courseId}`} className="back-link">
+            ← {courseTitle || 'Course'}
+          </Link>
+        )}
+        {/* (D24.13) Tombol pembuka drawer Course Index. */}
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => setIndexOpen(true)}>
+          ☰ Course Index
+        </button>
+      </div>
       <p className="muted">Materi {lesson.order_index}</p>
       <h1>
         {lesson.lesson_code ? `${lesson.lesson_code}, ` : ''}
@@ -1025,29 +1197,74 @@ export default function LessonDetailPage() {
         Kehadiran pertemuan ini: {attendanceDone ? 'Hadir' : 'Belum (selesaikan Pre Test sampai Post Test)'}
       </p>
 
-      <section className="section" aria-label="Pretest">
-        <h2>1. Pretest</h2>
-        <p className="muted">Kerjakan pretest sebelum mulai belajar untuk mengukur pengetahuan awalmu.</p>
-        {quizError ? (
-          <p className="error-box">{quizError}</p>
-        ) : pretests.length === 0 ? (
-          <p className="empty">Belum tersedia.</p>
-        ) : (
-          quizItems(pretests)
-        )}
-      </section>
+      {activityCard(
+        0,
+        '1. Pretest',
+        pretestDone,
+        <>
+          {quizError ? (
+            <p className="error-box">{quizError}</p>
+          ) : pretests.length === 0 ? (
+            <p className="empty">Belum tersedia.</p>
+          ) : (
+            quizCardItems(pretests)
+          )}
+        </>,
+      )}
 
-      <section className="section" aria-label="Materi">
-        <div className="dash-section-head">
-          <h2>2–6. Materi (Perangkat Pembelajaran)</h2>
-        </div>
-        {lockedMateri ? (
+      {/* (D24.1) Seksi Materi dipecah menjadi 5 kartu (langkah 2–6):
+          Buku ISBN, Video Ajar, Power Point, Artikel Riset, Materi
+          Lainnya. "Tentang Materi" (lesson.content, bacaan) tinggal di
+          kartu Buku ISBN. Kartu kosong menampilkan "No content" ala
+          Mentari. Bila terkunci, tiap kartu menampilkan kotak kunci. */}
+      {activityCard(
+        1,
+        '2. Buku ISBN',
+        materiDone,
+        lockedMateri ? (
           lockBox('Pretest')
         ) : (
           <>
-            <h3>Video Ajar</h3>
+            {lesson.content ? (
+              <>
+                <h3>Tentang Materi</h3>
+                <div className="lesson-content">{lesson.content}</div>
+              </>
+            ) : null}
+            {bukuResources.length === 0 && !lesson.content ? (
+              <p className="no-content">No content</p>
+            ) : (
+              bukuResources.length > 0 && (
+                <ul className="list">
+                  {bukuResources.map((r) => (
+                    <li key={r.id}>
+                      {r.url ? (
+                        <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                      ) : (
+                        <span>{r.title}</span>
+                      )}
+                      {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+            {resourcesError && <p className="muted">{resourcesError}</p>}
+          </>
+        ),
+      )}
+      {activityCard(
+        2,
+        '3. Video Ajar',
+        materiDone,
+        lockedMateri ? (
+          lockBox('Pretest')
+        ) : (
+          <>
             {!lesson.video_url ? (
-              <div className="lesson-video-empty">Materi ini tidak memiliki video. Baca materi di bawah ini.</div>
+              videoResources.length === 0 ? (
+                <p className="no-content">No content</p>
+              ) : null
             ) : embed && embed.kind !== 'link' && embed.embedUrl ? (
               <div className="lesson-video">
                 <iframe
@@ -1077,163 +1294,172 @@ export default function LessonDetailPage() {
                 ))}
               </ul>
             )}
-            <h3>Tentang Materi</h3>
-            {lesson.content ? (
-              <div className="lesson-content">{lesson.content}</div>
-            ) : (
-              <p className="empty">Belum ada materi bacaan untuk lesson ini.</p>
-            )}
-            {resourcesError && <p className="muted">{resourcesError}</p>}
-            <h3>Buku ISBN</h3>
-            {bukuResources.length === 0 ? (
-              <p className="empty">Belum tersedia.</p>
-            ) : (
-              <ul className="list">
-                {bukuResources.map((r) => (
-                  <li key={r.id}>
-                    {r.url ? (
-                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
-                    ) : (
-                      <span>{r.title}</span>
-                    )}
-                    {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <h3>Power Point</h3>
-            {pptResources.length === 0 ? (
-              <p className="empty">Belum tersedia.</p>
-            ) : (
-              <ul className="list">
-                {pptResources.map((r) => (
-                  <li key={r.id}>
-                    {r.url ? (
-                      <a href={r.url} target="_blank" rel="noreferrer">{r.title} (PDF)</a>
-                    ) : (
-                      <span>{r.title} (PDF)</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <h3>Artikel Riset</h3>
-            {artikelResources.length === 0 ? (
-              <p className="empty">Belum tersedia.</p>
-            ) : (
-              <ul className="list">
-                {artikelResources.map((r) => (
-                  <li key={r.id}>
-                    {r.url ? (
-                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
-                    ) : (
-                      <span>{r.title}</span>
-                    )}
-                    {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <h3>Materi Lainnya</h3>
-            {lainResources.length === 0 ? (
-              <p className="empty">Belum tersedia.</p>
-            ) : (
-              <ul className="list">
-                {lainResources.map((r) => (
-                  <li key={r.id}>
-                    {r.url ? (
-                      <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
-                    ) : (
-                      <span>{r.title}</span>
-                    )}
-                    {r.kind === 'image' && r.url ? (
-                      <div>
-                        <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
           </>
-        )}
-      </section>
-
-      <section className="section" aria-label="Penugasan Terstruktur">
-        <h2>7. Penugasan Terstruktur</h2>
-        <p className="muted">Kirim tugas project course bila ada. Bila lesson ini tidak punya tugas, langkah ini otomatis terpenuhi.</p>
-        {lockedTugas ? (
-          lockBox('Materi')
-        ) : assignError ? (
-          <p className="error-box">{assignError}</p>
-        ) : assignments.length === 0 ? (
-          <p className="empty">Tidak ada tugas di lesson ini — lanjut ke LINK VCON.</p>
+        ),
+      )}
+      {activityCard(
+        3,
+        '4. Power Point',
+        materiDone,
+        lockedMateri ? (
+          lockBox('Pretest')
+        ) : pptResources.length === 0 ? (
+          <p className="no-content">No content</p>
         ) : (
-          <ul>
-            {assignments.map((a) => (
-              <li key={a.id}>
-                <Link to={`/tugas/${a.id}`}><strong>{a.title}</strong></Link>
-                {a.description ? `, ${a.description}` : ''} (maks. {a.max_score})
+          <ul className="list">
+            {pptResources.map((r) => (
+              <li key={r.id}>
+                {r.url ? (
+                  <a href={r.url} target="_blank" rel="noreferrer">{r.title} (PDF)</a>
+                ) : (
+                  <span>{r.title} (PDF)</span>
+                )}
               </li>
             ))}
           </ul>
-        )}
-      </section>
-
-      <section className="section" aria-label="LINK VCON">
-        <h2>8. LINK VCON</h2>
-        <p className="muted">Kelas live via Zoom atau Google Meet. Bila tidak ada kelas live yang dijadwalkan, langkah ini otomatis terpenuhi.</p>
-        {lockedVcon ? (
-          lockBox('Penugasan Terstruktur')
-        ) : liveClassesError ? (
-          <p className="error-box">{liveClassesError}</p>
-        ) : upcomingLive.length === 0 ? (
-          <p className="empty">Tidak ada kelas live — lanjut ke Forum Diskusi.</p>
+        ),
+      )}
+      {activityCard(
+        4,
+        '5. Artikel Riset',
+        materiDone,
+        lockedMateri ? (
+          lockBox('Pretest')
+        ) : artikelResources.length === 0 ? (
+          <p className="no-content">No content</p>
         ) : (
-          <ul>
-            {upcomingLive.map((lc) => {
-              const url = lc.meet_url ?? ''
-              const joinLabel = url.includes('zoom.us')
-                ? 'Gabung Zoom'
-                : url.includes('meet.google.com')
-                  ? 'Gabung Google Meet'
-                  : 'Gabung Kelas Live'
-              return (
-                <li key={lc.id}>
-                  <strong>{lc.title}</strong>
-                  {lc.scheduled_at ? ` — ${new Date(lc.scheduled_at).toLocaleString('id-ID')}` : ''}
-                  {url ? (
-                    <p>
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn-mint"
-                        onClick={() => setVconAcknowledged(true)}
-                      >
-                        {joinLabel}
-                      </a>
-                    </p>
-                  ) : (
-                    <p className="muted">Tautan kelas live belum tersedia.</p>
-                  )}
-                </li>
-              )
-            })}
+          <ul className="list">
+            {artikelResources.map((r) => (
+              <li key={r.id}>
+                {r.url ? (
+                  <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                ) : (
+                  <span>{r.title}</span>
+                )}
+                {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+              </li>
+            ))}
           </ul>
-        )}
-      </section>
-
-      <section className="section" aria-label="Forum Diskusi">
-        <h2>{meetingNumber !== null ? `Forum Diskusi - Pertemuan ${meetingNumber}` : 'Forum Diskusi'}</h2>
-        {lockedDiskusi ? (
-          lockBox('LINK VCON')
+        ),
+      )}
+      {activityCard(
+        5,
+        '6. Materi Lainnya',
+        materiDone,
+        lockedMateri ? (
+          lockBox('Pretest')
+        ) : lainResources.length === 0 ? (
+          <p className="no-content">No content</p>
         ) : (
-          <>
+          <ul className="list">
+            {lainResources.map((r) => (
+              <li key={r.id}>
+                {r.url ? (
+                  <a href={r.url} target="_blank" rel="noreferrer">{r.title}</a>
+                ) : (
+                  <span>{r.title}</span>
+                )}
+                {r.kind === 'image' && r.url ? (
+                  <div>
+                    <img src={r.url} alt={r.title} style={{ maxWidth: '100%' }} />
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ),
+      )}
+
+      {activityCard(
+        6,
+        '7. Penugasan Terstruktur',
+        tugasDone,
+        <>
+          <p className="muted">Kirim tugas project course bila ada. Bila lesson ini tidak punya tugas, langkah ini otomatis terpenuhi.</p>
+          {lockedTugas ? (
+            lockBox('Materi')
+          ) : assignError ? (
+            <p className="error-box">{assignError}</p>
+          ) : assignments.length === 0 ? (
+            <p className="empty">Tidak ada tugas di lesson ini — lanjut ke LINK VCON.</p>
+          ) : (
+            <ul>
+              {assignments.map((a) => (
+                <li key={a.id}>
+                  <Link to={`/tugas/${a.id}`}><strong>{a.title}</strong></Link>
+                  {a.description ? `, ${a.description}` : ''} (maks. {a.max_score})
+                </li>
+              ))}
+            </ul>
+          )}
+        </>,
+      )}
+
+      {activityCard(
+        7,
+        '8. LINK VCON',
+        vconDone,
+        <>
+          {lockedVcon ? (
+            lockBox('Penugasan Terstruktur')
+          ) : liveClassesError ? (
+            <p className="error-box">{liveClassesError}</p>
+          ) : upcomingLive.length === 0 ? (
+            <p className="empty">Tidak ada kelas live — lanjut ke Forum Diskusi.</p>
+          ) : (
+            <>
+              <p>Berikut adalah Link VCON untuk Pertemuan ini</p>
+              <ul className="list">
+                {upcomingLive.map((lc) => {
+                  const url = lc.meet_url ?? ''
+                  const joinLabel = url.includes('zoom.us')
+                    ? 'Gabung Zoom'
+                    : url.includes('meet.google.com')
+                      ? 'Gabung Google Meet'
+                      : 'Gabung Kelas Live'
+                  return (
+                    <li key={lc.id}>
+                      <p style={{ margin: '0 0 0.25rem' }}>
+                        <strong>{lc.title}</strong>
+                        {lc.scheduled_at ? ` — ${new Date(lc.scheduled_at).toLocaleString('id-ID')}` : ''}
+                      </p>
+                      {url ? (
+                        <p style={{ margin: 0 }}>
+                          LINK URL :{' '}
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => setVconAcknowledged(true)}
+                          >
+                            <Icon name="link" size={16} /> {joinLabel}
+                          </a>
+                        </p>
+                      ) : (
+                        <p className="muted" style={{ margin: 0 }}>Tautan kelas live belum tersedia.</p>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </>,
+      )}
+
+      {activityCard(
+        8,
+        meetingNumber !== null ? `Forum Diskusi - Pertemuan ${meetingNumber}` : 'Forum Diskusi',
+        diskusiDone,
+        <>
+          {lockedDiskusi ? (
+            lockBox('LINK VCON')
+          ) : (
+            <>
             <p>
               {meetingNumber !== null && courseTitle
-                ? `Saat ini kita memasuki pertemuan ke-${meetingNumber} ${courseTitle} dengan materi ${lesson.title}.`
-                : `Saat ini kita memasuki pertemuan ini dengan materi ${lesson.title}.`}
+                ? `${greeting}, saat ini kita memasuki pertemuan ke-${meetingNumber} ${courseTitle} dengan materi ${lesson.title}.`
+                : `${greeting}, saat ini kita memasuki pertemuan ini dengan materi ${lesson.title}.`}
             </p>
             <p>Untuk pengerjaan forum, tolong diperhatikan beberapa hal di bawah ini:</p>
             <ol>
@@ -1244,7 +1470,63 @@ export default function LessonDetailPage() {
                 tidak akan terdeteksi.
               </li>
               <li>Jangan mengerjakan forum diskusi mepet hari terakhir untuk menghindari error sistem.</li>
+              {/* (D24.14) Instruksi ke-4: HANYA bila closes_at terisi
+                  (migrasi 087). Bila kosong, tetap 3 instruksi — jangan
+                  karang tanggal. (D24.11: daftar ini memang 3 instruksi
+                  Mentari, BUKAN teks prompt diskusi — terverifikasi dari
+                  kode; prompt hanya tampil sebagai baris tabel Topik.) */}
+              {lesson.closes_at && (
+                <li>
+                  Forum diskusi pertemuan ke-{meetingNumber !== null ? meetingNumber : 'ini'} akan ditutup {formatClosesAt(lesson.closes_at)}.
+                </li>
+              )}
             </ol>
+            {/* (D24.14) Kontrol tanggal penutupan forum — HANYA mentor
+                pengampu course + admin. Siswa tidak melihat kontrol ini. */}
+            {canEditClosesAt && (
+              <div style={{ border: '1px solid var(--light-grey)', borderRadius: 8, padding: '0.75rem', marginBottom: '0.75rem' }}>
+                <p style={{ margin: '0 0 0.5rem' }}>
+                  <strong>Tanggal penutupan forum</strong>{' '}
+                  <span className="muted">(mentor/admin)</span>
+                </p>
+                <p className="muted" style={{ margin: '0 0 0.5rem' }}>
+                  {lesson.closes_at
+                    ? `Saat ini: ${formatClosesAt(lesson.closes_at)}.`
+                    : 'Belum ada tanggal penutupan — instruksi ke-4 tidak tampil ke siswa.'}
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="datetime-local"
+                    value={closesAtDraft}
+                    onChange={(e) => setClosesAtDraft(e.target.value)}
+                    aria-label="Tanggal dan jam penutupan forum"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={() => void handleSaveClosesAt()}
+                    disabled={savingClosesAt}
+                  >
+                    {savingClosesAt ? 'Menyimpan…' : 'Simpan Tanggal'}
+                  </button>
+                  {lesson.closes_at && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => void handleSaveClosesAt('')}
+                      disabled={savingClosesAt}
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="activity-action">
+              <button type="button" className="btn btn-primary btn-small" onClick={scrollToForumTopics}>
+                FORUM ›
+              </button>
+            </div>
             <p className="muted">
               Diskusi selesai bila kamu menulis minimal 2 tanggapan (postingan atau
               balasan). Progresmu: {myDiscussionCount}/2.
@@ -1254,12 +1536,17 @@ export default function LessonDetailPage() {
               <p className="error-box">{discussionError}</p>
             ) : selectedThread ? (
               <>
-                <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(null)}>
-                    ← Kembali ke daftar topik
+                {/* (D24.7) Bar atas thread: tombol kembali + judul
+                    terpotong + tombol refresh (ghost/hijau SINEVERSE,
+                    bukan biru). Sebelumnya hanya ada dua tombol tanpa
+                    judul thread. */}
+                <div className="thread-topbar">
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(null)} aria-label="Kembali ke daftar topik">
+                    ←
                   </button>
-                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleRefreshDiscussions()}>
-                    ⟳ Muat ulang
+                  <span className="thread-topbar-title">{excerpt(selectedThread.body, 60)}</span>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleRefreshDiscussions()} aria-label="Muat ulang diskusi" title="Muat ulang">
+                    ⟳
                   </button>
                 </div>
                 <div className="discussion-item">
@@ -1306,7 +1593,7 @@ export default function LessonDetailPage() {
                   {user && !isAdmin && reportingId === selectedThread.id && reportForm(selectedThread.id)}
                   {user && !isAdmin && replyTo !== selectedThread.id && (
                     <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo(selectedThread.id)}>
-                      ↩ Balas
+                      ↩ REPLY
                     </button>
                   )}
                   {user && !isAdmin && replyTo === selectedThread.id && (
@@ -1409,8 +1696,8 @@ export default function LessonDetailPage() {
                       </div>
                       {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
                       {user && !isAdmin && replyTo !== r.id && (
-                        <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyTo(r.id)}>
-                          Balas
+                        <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo(r.id)}>
+                          ↩ REPLY
                         </button>
                       )}
                     </li>
@@ -1444,6 +1731,11 @@ export default function LessonDetailPage() {
                     )}
                   </>
                 )}
+                {/* (D24.6) JUDUL bisa diklik (thread → buka thread;
+                    prompt → fokus kotak tulis seperti "Buka" D23);
+                    kolom AKSI menampilkan "—" seperti Mentari; judul
+                    baris prompt HURUF BESAR (CSS uppercase). */}
+                <div id="forum-topik">
                 <h3>Topik</h3>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -1456,32 +1748,33 @@ export default function LessonDetailPage() {
                     {discussionPrompt?.body ? (
                       <tr>
                         <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                          {excerpt(discussionPrompt.body, 80)}
+                          <button type="button" className="topic-title topic-prompt" onClick={openPromptTopic}>
+                            {excerpt(discussionPrompt.body, 80)}
+                          </button>
                           <span className="muted"> · Topik diskusi</span>
                         </td>
                         <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                          <button type="button" className="btn btn-ghost btn-small" onClick={openPromptTopic}>
-                            Buka
-                          </button>
+                          —
                         </td>
                       </tr>
                     ) : null}
                     {visibleTopLevel.map((d) => (
                       <tr key={d.id}>
                         <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                          {excerpt(d.body, 80)}
+                          <button type="button" className="topic-title" onClick={() => setSelectedThreadId(d.id)}>
+                            {excerpt(d.body, 80)}
+                          </button>
                           <span className="muted"> · {d.author?.name ?? 'Anggota'}</span>
                           {replies(d.id).length > 0 ? ` · ${replies(d.id).length} balasan` : ''}
                         </td>
                         <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setSelectedThreadId(d.id)}>
-                            Buka
-                          </button>
+                          —
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
                 {topLevel.length === 0 && (
                   <p className="empty">Belum ada diskusi dari siswa. Jadilah yang pertama menjawab topik di atas.</p>
                 )}
@@ -1532,24 +1825,31 @@ export default function LessonDetailPage() {
             )}
           </>
         )}
-      </section>
+      </>,
+      )}
 
-      <section className="section" aria-label="Posttest">
-        <h2>10. Posttest</h2>
-        <p className="muted">Kerjakan posttest setelah selesai mempelajari materi untuk mengukur pemahamanmu.</p>
-        {lockedPosttest ? (
-          lockBox('Forum Diskusi')
-        ) : quizError ? (
-          <p className="error-box">{quizError}</p>
-        ) : posttests.length === 0 ? (
-          <p className="empty">Belum tersedia.</p>
-        ) : (
-          quizItems(posttests)
-        )}
-      </section>
+      {activityCard(
+        9,
+        '10. Posttest',
+        posttestDone,
+        <>
+          {lockedPosttest ? (
+            lockBox('Forum Diskusi')
+          ) : quizError ? (
+            <p className="error-box">{quizError}</p>
+          ) : posttests.length === 0 ? (
+            <p className="empty">Belum tersedia.</p>
+          ) : (
+            quizCardItems(posttests)
+          )}
+        </>,
+      )}
 
-      <section className="section" aria-label="Kuesioner">
-        <h2>{meetingNumber !== null ? `Kuesioner Pertemuan ${meetingNumber}` : 'Kuesioner'}</h2>
+      {activityCard(
+        10,
+        meetingNumber !== null ? `Kuesioner Pertemuan ${meetingNumber}` : 'Kuesioner',
+        kuesionerDone,
+        <>
         <p className="muted">Penilaian terhadap mentor dan pembelajaran di pertemuan ini. Jawab Ya atau Tidak untuk tiap pernyataan.</p>
         {lockedKuesioner ? (
           lockBox('Posttest')
@@ -1609,24 +1909,29 @@ export default function LessonDetailPage() {
                     <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
                       {q.question}
                       <p className="muted">Jawaban</p>
-                      <label style={{ fontWeight: 400, marginRight: '1rem' }}>
-                        <input
-                          type="radio"
-                          name={q.id}
-                          checked={questionnaireAnswers[q.id] === true}
-                          onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: true }))}
-                        />{' '}
-                        Ya
-                      </label>
-                      <label style={{ fontWeight: 400 }}>
-                        <input
-                          type="radio"
-                          name={q.id}
-                          checked={questionnaireAnswers[q.id] === false}
-                          onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: false }))}
-                        />{' '}
-                        Tidak
-                      </label>
+                      {/* (D24.9) Radio Ya/Tidak HORIZONTAL berdampingan
+                          (class .quiz-radio-row): sebelumnya bertumpuk
+                          vertikal karena .form label display:flex column. */}
+                      <div className="quiz-radio-row">
+                        <label>
+                          <input
+                            type="radio"
+                            name={q.id}
+                            checked={questionnaireAnswers[q.id] === true}
+                            onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: true }))}
+                          />{' '}
+                          Ya
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name={q.id}
+                            checked={questionnaireAnswers[q.id] === false}
+                            onChange={() => setQuestionnaireAnswers((a) => ({ ...a, [q.id]: false }))}
+                          />{' '}
+                          Tidak
+                        </label>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1637,7 +1942,8 @@ export default function LessonDetailPage() {
             </button>
           </form>
         )}
-      </section>
+        </>,
+      )}
 
       {plainQuizzes.length > 0 && (
         <section className="section" aria-label="Cek pemahaman">
@@ -1712,6 +2018,26 @@ export default function LessonDetailPage() {
           <span />
         )}
       </nav>
+
+      {/* (D24.13) Drawer Course Index: General → atas halaman; pertemuan
+          → lesson itu; langkah → kartu langkah itu bila lesson ini yang
+          dibuka, kalau tidak pindah ke lesson-nya. */}
+      <CourseIndexDrawer
+        open={indexOpen}
+        onClose={() => setIndexOpen(false)}
+        courseTitle={courseTitle}
+        items={siblings.map((l, i) => ({ id: l.id, meetingNumber: i + 1, title: l.title }))}
+        activeId={lesson.id}
+        onSelectGeneral={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        onSelectItem={(item) => navigate(`/lesson/${item.id}`)}
+        onSelectStep={(item, stepIndex) => {
+          if (item.id === lesson.id) {
+            document.getElementById(`step-${stepIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          } else {
+            navigate(`/lesson/${item.id}`)
+          }
+        }}
+      />
 
     </div>
   )

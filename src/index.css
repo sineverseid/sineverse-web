@@ -1919,6 +1919,327 @@ p {
   white-space: nowrap;
 }
 
+/* --- Kartu aktivitas gaya Mentari (D24) --- */
+/* Tiap langkah alur 11 langkah dirender sebagai kartu berbingkai (bukan
+   seksi polos): ikon + judul di kepala kartu; bila langkah selesai,
+   border hijau + lingkaran centang hijau menempel di sudut kiri atas
+   kartu (ala Mentari). Tombol tetap hijau SINEVERSE, tanpa biru. */
+.activity-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.activity-card.activity-done {
+  border-color: var(--film-green);
+}
+
+.activity-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border-bottom: 1px solid var(--light-grey);
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.activity-card-head h2 {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--film-green);
+  flex: 0 0 auto;
+}
+
+.activity-check {
+  position: absolute;
+  top: -13px;
+  left: -13px;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--film-green);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.activity-action {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+
+/* --- Dropdown berlabel mengambang ala Mentari (D24) --- */
+/* Label menempel di garis atas border select, bukan placeholder di dalam. */
+.field-float {
+  position: relative;
+  flex: 1 1 200px;
+  margin-top: 0.6rem;
+}
+
+.field-float > label {
+  position: absolute;
+  top: -0.6em;
+  left: 0.6rem;
+  background: #fff;
+  padding: 0 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field-float > select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  font-family: var(--font);
+  font-size: 1rem;
+  background: #fff;
+}
+
+/* --- Tabel Topik forum (D24): JUDUL bisa diklik; baris prompt HURUF BESAR. --- */
+.topic-title {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.topic-title:hover {
+  color: var(--film-green);
+  text-decoration: underline;
+}
+
+.topic-prompt {
+  text-transform: uppercase;
+}
+
+/* --- Bar atas thread forum (D24): kembali + judul terpotong + refresh. --- */
+.thread-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.thread-topbar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* --- Radio kuesioner horizontal (D24) --- */
+/* .form label display:flex column membuat Ya/Tidak bertumpuk; baris ini
+   mengembalikan keduanya berdampingan seperti Mentari. */
+.quiz-radio-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.quiz-radio-row label {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400 !important;
+}
+
+/* --- Drawer "Course Index" (D24.13) --- */
+.course-index-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 60;
+}
+
+.course-index-drawer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(320px, 85vw);
+  background: #fff;
+  z-index: 61;
+  overflow-y: auto;
+  padding: 1rem 0.75rem;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+}
+
+.course-index-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.25rem 0.75rem;
+}
+
+.course-index-head h2 {
+  margin: 0;
+}
+
+.course-index-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.7rem 0.6rem;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.course-index-row.active {
+  background: var(--light-grey);
+}
+
+.course-index-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.course-index-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.course-index-chevron {
+  flex: 0 0 auto;
+  padding: 0.25rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  line-height: 0;
+}
+
+.course-index-steps {
+  list-style: none;
+  margin: 0 0 0.25rem;
+  padding: 0 0 0.5rem 2.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* --- Seksi per pertemuan di halaman course (D24.12) --- */
+.meeting-section {
+  background: #fff;
+  border: 1px solid var(--light-grey);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.meeting-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.meeting-section-head .meeting-section-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.meeting-section-head .meeting-section-title {
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+
+.meeting-section-head .meeting-subtitle {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.section-pill {
+  flex: 0 0 auto;
+  background: #fff;
+  color: var(--muted);
+  border: 1px solid var(--light-grey);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Ikon "?" kuis ala Mentari (D24): lencana teks, hijau SINEVERSE. */
+.step-icon-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1.5px solid var(--film-green);
+  border-radius: 6px;
+  color: var(--film-green);
+  font-weight: 800;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* Isi kosong kartu aktivitas ala Mentari: "No content". */
+.no-content {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* --- RPS --- */
 .week-list {
   background: #fff;

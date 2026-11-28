@@ -72,6 +72,9 @@ export interface Lesson {
   content: string | null
   created_at: string
   lesson_code?: string | null
+  /** Tanggal + jam penutupan forum diskusi pertemuan ini (migrasi 087,
+      D24.14). null = forum tidak punya tenggat penutupan. */
+  closes_at?: string | null
 }
 
 export interface Enrollment {
@@ -233,6 +236,9 @@ export interface QuizAttempt {
   score: number | null
   answers: unknown
   attempted_at: string
+  /** Durasi pengerjaan attempt ini, detik (migrasi 087, D24.14).
+      null = attempt lama tanpa durasi tercatat — UI menampilkan "—". */
+  duration_seconds?: number | null
 }
 
 /**

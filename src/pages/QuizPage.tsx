@@ -40,6 +40,15 @@ function formatElapsed(totalSeconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/** (D24.14) Format durasi pengerjaan ala Mentari: "28 Detik"; 60 detik
+    ke atas: "1 Menit 5 Detik", "2 Menit" (tanpa detik bila sisa 0). */
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds} Detik`
+  const m = Math.floor(totalSeconds / 60)
+  const s = totalSeconds % 60
+  return s === 0 ? `${m} Menit` : `${m} Menit ${s} Detik`
+}
+
 /** Satu soal dianggap sudah dijawab bila ada jawaban tak-kosong di state. */
 function isQuestionAnswered(q: QuizQuestion, answers: Record<string, string>): boolean {
   const v = answers[q.id]
@@ -65,6 +74,9 @@ interface QuizParticipantRow {
   province: string | null
   regency: string | null
   school: string | null
+  /** Durasi attempt terbaru, detik (migrasi 087, D24.14). null = belum
+      ada durasi tercatat (attempt lama / RPC lama) — UI menampilkan "—". */
+  duration_seconds: number | null
 }
 
 export default function QuizPage() {
@@ -100,6 +112,12 @@ export default function QuizPage() {
   // untuk siswa yang mengerjakan — tidak jalan di halaman detail, tidak
   // jalan saat pratinjau admin/mentor; berhenti saat jawaban dikirim.
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  // (D24.14) Waktu mulai pengerjaan (client-side, ms epoch): dicatat
+  // saat tampilan soal dibuka (openQuestions / Kerjakan ulang); saat
+  // submit, selisihnya (detik, dibulatkan) dikirim sebagai
+  // p_duration_seconds. Pratinjau admin/mentor tidak submit, jadi tidak
+  // ada durasi yang tercatat di sana.
+  const [questionStartedAt, setQuestionStartedAt] = useState<number | null>(null)
   // (D23) Pisah halaman detail vs soal (state toggle, tanpa route baru):
   // false = tampilan detail (kartu Detail + CTA + riwayat + peserta),
   // true = tampilan soal gaya Mentari (kembali + judul + timer + soal).
@@ -282,12 +300,32 @@ export default function QuizPage() {
       ? `Pertemuan ${meetingNumber} · ${lessonInfo.title}`
       : `Materi ${lessonInfo.order_index} · ${lessonInfo.title}`
     : null
+  // (D24) Baris tebal kartu soal cukup "Pertemuan {N}" — subtitle di
+  // atas kartu sudah membawa judul lesson. Fallback ke lessonLabel bila
+  // N tidak diketahui (tanpa mengarang nomor).
+  const meetingLabel = meetingNumber !== null ? `Pertemuan ${meetingNumber}` : null
   const totalQuestions = questions?.length ?? 0
   // Indeks aman: bila soal berkurang (mis. setelah muat ulang), jangan
   // keluar dari rentang.
   const safeIndex = totalQuestions === 0 ? 0 : Math.min(currentIndex, totalQuestions - 1)
   const currentQuestion = totalQuestions === 0 ? null : (questions as QuizQuestion[])[safeIndex]
   const hasAttempts = attempts.length > 0
+  // (D24) Pesan "soal belum dijawab" dihitung ULANG dari state jawaban
+  // saat ini di setiap render — bukan teks basi dari saat submit.
+  // Dulu teksnya dibekukan di state saat submit, jadi tetap tampil
+  // walau semua soal sudah dijawab sesudahnya (ditemukan live 06:59:
+  // teks basi tetap tampil padahal Q2 sudah dijawab, submit tetap
+  // berhasil). Bila tidak ada lagi soal belum dijawab, pesan hilang.
+  const liveFirstUnanswered = questions
+    ? questions.findIndex((q) => !isQuestionAnswered(q, answers))
+    : -1
+  const liveUnansweredCount = questions
+    ? questions.filter((q) => !isQuestionAnswered(q, answers)).length
+    : 0
+  const liveValidationMsg =
+    validationMsg !== null && liveFirstUnanswered !== -1
+      ? `Masih ada ${liveUnansweredCount} soal belum dijawab. Jawab soal ${liveFirstUnanswered + 1} dulu sebelum mengirim jawaban.`
+      : null
 
   function goPrev() {
     setValidationMsg(null)
@@ -302,6 +340,8 @@ export default function QuizPage() {
     setValidationMsg(null)
     setCurrentIndex(0)
     setElapsedSeconds(0)
+    // (D24.14) Catat waktu mulai pengerjaan untuk durasi attempt.
+    setQuestionStartedAt(Date.now())
     setShowQuestions(true)
   }
 
@@ -339,10 +379,27 @@ export default function QuizPage() {
     setSubmitting(true)
     setResult(null)
     try {
-      const { data, error: rpcErr } = await supabase.rpc('submit_quiz_attempt', {
+      // (D24.14) Durasi pengerjaan (detik, dibulatkan) sejak tampilan
+      // soal dibuka. Bila RPC 3-arg belum ada di live (migrasi 087 belum
+      // di-apply), coba RPC 2-arg lama supaya submit tetap jalan — durasi
+      // saja yang tidak tercatat. Bila kedua RPC tidak ada, fallback
+      // insert langsung (tanpa durasi, seperti perilaku lama).
+      const durationSeconds =
+        questionStartedAt !== null
+          ? Math.max(0, Math.round((Date.now() - questionStartedAt) / 1000))
+          : null
+      const res3 = await supabase.rpc('submit_quiz_attempt', {
         p_quiz_id: currentQuiz.id,
         p_answers: answers,
+        p_duration_seconds: durationSeconds,
       })
+      const { data, error: rpcErr } =
+        res3.error && String(res3.error.code) === 'PGRST202'
+          ? await supabase.rpc('submit_quiz_attempt', {
+              p_quiz_id: currentQuiz.id,
+              p_answers: answers,
+            })
+          : res3
       if (rpcErr) {
         if (isMissingTableError(rpcErr) || String(rpcErr.code) === 'PGRST202') {
           // RPC penilaian belum ada (migrasi 009 belum dijalankan): simpan
@@ -404,7 +461,7 @@ export default function QuizPage() {
             )
           )}
         </p>
-        {lessonLabel && <p style={{ margin: '0 0 0.5rem' }}><strong>{lessonLabel}</strong></p>}
+        {lessonLabel && <p style={{ margin: '0 0 0.5rem' }}><strong>{meetingLabel ?? lessonLabel}</strong></p>}
         <p style={{ margin: '0 0 0.75rem' }}><strong>{q.question}</strong></p>
         {q.kind === 'short' ? (
           interactive ? (
@@ -499,6 +556,14 @@ export default function QuizPage() {
 
   return (
     <div className="page">
+      {/* (D24) TAKEOVER PENUH layar soal: saat showQuestions, SEMUA
+          tampilan detail disembunyikan — bar atas, instruksi, kartu
+          Detail, banner, hasil — tampil HANYA tombol kembali + judul +
+          timer + kartu soal + navigasi di blok showQuestions di bawah
+          (URL tetap sama, tanpa route baru). D23 hanya menyembunyikan
+          Riwayat + Peserta; kartu Detail masih terlihat di atas soal. */}
+      {!showQuestions && (
+        <>
       {/* (a) Bar atas tampilan DETAIL: tombol kembali + judul tampil +
           label pertemuan. Tanpa kotak timer — timer hanya tampil dan
           berjalan di tampilan soal (D23). */}
@@ -533,6 +598,8 @@ export default function QuizPage() {
               setAnswers({})
               setCurrentIndex(0)
               setElapsedSeconds(0)
+              // (D24.14) Ulangi pencatatan waktu mulai untuk attempt baru.
+              setQuestionStartedAt(Date.now())
               setValidationMsg(null)
               setShowQuestions(true)
             }}
@@ -569,9 +636,13 @@ export default function QuizPage() {
         <p className="muted" style={{ marginBottom: 0 }}>Selesai</p>
         <p style={{ marginTop: 0 }}>{latestAttempt ? new Date(latestAttempt.attempted_at).toLocaleString('id-ID') : '—'}</p>
         <p className="muted" style={{ marginBottom: 0 }}>Waktu Penyelesaian</p>
-        {/* quiz_attempts TIDAK punya kolom durasi/started_at — jangan
-            dikarang; tampilkan "—" sampai skema mencatat durasi. */}
-        <p style={{ marginTop: 0 }}>—</p>
+        {/* (D24.14) Durasi attempt terbaru bila tercatat (migrasi 087);
+            attempt LAMA tanpa durasi tetap "—" — jangan dikarang. */}
+        <p style={{ marginTop: 0 }}>
+          {latestAttempt?.duration_seconds != null
+            ? formatDuration(latestAttempt.duration_seconds)
+            : '—'}
+        </p>
         {/* Admin/mentor (mode pantau/pratinjau) melihat soal read-only:
             tombolnya "LIHAT SOAL", bukan "KERJAKAN QUIZ". */}
         <button type="button" className="btn btn-primary" onClick={openQuestions}>
@@ -584,6 +655,8 @@ export default function QuizPage() {
           di atas yang berbicara). */}
       {hasAttempts && result === null && (
         <p className="notice-box">Quiz Sudah Selesai</p>
+      )}
+        </>
       )}
 
       {/* (D23) Soal HANYA tampil setelah klik KERJAKAN QUIZ / LIHAT SOAL
@@ -648,7 +721,7 @@ export default function QuizPage() {
                 {renderQuestionCard(currentQuestion, safeIndex, true)}
               </>
             )}
-            {validationMsg && <p className="error-box" style={{ margin: 0 }}>{validationMsg}</p>}
+            {liveValidationMsg && <p className="error-box" style={{ margin: 0 }}>{liveValidationMsg}</p>}
             {renderNav(true)}
           </form>
         )}
@@ -688,26 +761,35 @@ export default function QuizPage() {
               placeholder="Cari Peserta (Nama / Sekolah)"
               style={{ flex: '1 1 200px', padding: '0.5rem 0.75rem', border: '1px solid var(--light-grey)', borderRadius: 8, fontFamily: 'var(--font)' }}
             />
-            <select
-              value={pStatus}
-              onChange={(e) => setPStatus(e.target.value as 'all' | 'done' | 'not')}
-              aria-label="Status Quiz"
-              style={{ padding: '0.5rem 0.75rem', border: '1px solid var(--light-grey)', borderRadius: 8, fontFamily: 'var(--font)' }}
-            >
-              <option value="all">Semua Status Quiz</option>
-              <option value="done">Sudah Mengerjakan</option>
-              <option value="not">Belum Mengerjakan</option>
-            </select>
-            <select
-              value={pSort}
-              onChange={(e) => setPSort(e.target.value as 'name' | 'score' | 'recent')}
-              aria-label="Urut Berdasarkan"
-              style={{ padding: '0.5rem 0.75rem', border: '1px solid var(--light-grey)', borderRadius: 8, fontFamily: 'var(--font)' }}
-            >
-              <option value="name">Nama A-Z</option>
-              <option value="score">Nilai Tertinggi</option>
-              <option value="recent">Terbaru</option>
-            </select>
+            {/* (D24) Dropdown gaya outline + floating label ala Mentari:
+                label "Status Quiz" / "Urut Berdasarkan" menempel di garis
+                atas border select (class .field-float di index.css). */}
+            <div className="field-float">
+              <label htmlFor="quiz-filter-status">Status Quiz</label>
+              <select
+                id="quiz-filter-status"
+                value={pStatus}
+                onChange={(e) => setPStatus(e.target.value as 'all' | 'done' | 'not')}
+                aria-label="Status Quiz"
+              >
+                <option value="all">Semua Status Quiz</option>
+                <option value="done">Sudah Mengerjakan</option>
+                <option value="not">Belum Mengerjakan</option>
+              </select>
+            </div>
+            <div className="field-float">
+              <label htmlFor="quiz-filter-sort">Urut Berdasarkan</label>
+              <select
+                id="quiz-filter-sort"
+                value={pSort}
+                onChange={(e) => setPSort(e.target.value as 'name' | 'score' | 'recent')}
+                aria-label="Urut Berdasarkan"
+              >
+                <option value="name">Nama A-Z</option>
+                <option value="score">Nilai Tertinggi</option>
+                <option value="recent">Terbaru</option>
+              </select>
+            </div>
           </div>
           {(participants ?? []).length === 0 ? (
             <p className="empty">Belum ada peserta.</p>
@@ -744,9 +826,12 @@ export default function QuizPage() {
                     <p className="muted" style={{ marginBottom: 0 }}>Selesai</p>
                     <p style={{ marginTop: 0 }}>{p.attempted_at ? new Date(p.attempted_at).toLocaleString('id-ID') : '—'}</p>
                     <p className="muted" style={{ marginBottom: 0 }}>Waktu Penyelesaian</p>
-                    {/* RPC tidak mengembalikan durasi (quiz_attempts tidak
-                        punya kolom durasi/started_at) — tampilkan "—". */}
-                    <p style={{ marginBottom: 0 }}>—</p>
+                    {/* (D24.14) Durasi attempt terbaru peserta bila tercatat
+                        (RPC 085 yang diperbarui migrasi 087); attempt lama
+                        tetap "—". */}
+                    <p style={{ marginBottom: 0 }}>
+                      {p.duration_seconds != null ? formatDuration(p.duration_seconds) : '—'}
+                    </p>
                   </div>
                 </li>
               ))}

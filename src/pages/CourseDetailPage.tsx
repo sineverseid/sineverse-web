@@ -24,8 +24,9 @@
 // sudah dimuat sebelumnya. Gate §3: lesson terkunci untuk siswa bila
 // course belum punya mentor, termasuk peserta yang sudah terdaftar.
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import CourseIndexDrawer from '../components/CourseIndexDrawer'
 import Icon from '../components/icons'
 import { useAuth } from '../context/AuthContext'
 import { courseIllustration, GRADEBOOK_WEIGHTS, PASSING_GRADE, rpsWeekLabel } from '../lib/brand'
@@ -42,10 +43,13 @@ import {
   fetchDiscussionsForLessons,
   fetchEnrollment,
   fetchLessonProgress,
+  fetchLessonResources,
   fetchLiveClasses,
   fetchMentorName,
   fetchModules,
   fetchPublicCourse,
+  fetchQuestionnaireResponses,
+  fetchQuestionnairesForLessons,
   fetchQuizAttempts,
   fetchQuizzesForLessons,
   fetchSubmissions,
@@ -61,8 +65,11 @@ import type {
   GradeComponents,
   Lesson,
   LessonProgress,
+  LessonResource,
   LiveClass,
   Module,
+  Questionnaire,
+  QuestionnaireResponse,
   Quiz,
   QuizAttempt,
   Submission,
@@ -184,6 +191,22 @@ export default function CourseDetailPage() {
   // Tab aktif: siswa/mentor Deskripsi / Materi / Tugas / Diskusi;
   // admin Ringkasan / Aktivitas.
   const [activeTab, setActiveTab] = useState('deskripsi')
+  // (D24.12) Data per-lesson untuk kartu aktivitas di tab Materi:
+  // kuis, resources, kuesioner, attempt/submission/respons milik user.
+  // null/[] = belum dimuat; stepsFailed = gagal dimuat (fail-open: kartu
+  // tetap tampil, kunci tidak mengunci siswa karena data gagal dibaca).
+  const [courseQuizzes, setCourseQuizzes] = useState<Quiz[]>([])
+  const [lessonResourcesById, setLessonResourcesById] = useState<Record<string, LessonResource[]>>({})
+  const [lessonQuestionnaires, setLessonQuestionnaires] = useState<Questionnaire[]>([])
+  const [myAttempts, setMyAttempts] = useState<QuizAttempt[]>([])
+  const [mySubmissions, setMySubmissions] = useState<Submission[]>([])
+  const [myQResponses, setMyQResponses] = useState<QuestionnaireResponse[]>([])
+  const [stepsFailed, setStepsFailed] = useState(false)
+  // (D24.12) Seksi pertemuan yang sedang dibuka di tab Materi.
+  // null = default (pertemuan berikutnya yang belum selesai); '' = semua
+  // ditutup. (D24.13) Drawer Course Index memakai state yang sama.
+  const [expandedLessonId, setExpandedLessonId] = useState<string | null>(null)
+  const [indexOpen, setIndexOpen] = useState(false)
 
   const [code, setCode] = useState('')
   const [askCode, setAskCode] = useState(false)
@@ -357,6 +380,47 @@ export default function CourseDetailPage() {
           }
         })()
 
+        const stepsTask = (async () => {
+          // (D24.12) Data per-lesson untuk kartu aktivitas di tab Materi:
+          // kuis + resources + kuesioner + attempt/submission/respons user.
+          // Resources diambil per lesson (tidak ada fetch batch-nya);
+          // satu lesson gagal tidak boleh merusak lesson lain.
+          if (!user) return
+          try {
+            const lessons = await modulesTask
+            if (lessons.length === 0) return
+            const lessonIds = lessons.map((l) => l.id)
+            const [quizzes, qnrs, attempts, submissions, qresponses] = await Promise.all([
+              fetchQuizzesForLessons(lessonIds),
+              fetchQuestionnairesForLessons(lessonIds),
+              fetchQuizAttempts(user.id),
+              fetchSubmissions(user.id),
+              fetchQuestionnaireResponses(user.id),
+            ])
+            const resEntries = await Promise.all(
+              lessonIds.map(async (lid) => {
+                try {
+                  return [lid, await fetchLessonResources(lid)] as const
+                } catch {
+                  return [lid, []] as const
+                }
+              }),
+            )
+            if (cancelled) return
+            setCourseQuizzes(quizzes)
+            setLessonQuestionnaires(qnrs)
+            setMyAttempts(attempts)
+            setMySubmissions(submissions)
+            setMyQResponses(qresponses)
+            setLessonResourcesById(Object.fromEntries(resEntries))
+          } catch {
+            // Gagal dimuat: kartu tetap tampil dengan fail-open (langkah
+            // dianggap selesai supaya kunci tidak mengunci karena data
+            // gagal dibaca — cerminan derivasi LessonDetailPage).
+            if (!cancelled) setStepsFailed(true)
+          }
+        })()
+
         const statsTask = (async () => {
           // Baris statistik mentor/admin: Total Siswa (jumlah enrollment
           // course ini) dan Tingkat Selesai (% peserta yang menyelesaikan
@@ -463,7 +527,7 @@ export default function CourseDetailPage() {
             ])
           : Promise.resolve()
 
-        await Promise.all([mentorTask, modulesTask, userTasks, gradesTask, liveTask, listsTask, statsTask])
+        await Promise.all([mentorTask, modulesTask, userTasks, gradesTask, liveTask, listsTask, stepsTask, statsTask])
       } catch {
         if (!cancelled) setError('Gagal memuat course. Periksa koneksi lalu coba lagi.')
       } finally {
@@ -541,6 +605,300 @@ export default function CourseDetailPage() {
     if (d.parent_id) replyCounts.set(d.parent_id, (replyCounts.get(d.parent_id) ?? 0) + 1)
   }
   const topDiscussions = courseDiscussions.filter((d) => !d.parent_id)
+
+  // (D24.12) Derivasi status 11 langkah per lesson — cerminan
+  // LessonDetailPage §2 (RENCANA.md), dipakai kartu aktivitas tab Materi.
+  const upcomingLive = liveClasses.filter(
+    (lc) => lc.scheduled_at && new Date(lc.scheduled_at).getTime() >= Date.now(),
+  )
+  const moduleLabelById = new Map(
+    modules.map((m) => [
+      m.id,
+      m.title && m.title.trim()
+        ? m.title
+        : m.order_index === 0
+          ? 'Orientasi'
+          : m.order_index === 1
+            ? 'Section 1'
+            : m.order_index === 2
+              ? 'Section 2'
+              : `Modul ${m.order_index + 1}`,
+    ]),
+  )
+  const lessonProgressById = new Map(progress.map((p) => [p.lesson_id, p.status]))
+  const releaseLabelById = new Map(modules.map((m) => [m.id, m.release_label ?? '']))
+  const applyStepLocks = !!user && !isAdmin && course.mentor_id !== user?.id
+
+  // Ikon per langkah — sama dengan kartu lesson (D24.1): "?" untuk kuis,
+  // dokumen untuk materi, clipboard untuk tugas, tautan untuk VCON,
+  // pesan untuk forum, grafik untuk kuesioner.
+  const stepIcon = (step: number) => {
+    switch (step) {
+      case 0:
+      case 9:
+        return <span className="step-icon-q" aria-hidden="true">?</span>
+      case 6:
+        return <Icon name="clipboard" size={22} />
+      case 7:
+        return <Icon name="link" size={22} />
+      case 8:
+        return <Icon name="message" size={22} />
+      case 10:
+        return <Icon name="chart" size={22} />
+      default:
+        return <Icon name="fileText" size={22} />
+    }
+  }
+
+  // (D24.12) Satu kartu aktivitas di tab Materi: struktur yang sama dengan
+  // kartu lesson (border; selesai = border hijau + centang menempel di sudut
+  // kiri atas; ikon + judul; isi; tombol aksi kanan bawah). `locked` =
+  // tampilkan kotak kunci, sembunyikan tombol aksi (kartu terkunci tidak
+  // bisa diklik).
+  const meetingStepCard = (
+    lessonId: string,
+    step: number,
+    title: string,
+    done: boolean,
+    locked: boolean,
+    lockPrev: string,
+    body: ReactNode,
+    action?: ReactNode,
+  ) => (
+    <div
+      key={`${lessonId}-${step}`}
+      className={`activity-card${done ? ' activity-done' : ''}`}
+      id={`course-step-${lessonId}-${step}`}
+    >
+      {done && <span className="activity-check" aria-label="Selesai">✓</span>}
+      <div className="activity-card-head">
+        <span className="activity-icon">{stepIcon(step)}</span>
+        <h2>{title}</h2>
+      </div>
+      {locked ? <p className="notice-box">Terkunci. Selesaikan dulu: {lockPrev}.</p> : body}
+      {!locked && action && <div className="activity-action">{action}</div>}
+    </div>
+  )
+
+  // Baris resource bertipe link ala Mentari: "LINK URL : [ikon] judul".
+  const resourceRows = (list: LessonResource[]) => (
+    <ul className="list">
+      {list.map((r) => (
+        <li key={r.id}>
+          {r.url ? (
+            <p style={{ margin: 0 }}>
+              LINK URL :{' '}
+              <a href={r.url} target="_blank" rel="noreferrer">
+                <Icon name="link" size={16} /> {r.title}
+              </a>
+            </p>
+          ) : (
+            <span>{r.title}</span>
+          )}
+          {r.kind === 'reading' && r.body ? <p>{r.body}</p> : null}
+        </li>
+      ))}
+    </ul>
+  )
+
+  // (D24.12) 11 kartu aktivitas satu lesson untuk tab Materi. Judul kuis
+  // tampil ("Pretest - Pertemuan N") seperti halaman lesson; tautan VCON
+  // adalah kelas live course (live_classes tidak punya lesson_id — sama
+  // seperti halaman lesson yang menampilkan semua kelas live mendatang di
+  // tiap lesson). Kartu kuis langsung ke halaman kuis; kartu lain (aksi)
+  // ke halaman lesson pada langkah itu.
+  const meetingCards = (lesson: Lesson, meetingNumber: number) => {
+    const resources = (lessonResourcesById[lesson.id] ?? []).filter(
+      (r) => !(r.kind === 'reading' && r.title === 'Topik diskusi'),
+    )
+    const buku = resources.filter((r) => r.kind === 'reading')
+    const video = resources.filter((r) => r.kind === 'video')
+    const ppt = resources.filter((r) => r.kind === 'pdf')
+    const artikel = resources.filter((r) => r.kind === 'link')
+    const lain = resources.filter((r) => r.kind === 'image' || r.kind === 'file')
+    const pretests = courseQuizzes.filter(
+      (q) => q.lesson_id === lesson.id && (q.kind ?? 'quiz') === 'pretest',
+    )
+    const posttests = courseQuizzes.filter(
+      (q) => q.lesson_id === lesson.id && (q.kind ?? 'quiz') === 'posttest',
+    )
+    const lessonAssignments = courseAssignments.filter((a) => a.lesson_id === lesson.id)
+    const questionnaire = lessonQuestionnaires.find((q) => q.lesson_id === lesson.id) ?? null
+    const myCount = user
+      ? courseDiscussions.filter((d) => d.lesson_id === lesson.id && d.user_id === user.id).length
+      : 0
+    const attempted = (list: Quiz[]) =>
+      list.some((q) => myAttempts.some((a) => a.quiz_id === q.id))
+    const quizTitle = (q: Quiz) => {
+      const kind = q.kind ?? 'quiz'
+      return kind === 'pretest' || kind === 'posttest'
+        ? `${kind === 'pretest' ? 'Pretest' : 'Posttest'} - Pertemuan ${meetingNumber}`
+        : q.title
+    }
+    const pretestDone = pretests.length === 0 || attempted(pretests) || stepsFailed
+    const lessonStatus = lessonProgressById.get(lesson.id)
+    const materiDone = lessonStatus === 'in_progress' || lessonStatus === 'completed'
+    const tugasDone =
+      lessonAssignments.length === 0 ||
+      lessonAssignments.some((a) => mySubmissions.some((s) => s.assignment_id === a.id)) ||
+      stepsFailed
+    const vconDone = upcomingLive.length === 0 || stepsFailed
+    const diskusiDone = myCount >= 2 || stepsFailed
+    const posttestDone = posttests.length === 0 || attempted(posttests) || stepsFailed
+    const kuesionerDone =
+      questionnaire !== null &&
+      myQResponses.some((r) => r.questionnaire_id === questionnaire.id)
+    const lockedMateri = applyStepLocks && !pretestDone
+    const lockedTugas = applyStepLocks && !materiDone
+    const lockedVcon = applyStepLocks && !tugasDone
+    const lockedDiskusi = applyStepLocks && !vconDone
+    const lockedPosttest = applyStepLocks && !diskusiDone
+    const lockedKuesioner = applyStepLocks && !posttestDone
+    const quizBody = (list: Quiz[]) => (
+      <>
+        {list.map((q) => (
+          <p key={q.id} style={{ margin: '0 0 0.25rem' }}>
+            <Link to={`/kuis/${q.id}`}><strong>{quizTitle(q)}</strong></Link>
+          </p>
+        ))}
+        <p style={{ margin: '0.25rem 0 0' }}>Kerjakan Dengan Cepat dan Tepat</p>
+      </>
+    )
+    const quizAction = (list: Quiz[]) =>
+      list.length > 0 ? (
+        <Link to={`/kuis/${list[0].id}`} className="btn btn-primary btn-small">
+          QUIZ ›
+        </Link>
+      ) : undefined
+    return (
+      <>
+        {meetingStepCard(
+          lesson.id, 0, 'Pretest', pretestDone, false, '',
+          pretests.length === 0 ? <p className="no-content">No content</p> : quizBody(pretests),
+          quizAction(pretests),
+        )}
+        {meetingStepCard(
+          lesson.id, 1, 'Buku ISBN', materiDone, lockedMateri, 'Pretest',
+          buku.length === 0 && !lesson.content ? (
+            <p className="no-content">No content</p>
+          ) : (
+            <>
+              {lesson.content ? (
+                <p>
+                  {lesson.content.length > 200 ? `${lesson.content.slice(0, 200)}…` : lesson.content}
+                </p>
+              ) : null}
+              {buku.length > 0 && resourceRows(buku)}
+            </>
+          ),
+        )}
+        {meetingStepCard(
+          lesson.id, 2, 'Video Ajar', materiDone, lockedMateri, 'Pretest',
+          !lesson.video_url && video.length === 0 ? (
+            <p className="no-content">No content</p>
+          ) : (
+            <>
+              {lesson.video_url ? (
+                <p style={{ margin: '0 0 0.5rem' }}>
+                  LINK URL :{' '}
+                  <a href={lesson.video_url} target="_blank" rel="noreferrer">
+                    <Icon name="link" size={16} /> Buka Video
+                  </a>
+                </p>
+              ) : null}
+              {video.length > 0 && resourceRows(video)}
+            </>
+          ),
+        )}
+        {meetingStepCard(
+          lesson.id, 3, 'Power Point', materiDone, lockedMateri, 'Pretest',
+          ppt.length === 0 ? <p className="no-content">No content</p> : resourceRows(ppt),
+        )}
+        {meetingStepCard(
+          lesson.id, 4, 'Artikel Riset', materiDone, lockedMateri, 'Pretest',
+          artikel.length === 0 ? <p className="no-content">No content</p> : resourceRows(artikel),
+        )}
+        {meetingStepCard(
+          lesson.id, 5, 'Materi Lainnya', materiDone, lockedMateri, 'Pretest',
+          lain.length === 0 ? <p className="no-content">No content</p> : resourceRows(lain),
+        )}
+        {meetingStepCard(
+          lesson.id, 6, 'Penugasan Terstruktur', tugasDone, lockedTugas, 'Materi',
+          lessonAssignments.length === 0 ? (
+            <p className="no-content">No content</p>
+          ) : (
+            <ul className="list">
+              {lessonAssignments.map((a) => (
+                <li key={a.id}>
+                  <Link to={`/tugas/${a.id}`}><strong>{a.title}</strong></Link>
+                  {a.description ? `, ${a.description}` : ''} (maks. {a.max_score})
+                </li>
+              ))}
+            </ul>
+          ),
+        )}
+        {meetingStepCard(
+          lesson.id, 7, 'LINK VCON', vconDone, lockedVcon, 'Penugasan Terstruktur',
+          upcomingLive.length === 0 ? (
+            <p className="no-content">No content</p>
+          ) : (
+            <>
+              <p>Berikut adalah Link VCON untuk Pertemuan ini</p>
+              <ul className="list">
+                {upcomingLive.map((lc) => (
+                  <li key={lc.id}>
+                    <p style={{ margin: '0 0 0.25rem' }}>
+                      <strong>{lc.title}</strong>
+                      {lc.scheduled_at ? ` — ${new Date(lc.scheduled_at).toLocaleString('id-ID')}` : ''}
+                    </p>
+                    {lc.meet_url ? (
+                      <p style={{ margin: 0 }}>
+                        LINK URL :{' '}
+                        <a href={lc.meet_url} target="_blank" rel="noreferrer">
+                          <Icon name="link" size={16} /> Gabung Kelas Live
+                        </a>
+                      </p>
+                    ) : (
+                      <p className="muted" style={{ margin: 0 }}>Tautan kelas live belum tersedia.</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ),
+        )}
+        {meetingStepCard(
+          lesson.id, 8, 'Forum Diskusi', diskusiDone, lockedDiskusi, 'LINK VCON',
+          <p style={{ margin: 0 }}>
+            {myCount > 0
+              ? `${myCount} tanggapanmu di forum ini (butuh 2 untuk selesai).`
+              : 'Belum ada diskusi darimu di forum ini.'}
+          </p>,
+          <Link to={`/lesson/${lesson.id}`} className="btn btn-primary btn-small">
+            FORUM ›
+          </Link>,
+        )}
+        {meetingStepCard(
+          lesson.id, 9, 'Posttest', posttestDone, lockedPosttest, 'Forum Diskusi',
+          posttests.length === 0 ? <p className="no-content">No content</p> : quizBody(posttests),
+          quizAction(posttests),
+        )}
+        {meetingStepCard(
+          lesson.id, 10, 'Kuesioner', kuesionerDone, lockedKuesioner, 'Posttest',
+          questionnaire === null ? (
+            <p className="no-content">No content</p>
+          ) : (
+            <p style={{ margin: 0 }}>Penilaian terhadap mentor dan pembelajaran di pertemuan ini.</p>
+          ),
+          questionnaire === null ? undefined : (
+            <Link to={`/lesson/${lesson.id}`} className="btn btn-primary btn-small">
+              KUESIONER ›
+            </Link>
+          ),
+        )}
+      </>
+    )
+  }
 
   async function doEnroll() {
     if (!user || !course) return
@@ -788,6 +1146,18 @@ export default function CourseDetailPage() {
     </section>
   )
 
+  // (D24.12) Tab Materi gaya Mentari: tiap lesson jadi satu SEKSI —
+  // header "Pertemuan {N}" + subjudul lesson + pil Section kanan atas;
+  // seksi yang belum aktif hanya menampilkan header (collapsed). Di
+  // dalam seksi yang aktif: 11 kartu aktivitas inline (meetingCards).
+  // "Nilai per Komponen" + tautan Gradebook TIDAK dipindah (tetap di
+  // bawah tab, seperti sekarang). Pengelompokan modul lama
+  // (Orientasi/Section 1/Section 2 sebagai grup) diganti daftar datar
+  // per pertemuan; nama grup modul tetap tampil sebagai pil di header.
+  const expandedMeetingId =
+    expandedLessonId === ''
+      ? null
+      : (expandedLessonId ?? nextLesson?.id ?? allLessons[0]?.id ?? null)
   const materiPanel = (
     <section className="section" aria-label="Materi">
       <h2>Kurikulum</h2>
@@ -798,83 +1168,48 @@ export default function CourseDetailPage() {
       {modules.length === 0 ? (
         <p className="empty">Belum ada modul di course ini.</p>
       ) : (
-        modules.map((m) => {
-          // Section = modul order_index 1 (Section 1) atau 2 (Section 2);
-          // Orientasi (order_index 0) tampil sebagai grup kecil sendiri.
-          const isSection = m.order_index === 1 || m.order_index === 2
-          const sectionDone = m.lessons.filter((l) => doneIds.has(l.id)).length
-          // B29: penyebut + ambang selesai memakai jumlah lesson aktual
-          // modul (section 3-lesson dulu tidak pernah bisa "Selesai").
-          const sectionTotal = m.lessons.length
-          const sectionComplete = isSection && sectionTotal > 0 && sectionDone >= sectionTotal
-          const groupTitle =
-            m.title && m.title.trim()
-              ? m.title
-              : m.order_index === 0
-                ? 'Orientasi'
-                : m.order_index === 1
-                  ? 'Section 1'
-                  : m.order_index === 2
-                    ? 'Section 2'
-                    : `Modul ${m.order_index + 1}`
+        allLessons.map((l, i) => {
+          const meetingNumber = i + 1
+          const done = doneIds.has(l.id)
+          // Gate Master Prompt §3 (sama seperti daftar lama): siswa belum
+          // boleh memulai course sebelum mentor ditetapkan. Peserta yang
+          // sudah terdaftar pun terkunci bila mentor course hilang;
+          // mentor pengampu dan admin tetap bisa membuka lesson.
+          const locked =
+            (!enrolled || noMentor) &&
+            course.mentor_id !== user?.id &&
+            profile?.role !== 'admin'
+          const isOpen = expandedMeetingId === l.id
           return (
-          <div key={m.id} className="module-block">
-            <h3>
-              {groupTitle}
-              {m.release_label ? ` · ${m.release_label}` : ''}
-              {isSection && (
-                <>
-                  {' · '}
-                  <span className="muted">
-                    {sectionDone}/{sectionTotal} selesai
+            <div key={l.id} className="meeting-section" id={`pertemuan-${meetingNumber}`}>
+              <button
+                type="button"
+                className="meeting-section-head"
+                onClick={() => setExpandedLessonId(isOpen ? '' : l.id)}
+                aria-expanded={isOpen}
+                disabled={locked}
+              >
+                <span className="meeting-section-titles">
+                  <span className="meeting-section-title">Pertemuan {meetingNumber}</span>
+                  <span className="meeting-subtitle">
+                    {l.lesson_code ? `${l.lesson_code}, ` : ''}
+                    {l.title}
+                    {done ? ' ✓' : ''}
+                    {releaseLabelById.get(l.module_id) ? ` · ${releaseLabelById.get(l.module_id)}` : ''}
                   </span>
-                  {sectionComplete && (
-                    <>
-                      {' '}
-                      <span className="badge-pass">Selesai</span>
-                    </>
-                  )}
-                </>
+                </span>
+                <span className="section-pill">{moduleLabelById.get(l.module_id) ?? 'Section'}</span>
+                <span aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+              </button>
+              {locked && (
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  {noMentor
+                    ? 'Menunggu mentor — lesson belum bisa dimulai.'
+                    : 'Daftar dulu untuk membuka.'}
+                </p>
               )}
-            </h3>
-            {m.lessons.length === 0 ? (
-              <p className="empty">Belum ada lesson di modul ini.</p>
-            ) : (
-              <ol className="lesson-list">
-                {m.lessons.map((l) => {
-                  const done = doneIds.has(l.id)
-                  // Gate Master Prompt §3: siswa belum boleh memulai
-                  // course sebelum mentor ditetapkan. Peserta yang sudah
-                  // terdaftar pun terkunci bila mentor course hilang
-                  // (mis. mentor dilepas setelah pendaftaran); mentor
-                  // pengampu dan admin tetap bisa membuka lesson.
-                  const locked =
-                    (!enrolled || noMentor) &&
-                    course.mentor_id !== user?.id &&
-                    profile?.role !== 'admin'
-                  return (
-                    <li key={l.id}>
-                      {locked ? (
-                        <span className="lesson-locked">
-                          {l.lesson_code ? `${l.lesson_code}, ` : ''}
-                          {l.title}{' '}
-                          {noMentor
-                            ? '(menunggu mentor — lesson belum bisa dimulai)'
-                            : '(daftar dulu untuk membuka)'}
-                        </span>
-                      ) : (
-                        <Link to={`/lesson/${l.id}`}>
-                          {l.lesson_code ? `${l.lesson_code}, ` : ''}
-                          {l.title}
-                          {done ? ' ✓' : ''}
-                        </Link>
-                      )}
-                    </li>
-                  )
-                })}
-              </ol>
-            )}
-          </div>
+              {isOpen && !locked && meetingCards(l, meetingNumber)}
+            </div>
           )
         })
       )}
@@ -1147,6 +1482,13 @@ export default function CourseDetailPage() {
         </div>
       )}
 
+      {/* (D24.13) Tombol pembuka drawer Course Index. */}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => setIndexOpen(true)}>
+          ☰ Course Index
+        </button>
+      </div>
+
       <div className="detail-tabs" role="tablist" aria-label="Bagian course">
         {tabList.map((t) => (
           <button
@@ -1191,6 +1533,37 @@ export default function CourseDetailPage() {
           )}
         </>
       )}
+
+      {/* (D24.13) Drawer Course Index: General → atas halaman; pertemuan
+          → buka tab Materi + expand seksi itu + scroll ke sana; langkah →
+          scroll ke kartu langkah itu di seksi yang dibuka. Scroll
+          ditunda 50 ms supaya tab Materi sempat ter-render dulu. */}
+      <CourseIndexDrawer
+        open={indexOpen}
+        onClose={() => setIndexOpen(false)}
+        courseTitle={course.title}
+        items={allLessons.map((l, i) => ({ id: l.id, meetingNumber: i + 1, title: l.title }))}
+        activeId={expandedMeetingId}
+        onSelectGeneral={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        onSelectItem={(item) => {
+          setActiveTab('materi')
+          setExpandedLessonId(item.id)
+          window.setTimeout(() => {
+            document
+              .getElementById(`pertemuan-${item.meetingNumber ?? 0}`)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 50)
+        }}
+        onSelectStep={(item, stepIndex) => {
+          setActiveTab('materi')
+          setExpandedLessonId(item.id)
+          window.setTimeout(() => {
+            document
+              .getElementById(`course-step-${item.id}-${stepIndex}`)
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 50)
+        }}
+      />
     </div>
   )
 }
