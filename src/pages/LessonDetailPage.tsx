@@ -30,6 +30,7 @@ import {
   fetchLessons,
   fetchLiveClasses,
   fetchModules,
+  fetchProfile,
   fetchQuestionnaireQuestions,
   fetchQuestionnaireResponses,
   fetchQuestionnairesForLessons,
@@ -150,12 +151,17 @@ export default function LessonDetailPage() {
   const [vconAcknowledged, setVconAcknowledged] = useState(false)
   const [attachments, setAttachments] = useState<DiscussionAttachment[]>([])
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  // (D26) Thread topik: dibuka dari baris prompt tabel Topik — kartu
+  // pembuka = prompt "Topik diskusi" (penulis = mentor pengampu), lalu
+  // postingan top-level sebagai balasannya.
+  const [promptThreadOpen, setPromptThreadOpen] = useState(false)
+  // (D26) Nama mentor pengampu (untuk kartu pembuka thread topik).
+  const [mentorName, setMentorName] = useState<string | null>(null)
   const [newPostFile, setNewPostFile] = useState<File | null>(null)
   const [replyFile, setReplyFile] = useState<File | null>(null)
 
   const [newPost, setNewPost] = useState('')
-  // (D23) Ref textarea form diskusi baru: tombol "Buka" pada baris prompt
-  // di tabel Topik mengarahkan ke sini (lihat openPromptTopic).
+  // Ref textarea form diskusi baru.
   const newPostRef = useRef<HTMLTextAreaElement | null>(null)
   const [discussionQuery, setDiscussionQuery] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -208,6 +214,21 @@ export default function LessonDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discussions.length, user?.id])
+
+  // (D26) Nama mentor pengampu untuk kartu pembuka thread topik
+  // ("Topik diskusi" ditulis mentor). Gagal muat → tampil "Mentor".
+  useEffect(() => {
+    if (!mentorId) return
+    let cancelled = false
+    void fetchProfile(mentorId)
+      .then((p) => {
+        if (!cancelled) setMentorName(p?.name ?? null)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [mentorId])
 
   useEffect(() => {
     if (!id) return
@@ -688,10 +709,18 @@ export default function LessonDetailPage() {
   const artikelResources = materiResources.filter((r) => r.kind === 'link')
   const lainResources = materiResources.filter((r) => r.kind === 'image' || r.kind === 'file')
 
-  // Badge peran di forum (Mentari: "Mahasiswa"): "Mentor" bila penulis =
-  // mentor course, kalau tidak "Siswa". Keterbatasan: admin yang menulis
-  // ikut tampil "Siswa" (Discussion.author hanya membawa nama + foto).
-  const roleBadge = (authorId: string) => (authorId === mentorId ? 'Mentor' : 'Siswa')
+  // Badge peran di forum (D26, keputusan Arif 28 Nov 2026): berdasarkan
+  // profiles.role penulis — siswa = "Mahasiswa", mentor = "Dosen",
+  // admin = "Admin". Bila role tidak tersedia (baris baru yang author-nya
+  // diisi client-side tanpa role), pakai perbandingan mentorId sebagai
+  // fallback (mentor course = "Dosen", sisanya "Mahasiswa").
+  const roleBadge = (d: Discussion) => {
+    const role = d.author?.role
+    if (role === 'mentor') return 'Dosen'
+    if (role === 'admin') return 'Admin'
+    if (role === 'siswa') return 'Mahasiswa'
+    return d.user_id === mentorId ? 'Dosen' : 'Mahasiswa'
+  }
 
   const excerpt = (text: string, n = 80) =>
     text.length > n ? `${text.slice(0, n).trim()}…` : text
@@ -719,6 +748,123 @@ export default function LessonDetailPage() {
       </p>
     )
   }
+
+  // (D26) Form balasan — dipakai kartu pembuka thread, tiap balasan, dan
+  // kartu pembuka thread topik. parentId null = balasan langsung atas
+  // topik (postingan baru top-level).
+  const replyFormFor = (parentId: string | null) => (
+    <form className="form" onSubmit={(e) => handleReply(e, parentId)}>
+      <label>
+        Balasan
+        <textarea
+          value={replyBody}
+          onChange={(e) => setReplyBody(e.target.value)}
+          rows={3}
+          required
+          placeholder="Tulis balasan…"
+        />
+      </label>
+      <label>
+        Lampiran (opsional, maks. 20 MB)
+        <input
+          type="file"
+          onChange={(e) => setReplyFile(e.target.files?.[0] ?? null)}
+        />
+      </label>
+      {replyFile && (
+        <p className="muted">
+          Lampiran: {replyFile.name}{' '}
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyFile(null)}>
+            Hapus
+          </button>
+        </p>
+      )}
+      <div className="form-actions">
+        <button type="submit" className="btn btn-primary btn-small" disabled={posting}>
+          Kirim Balasan
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          onClick={() => { setReplyTo(null); setReplyFile(null) }}
+        >
+          Batal
+        </button>
+      </div>
+    </form>
+  )
+
+  // (D26) Satu kartu balasan — dipakai thread biasa (parent = thread yang
+  // dibuka) dan thread topik (parent = postingan top-level untuk balasan
+  // bersarang; null untuk postingan top-level itu sendiri). Nama penulis
+  // HURUF BESAR (CSS .discussion-author, data tidak diubah). Memperbaiki
+  // cacat lama: tombol REPLY di bawah balasan sebelumnya tidak menampilkan
+  // form apa pun (form hanya dirender untuk replyTo === thread id).
+  const replyItem = (r: Discussion, parent: Discussion | null, nested?: ReactNode) => (
+    <li key={r.id}>
+      <p className="discussion-meta">
+        <span
+          style={{
+            display: 'inline-block',
+            width: '2rem',
+            height: '2rem',
+            lineHeight: '2rem',
+            textAlign: 'center',
+            borderRadius: '50%',
+            background: 'var(--light-grey)',
+            fontWeight: 700,
+            marginRight: '0.5rem',
+          }}
+        >
+          {initialsOf(r.author?.name)}
+        </span>
+        <span className="discussion-author">{r.author?.name ?? 'Anggota'}</span> ·{' '}
+        <span className="chip">{roleBadge(r)}</span> ·{' '}
+        {new Date(r.created_at).toLocaleString('id-ID')}
+        {parent && parent.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
+      </p>
+      {attachmentBlock(attachmentFor(r.id))}
+      <p>{r.body}</p>
+      <div className="form-actions">
+        {user && !isAdmin && (
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
+            Bermanfaat ({helpfulCounts[r.id] ?? 0})
+          </button>
+        )}
+        {canModerate && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-small"
+            onClick={() => void updateDiscussionFlags(r.id, { is_pinned: !(r.is_pinned ?? false) }, r.is_pinned ? 'Balasan dilepas dari sematan.' : 'Balasan disematkan.')}
+          >
+            {r.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
+          </button>
+        )}
+        {parent && user && parent.user_id === user.id && parent.accepted_answer_id !== r.id && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-small"
+            onClick={() => void updateDiscussionFlags(parent.id, { accepted_answer_id: r.id, is_resolved: true }, 'Balasan ditandai sebagai jawaban yang diterima.')}
+          >
+            Terima sebagai Jawaban
+          </button>
+        )}
+        {user && !isAdmin && reportingId !== r.id && (
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
+            Laporkan
+          </button>
+        )}
+      </div>
+      {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
+      {user && !isAdmin && replyTo !== r.id && (
+        <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo(r.id)}>
+          ↩ REPLY
+        </button>
+      )}
+      {user && !isAdmin && replyTo === r.id && replyFormFor(r.id)}
+      {nested}
+    </li>
+  )
 
   // (D25) Kotak kunci NETRAL (bukan hijau): template literal utuh agar
   // spasi setelah titik dua tidak hilang seperti kasus D24b, dan kelas
@@ -952,15 +1098,12 @@ export default function LessonDetailPage() {
     }
   }
 
-  // (D23) "Buka" pada baris prompt tabel Topik: prompt BUKAN baris
-  // discussions, jadi tidak ada thread yang bisa dibuka — tombol ini
-  // mengarahkan ke kotak tulis diskusi (scroll + fokus) supaya siswa
-  // menjawab topik itu dengan postingan baru. Thread yang sudah ada
-  // tetap dibuka lewat tombol "Buka" di barisnya masing-masing.
+  // (D26) "Buka" pada baris prompt tabel Topik: membuka thread topik —
+  // kartu pembuka = prompt "Topik diskusi" (penulis = mentor pengampu),
+  // lalu postingan top-level sebagai balasannya (gaya Mentari).
   function openPromptTopic() {
-    setNotice('Tulis jawabanmu atas topik ini pada kotak diskusi di bawah.')
-    document.getElementById('forum-new-post')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    newPostRef.current?.focus()
+    setSelectedThreadId(null)
+    setPromptThreadOpen(true)
   }
 
   async function handleRefreshDiscussions() {
@@ -1049,7 +1192,7 @@ export default function LessonDetailPage() {
     setPosting(true)
     try {
       const row = await postDiscussion(l.id, user.id, newPost.trim(), null)
-      row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null }
+      row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null, role: profile?.role ?? null }
       setDiscussions((d) => [...d, row])
       setNewPost('')
       setNewPostFile(null)
@@ -1090,7 +1233,9 @@ export default function LessonDetailPage() {
     }
   }
 
-  async function handleReply(e: FormEvent, parentId: string) {
+  // (D26) parentId null = balasan langsung atas topik (postingan baru
+  // top-level) — dipakai form REPLY pada kartu pembuka thread topik.
+  async function handleReply(e: FormEvent, parentId: string | null) {
     e.preventDefault()
     if (!user || !lesson || !replyBody.trim()) return
     const l = lesson
@@ -1098,7 +1243,7 @@ export default function LessonDetailPage() {
     setPosting(true)
     try {
       const row = await postDiscussion(l.id, user.id, replyBody.trim(), parentId)
-      row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null }
+      row.author = { name: profile?.name ?? null, photo_url: profile?.photo_url ?? null, role: profile?.role ?? null }
       setDiscussions((d) => [...d, row])
       setReplyBody('')
       setReplyTo(null)
@@ -1579,8 +1724,8 @@ export default function LessonDetailPage() {
                 <div className="discussion-item">
                   <p><strong>{excerpt(selectedThread.body, 120)}</strong></p>
                   <p className="discussion-meta">
-                    {selectedThread.author?.name ?? 'Anggota'} ·{' '}
-                    <span className="chip">{roleBadge(selectedThread.user_id)}</span> ·{' '}
+                    <span className="discussion-author">{selectedThread.author?.name ?? 'Anggota'}</span> ·{' '}
+                    <span className="chip">{roleBadge(selectedThread)}</span> ·{' '}
                     {new Date(selectedThread.created_at).toLocaleString('id-ID')}
                     {selectedThread.is_pinned ? ' · Disematkan' : ''}
                     {selectedThread.is_resolved ? ' · Selesai' : ''}
@@ -1623,113 +1768,57 @@ export default function LessonDetailPage() {
                       ↩ REPLY
                     </button>
                   )}
-                  {user && !isAdmin && replyTo === selectedThread.id && (
-                    <form className="form" onSubmit={(e) => handleReply(e, selectedThread.id)}>
-                      <label>
-                        Balasan
-                        <textarea
-                          value={replyBody}
-                          onChange={(e) => setReplyBody(e.target.value)}
-                          rows={3}
-                          required
-                          placeholder="Tulis balasan…"
-                        />
-                      </label>
-                      <label>
-                        Lampiran (opsional, maks. 20 MB)
-                        <input
-                          type="file"
-                          onChange={(e) => setReplyFile(e.target.files?.[0] ?? null)}
-                        />
-                      </label>
-                      {replyFile && (
-                        <p className="muted">
-                          Lampiran: {replyFile.name}{' '}
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReplyFile(null)}>
-                            Hapus
-                          </button>
-                        </p>
-                      )}
-                      <div className="form-actions">
-                        <button type="submit" className="btn btn-primary btn-small" disabled={posting}>
-                          Kirim Balasan
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-small"
-                          onClick={() => { setReplyTo(null); setReplyFile(null) }}
-                        >
-                          Batal
-                        </button>
-                      </div>
-                    </form>
-                  )}
+                  {user && !isAdmin && replyTo === selectedThread.id && replyFormFor(selectedThread.id)}
                 </div>
                 <ul className="discussion-replies">
-                  {replies(selectedThread.id).map((r) => (
-                    <li key={r.id}>
-                      <p className="discussion-meta">
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: '2rem',
-                            height: '2rem',
-                            lineHeight: '2rem',
-                            textAlign: 'center',
-                            borderRadius: '50%',
-                            background: 'var(--light-grey)',
-                            fontWeight: 700,
-                            marginRight: '0.5rem',
-                          }}
-                        >
-                          {initialsOf(r.author?.name)}
-                        </span>
-                        {r.author?.name ?? 'Anggota'} ·{' '}
-                        <span className="chip">{roleBadge(r.user_id)}</span> ·{' '}
-                        {new Date(r.created_at).toLocaleString('id-ID')}
-                        {selectedThread.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
-                      </p>
-                      {attachmentBlock(attachmentFor(r.id))}
-                      <p>{r.body}</p>
-                      <div className="form-actions">
-                        {user && !isAdmin && (
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
-                            Bermanfaat ({helpfulCounts[r.id] ?? 0})
-                          </button>
-                        )}
-                        {canModerate && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-small"
-                            onClick={() => void updateDiscussionFlags(r.id, { is_pinned: !(r.is_pinned ?? false) }, r.is_pinned ? 'Balasan dilepas dari sematan.' : 'Balasan disematkan.')}
-                          >
-                            {r.is_pinned ? 'Lepas Sematan' : 'Sematkan'}
-                          </button>
-                        )}
-                        {user && selectedThread.user_id === user.id && selectedThread.accepted_answer_id !== r.id && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-small"
-                            onClick={() => void updateDiscussionFlags(selectedThread.id, { accepted_answer_id: r.id, is_resolved: true }, 'Balasan ditandai sebagai jawaban yang diterima.')}
-                          >
-                            Terima sebagai Jawaban
-                          </button>
-                        )}
-                        {user && !isAdmin && reportingId !== r.id && (
-                          <button type="button" className="btn btn-ghost btn-small" onClick={() => setReportingId(r.id)}>
-                            Laporkan
-                          </button>
-                        )}
-                      </div>
-                      {user && !isAdmin && reportingId === r.id && reportForm(r.id)}
-                      {user && !isAdmin && replyTo !== r.id && (
-                        <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo(r.id)}>
-                          ↩ REPLY
-                        </button>
-                      )}
-                    </li>
-                  ))}
+                  {replies(selectedThread.id).map((r) => replyItem(r, selectedThread))}
                 </ul>
+              </>
+            ) : promptThreadOpen && discussionPrompt?.body ? (
+              <>
+                {/* (D26) Thread topik gaya Mentari (referensi 11): kartu
+                    pembuka = prompt "Topik diskusi" (penulis = mentor
+                    pengampu, tanggal, isi lengkap), lalu postingan
+                    top-level sebagai balasan + balasan bersarangnya. */}
+                <div className="thread-topbar">
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => setPromptThreadOpen(false)} aria-label="Kembali ke daftar topik">
+                    ←
+                  </button>
+                  <span className="thread-topbar-title">Topik diskusi</span>
+                  <button type="button" className="btn btn-ghost btn-small" onClick={() => void handleRefreshDiscussions()} aria-label="Muat ulang diskusi" title="Muat ulang">
+                    ⟳
+                  </button>
+                </div>
+                <div className="discussion-item">
+                  <p><strong className="topic-prompt">Topik diskusi</strong></p>
+                  <p className="discussion-meta">
+                    <span className="discussion-author">{mentorName ?? 'Mentor'}</span> ·{' '}
+                    <span className="chip">Dosen</span> ·{' '}
+                    {new Date(discussionPrompt.created_at).toLocaleString('id-ID')}
+                  </p>
+                  <p>{discussionPrompt.body}</p>
+                  {user && !isAdmin && replyTo !== 'prompt' && (
+                    <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo('prompt')}>
+                      ↩ REPLY
+                    </button>
+                  )}
+                  {user && !isAdmin && replyTo === 'prompt' && replyFormFor(null)}
+                </div>
+                {topLevel.length > 0 ? (
+                  <ul className="discussion-replies">
+                    {topLevel.map((t) => replyItem(
+                      t,
+                      null,
+                      replies(t.id).length > 0 ? (
+                        <ul className="discussion-replies" style={{ marginLeft: '1.5rem' }}>
+                          {replies(t.id).map((r) => replyItem(r, t))}
+                        </ul>
+                      ) : undefined,
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="empty">Belum ada jawaban atas topik ini. Jadilah yang pertama menjawab.</p>
+                )}
               </>
             ) : (
               <>
@@ -1758,10 +1847,11 @@ export default function LessonDetailPage() {
                     )}
                   </>
                 )}
-                {/* (D24.6) JUDUL bisa diklik (thread → buka thread;
-                    prompt → fokus kotak tulis seperti "Buka" D23);
-                    kolom AKSI menampilkan "—" seperti Mentari; judul
-                    baris prompt HURUF BESAR (CSS uppercase). */}
+                {/* (D24.6/D26) JUDUL bisa diklik (thread → buka thread;
+                    prompt → buka thread topik D26); kolom AKSI menampilkan
+                    "—" seperti Mentari; judul baris prompt + nama penulis
+                    HURUF BESAR (CSS uppercase); tiap baris membawa badge
+                    peran (Mahasiswa/Dosen/Admin). */}
                 <div id="forum-topik">
                 <h3>Topik</h3>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1778,7 +1868,8 @@ export default function LessonDetailPage() {
                           <button type="button" className="topic-title topic-prompt" onClick={openPromptTopic}>
                             {excerpt(discussionPrompt.body, 80)}
                           </button>
-                          <span className="muted"> · Topik diskusi</span>
+                          <span className="muted"> · Topik diskusi</span>{' '}
+                          <span className="chip">Dosen</span>
                         </td>
                         <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
                           —
@@ -1788,10 +1879,12 @@ export default function LessonDetailPage() {
                     {visibleTopLevel.map((d) => (
                       <tr key={d.id}>
                         <td style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>
-                          <button type="button" className="topic-title" onClick={() => setSelectedThreadId(d.id)}>
+                          <button type="button" className="topic-title" onClick={() => { setPromptThreadOpen(false); setSelectedThreadId(d.id) }}>
                             {excerpt(d.body, 80)}
                           </button>
-                          <span className="muted"> · {d.author?.name ?? 'Anggota'}</span>
+                          <span className="muted"> · </span>
+                          <span className="discussion-author">{d.author?.name ?? 'Anggota'}</span>{' '}
+                          <span className="chip">{roleBadge(d)}</span>
                           {replies(d.id).length > 0 ? ` · ${replies(d.id).length} balasan` : ''}
                         </td>
                         <td style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid var(--light-grey)' }}>

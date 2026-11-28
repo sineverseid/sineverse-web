@@ -32,6 +32,7 @@ import type {
   QuizAttempt,
   RefProvince,
   RefRegency,
+  Role,
   School,
   SchoolSubmission,
   Submission,
@@ -1007,19 +1008,21 @@ export async function fetchDiscussions(lessonId: string): Promise<Discussion[]> 
   // Pemanggil (LessonDetailPage) sudah try/catch dan menampilkan error.
   const userIds = [...new Set(rows.map((r) => r.user_id))]
   if (userIds.length > 0) {
+    // (D26) Role penulis ikut diambil untuk badge peran forum
+    // (profiles.role: siswa = "Mahasiswa", mentor = "Dosen", admin = "Admin").
     const { data: profiles, error: profErr } = await supabase
       .from('public_profiles')
-      .select('id,name,photo_url')
+      .select('id,name,photo_url,role')
       .in('id', userIds)
     if (profErr) throw profErr
     const byId = new Map(
-      ((profiles ?? []) as { id: string; name: string | null; photo_url: string | null }[]).map(
+      ((profiles ?? []) as { id: string; name: string | null; photo_url: string | null; role: string | null }[]).map(
         (p) => [p.id, p],
       ),
     )
     for (const row of rows) {
       const p = byId.get(row.user_id)
-      row.author = p ? { name: p.name, photo_url: p.photo_url } : null
+      row.author = p ? { name: p.name, photo_url: p.photo_url, role: p.role as Role | null } : null
     }
   }
   return rows

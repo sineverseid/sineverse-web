@@ -72,6 +72,14 @@ export default function CourseBuilderPage() {
   const [resFileUrl, setResFileUrl] = useState<string | null>(null)
   const [resFileError, setResFileError] = useState<string | null>(null)
   const [resUploading, setResUploading] = useState(false)
+  // (D26) Topik Diskusi per lesson: prompt "Topik diskusi" (resource
+  // reading) ditulis mentor — pengantar + "Studi Kasus" + pertanyaan
+  // pemandu (format Mentari). Prompt yang sudah ada dimuat untuk diedit.
+  const [topicLesson, setTopicLesson] = useState('')
+  const [topicBody, setTopicBody] = useState('')
+  const [topicExistingId, setTopicExistingId] = useState<string | null>(null)
+  const [topicLoading, setTopicLoading] = useState(false)
+  const [topicSaving, setTopicSaving] = useState(false)
   // Media lesson di form edit (state di level atas — editForm hanya render).
   const [editResources, setEditResources] = useState<LessonResource[]>([])
   const [editResourcesLoading, setEditResourcesLoading] = useState(false)
@@ -415,6 +423,83 @@ export default function CourseBuilderPage() {
       fail(err)
     } finally {
       setResUploading(false)
+    }
+  }
+
+  // --- Topik Diskusi (D26) -------------------------------------------------
+  // Prompt "Topik diskusi" adalah lesson_resources (kind 'reading',
+  // title 'Topik diskusi', body = prompt). Satu lesson punya paling
+  // banyak satu prompt; bila sudah ada, dimuat untuk diedit (upsert).
+  // RLS 003: mentor pengampu course (is_course_teacher) boleh
+  // insert/update; admin boleh semuanya.
+  async function loadTopicPrompt(lessonId: string) {
+    setTopicLesson(lessonId)
+    setTopicBody('')
+    setTopicExistingId(null)
+    if (!lessonId) return
+    setTopicLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('lesson_resources')
+        .select('id,body')
+        .eq('lesson_id', lessonId)
+        .eq('kind', 'reading')
+        .eq('title', 'Topik diskusi')
+        .order('created_at', { ascending: true })
+        .limit(1)
+      if (error) throw error
+      const row = (data ?? [])[0] as { id: string; body: string | null } | undefined
+      if (row) {
+        setTopicExistingId(row.id)
+        setTopicBody(row.body ?? '')
+      }
+    } catch (err) {
+      fail(err)
+    } finally {
+      setTopicLoading(false)
+    }
+  }
+
+  async function saveTopicPrompt(e: FormEvent) {
+    e.preventDefault()
+    if (!topicLesson) {
+      setNotice('Pilih lesson dulu.')
+      return
+    }
+    const body = topicBody.trim()
+    if (!body) {
+      setNotice('Isi topik diskusi dulu.')
+      return
+    }
+    setTopicSaving(true)
+    try {
+      if (topicExistingId) {
+        const { error } = await supabase
+          .from('lesson_resources')
+          .update({ body })
+          .eq('id', topicExistingId)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from('lesson_resources')
+          .insert({
+            lesson_id: topicLesson,
+            kind: 'reading',
+            title: 'Topik diskusi',
+            url: null,
+            file_path: null,
+            body,
+          })
+          .select('id')
+          .single()
+        if (error) throw error
+        setTopicExistingId((data as { id: string }).id)
+      }
+      ok('Topik diskusi disimpan.')
+    } catch (err) {
+      fail(err)
+    } finally {
+      setTopicSaving(false)
     }
   }
 
@@ -1264,6 +1349,46 @@ export default function CourseBuilderPage() {
           <label>Isi / catatan<textarea value={resBody} onChange={(e) => setResBody(e.target.value)} rows={3} /></label>
           <button type="submit" className="btn btn-primary" disabled={resUploading}>
             {resUploading ? 'Mengunggah…' : 'Tambah Materi'}
+          </button>
+        </form>
+      </section>
+
+      {/* (D26) Topik Diskusi — prompt forum per lesson ditulis mentor
+          (format Mentari: pengantar + "Studi Kasus" + pertanyaan pemandu).
+          Prompt tampil sebagai kartu pembuka thread di Forum Diskusi. */}
+      <section className="section">
+        <h2>Topik Diskusi</h2>
+        <p className="muted">
+          Topik yang dibuka siswa di Forum Diskusi lesson ini. Tulis seperti
+          Mentari: pengantar singkat, lalu &quot;Studi Kasus&quot; (skenario dari
+          materi lesson), lalu pertanyaan pemandu untuk dijawab siswa. Bila
+          lesson sudah punya topik, isinya tampil di bawah untuk diedit —
+          topik lama tidak berubah sampai mentor menyimpan yang baru.
+        </p>
+        <form className="form" onSubmit={saveTopicPrompt}>
+          <label>
+            Lesson
+            <select value={topicLesson} onChange={(e) => void loadTopicPrompt(e.target.value)} required style={selectStyle}>
+              <option value="">— Pilih lesson —</option>
+              {allLessons.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+            </select>
+          </label>
+          {topicLoading ? (
+            <p className="muted">Memuat topik…</p>
+          ) : (
+            <label>
+              Topik diskusi
+              <textarea
+                value={topicBody}
+                onChange={(e) => setTopicBody(e.target.value)}
+                rows={6}
+                required
+                placeholder={'Pengantar singkat, lalu Studi Kasus: (skenario dari materi lesson). Lalu pertanyaan pemandu: apa yang akan siswa lakukan dan mengapa?'}
+              />
+            </label>
+          )}
+          <button type="submit" className="btn btn-primary" disabled={topicSaving || topicLoading}>
+            {topicSaving ? 'Menyimpan…' : topicExistingId ? 'Simpan Perubahan Topik' : 'Simpan Topik Diskusi'}
           </button>
         </form>
       </section>

@@ -1845,6 +1845,12 @@ p {
   margin-bottom: 0.25rem;
 }
 
+/* (D26) Nama penulis diskusi HURUF BESAR seperti Mentari (tampilan saja;
+   data nama tidak diubah). */
+.discussion-author {
+  text-transform: uppercase;
+}
+
 .discussion-replies {
   list-style: none;
   margin: 0.75rem 0 0;

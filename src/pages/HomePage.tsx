@@ -1774,28 +1774,33 @@ function MentorHome(props: {
         ) : (
           <div style={{ display: 'grid', gap: '0.75rem' }}>
             {rows.map((r) => (
-              <Link
-                key={r.course.id}
-                to={`/mentor/course/${r.course.id}`}
-                className="dash-course"
-              >
-                <div className="dash-course-cover">
-                  {r.course.cover_url ? (
-                    <img src={r.course.cover_url} alt="" />
-                  ) : (
-                    <Icon name="academy" size={32} />
-                  )}
-                </div>
-                <div className="dash-course-body">
-                  <h3>{r.course.title}</h3>
-                  <p className="dash-course-meta">
-                    {r.students} siswa • {r.pending} tugas menunggu penilaian
-                  </p>
-                </div>
-                <span className="dash-course-play">
-                  <Icon name="play" size={20} />
-                </span>
-              </Link>
+              <div key={r.course.id}>
+                <Link
+                  to={`/mentor/course/${r.course.id}`}
+                  className="dash-course"
+                >
+                  <div className="dash-course-cover">
+                    {r.course.cover_url ? (
+                      <img src={r.course.cover_url} alt="" />
+                    ) : (
+                      <Icon name="academy" size={32} />
+                    )}
+                  </div>
+                  <div className="dash-course-body">
+                    <h3>{r.course.title}</h3>
+                    <p className="dash-course-meta">
+                      {r.students} siswa • {r.pending} tugas menunggu penilaian
+                    </p>
+                  </div>
+                  <span className="dash-course-play">
+                    <Icon name="play" size={20} />
+                  </span>
+                </Link>
+                {/* (D26) Grade Book per course — rekap nilai per aktivitas. */}
+                <p style={{ margin: '0.25rem 0 0' }}>
+                  <Link to={`/course/${r.course.id}/gradebook`}>Grade Book →</Link>
+                </p>
+              </div>
             ))}
           </div>
         )}
