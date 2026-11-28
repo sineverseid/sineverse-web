@@ -1483,7 +1483,11 @@ export default function LessonDetailPage() {
           ☰ Course Index
         </button>
       </div>
-      <p className="muted">Materi {lesson.order_index}</p>
+      {/* (D27c) Nomor "Materi" disamakan dengan nomor Pertemuan yang
+          dipakai seluruh halaman ini (Pretest/Forum/Kuesioner). Sebelumnya
+          memakai order_index mentah (Orientasi = 0 -> "Materi 0", dan
+          selalu selisih 1 dari Pertemuan). */}
+      <p className="muted">Materi {meetingNumber ?? lesson.order_index}</p>
       <h1>
         {lesson.lesson_code ? `${lesson.lesson_code}, ` : ''}
         {lesson.title}

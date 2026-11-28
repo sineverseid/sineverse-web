@@ -356,10 +356,21 @@ export default function CourseBuilderPage() {
       arr.push(it)
       map.set(it.lesson_id, arr)
     }
-    return [...map.entries()].map(([lessonId, list]) => ({
-      lesson: orderedLessons.find((l) => l.id === lessonId) ?? null,
-      items: list,
-    }))
+    // (D27c) Kelompok diurutkan menurut nomor Pertemuan (bukan urutan
+    // kemunculan pertama di hasil query) — sebelumnya tampil 1, 3, 2, 4.
+    // Lesson lain (tidak ditemukan) paling akhir.
+    return [...map.entries()]
+      .map(([lessonId, list]) => ({
+        lesson: orderedLessons.find((l) => l.id === lessonId) ?? null,
+        items: list,
+      }))
+      .sort((a, b) => {
+        const na = a.lesson ? meetingOf(a.lesson.id) : 0
+        const nb = b.lesson ? meetingOf(b.lesson.id) : 0
+        const sa = na === 0 ? Number.MAX_SAFE_INTEGER : na
+        const sb = nb === 0 ? Number.MAX_SAFE_INTEGER : nb
+        return sa - sb
+      })
   }
 
   /** Lompat ke form di bawah (sekaligus mengisi lesson-nya dulu). */
