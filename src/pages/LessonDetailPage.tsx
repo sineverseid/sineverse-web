@@ -752,15 +752,22 @@ export default function LessonDetailPage() {
   // garis border (absolute, overlap — bukan di dalam kartu); ikon +
   // judul di kepala; isi; tombol aksi kanan bawah bila relevan.
   // `step` = indeks 0-based langkah (untuk id anchor drawer D24.13).
+  // (D24b) Langkah yang TERKUNCI tidak pernah tampil selesai, walau
+  // derivasi `done`-nya true (materi tanpa resource → selesai via
+  // lesson_progress; VCON tanpa kelas live → otomatis terpenuhi).
+  // Gaya terkunci yang menang: `shownDone = done && !locked`.
   const activityCard = (
     step: number,
     title: string,
     done: boolean,
+    locked: boolean,
     children: ReactNode,
     action?: ReactNode,
-  ) => (
-    <section className={`activity-card${done ? ' activity-done' : ''}`} aria-label={title} id={`step-${step}`}>
-      {done && (
+  ) => {
+    const shownDone = done && !locked
+    return (
+    <section className={`activity-card${shownDone ? ' activity-done' : ''}`} aria-label={title} id={`step-${step}`}>
+      {shownDone && (
         <span className="activity-check" aria-label="Selesai">✓</span>
       )}
       <div className="activity-card-head">
@@ -770,7 +777,8 @@ export default function LessonDetailPage() {
       {children}
       {action && <div className="activity-action">{action}</div>}
     </section>
-  )
+    )
+  }
 
   // (D24.1/D24.12) Baris kuis di kartu aktivitas: judul + "Kerjakan
   // Dengan Cepat dan Tepat" + tombol QUIZ › (hijau) langsung ke halaman
@@ -840,8 +848,11 @@ export default function LessonDetailPage() {
   // (D23) Warna tile strip mengikuti status: selesai = hijau (flow-done),
   // terkunci = redup (flow-locked), terbuka-belum-selesai = netral/putih.
   // Pretest tidak pernah terkunci (langkah pertama, selalu terbuka).
+  // (D24b) Terkunci MENANG atas selesai: langkah yang derivasinya
+  // selesai tapi masih terkunci (materi via lesson_progress, VCON tanpa
+  // kelas live) tampil redup, bukan hijau.
   const flowClass = (done: boolean, locked: boolean) =>
-    done ? 'flow-done' : locked ? 'flow-locked' : ''
+    locked ? 'flow-locked' : done ? 'flow-done' : ''
 
   // Thread yang sedang dibuka di tampilan thread forum (null = daftar topik).
   const selectedThread = selectedThreadId
@@ -1201,6 +1212,7 @@ export default function LessonDetailPage() {
         0,
         '1. Pretest',
         pretestDone,
+        false,
         <>
           {quizError ? (
             <p className="error-box">{quizError}</p>
@@ -1221,6 +1233,7 @@ export default function LessonDetailPage() {
         1,
         '2. Buku ISBN',
         materiDone,
+        lockedMateri,
         lockedMateri ? (
           lockBox('Pretest')
         ) : (
@@ -1257,6 +1270,7 @@ export default function LessonDetailPage() {
         2,
         '3. Video Ajar',
         materiDone,
+        lockedMateri,
         lockedMateri ? (
           lockBox('Pretest')
         ) : (
@@ -1301,6 +1315,7 @@ export default function LessonDetailPage() {
         3,
         '4. Power Point',
         materiDone,
+        lockedMateri,
         lockedMateri ? (
           lockBox('Pretest')
         ) : pptResources.length === 0 ? (
@@ -1323,6 +1338,7 @@ export default function LessonDetailPage() {
         4,
         '5. Artikel Riset',
         materiDone,
+        lockedMateri,
         lockedMateri ? (
           lockBox('Pretest')
         ) : artikelResources.length === 0 ? (
@@ -1346,6 +1362,7 @@ export default function LessonDetailPage() {
         5,
         '6. Materi Lainnya',
         materiDone,
+        lockedMateri,
         lockedMateri ? (
           lockBox('Pretest')
         ) : lainResources.length === 0 ? (
@@ -1374,6 +1391,7 @@ export default function LessonDetailPage() {
         6,
         '7. Penugasan Terstruktur',
         tugasDone,
+        lockedTugas,
         <>
           <p className="muted">Kirim tugas project course bila ada. Bila lesson ini tidak punya tugas, langkah ini otomatis terpenuhi.</p>
           {lockedTugas ? (
@@ -1399,6 +1417,7 @@ export default function LessonDetailPage() {
         7,
         '8. LINK VCON',
         vconDone,
+        lockedVcon,
         <>
           {lockedVcon ? (
             lockBox('Penugasan Terstruktur')
@@ -1451,6 +1470,7 @@ export default function LessonDetailPage() {
         8,
         meetingNumber !== null ? `Forum Diskusi - Pertemuan ${meetingNumber}` : 'Forum Diskusi',
         diskusiDone,
+        lockedDiskusi,
         <>
           {lockedDiskusi ? (
             lockBox('LINK VCON')
@@ -1477,7 +1497,11 @@ export default function LessonDetailPage() {
                   kode; prompt hanya tampil sebagai baris tabel Topik.) */}
               {lesson.closes_at && (
                 <li>
-                  Forum diskusi pertemuan ke-{meetingNumber !== null ? meetingNumber : 'ini'} akan ditutup {formatClosesAt(lesson.closes_at)}.
+                  {/* (D24b) Template literal utuh — JSX text + ekspresi
+                      inline di atas sempat kehilangan spasi di build live
+                      ("ke-2akan ditutupSabtu,"); template literal tidak
+                      kena pemrosesan whitespace JSX. */}
+                  {`Forum diskusi pertemuan ke-${meetingNumber !== null ? meetingNumber : 'ini'} akan ditutup ${formatClosesAt(lesson.closes_at)}.`}
                 </li>
               )}
             </ol>
@@ -1832,6 +1856,7 @@ export default function LessonDetailPage() {
         9,
         '10. Posttest',
         posttestDone,
+        lockedPosttest,
         <>
           {lockedPosttest ? (
             lockBox('Forum Diskusi')
@@ -1849,6 +1874,7 @@ export default function LessonDetailPage() {
         10,
         meetingNumber !== null ? `Kuesioner Pertemuan ${meetingNumber}` : 'Kuesioner',
         kuesionerDone,
+        lockedKuesioner,
         <>
         <p className="muted">Penilaian terhadap mentor dan pembelajaran di pertemuan ini. Jawab Ya atau Tidak untuk tiap pernyataan.</p>
         {lockedKuesioner ? (

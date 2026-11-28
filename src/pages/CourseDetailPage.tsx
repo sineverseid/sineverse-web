@@ -655,6 +655,10 @@ export default function CourseDetailPage() {
   // kiri atas; ikon + judul; isi; tombol aksi kanan bawah). `locked` =
   // tampilkan kotak kunci, sembunyikan tombol aksi (kartu terkunci tidak
   // bisa diklik).
+  // (D24b) Langkah yang TERKUNCI tidak pernah tampil selesai, walau
+  // derivasi `done`-nya true (materi via lesson_progress in_progress;
+  // VCON tanpa kelas live → otomatis terpenuhi). Gaya terkunci yang
+  // menang: `shownDone = done && !locked` — sama seperti kartu lesson.
   const meetingStepCard = (
     lessonId: string,
     step: number,
@@ -664,13 +668,15 @@ export default function CourseDetailPage() {
     lockPrev: string,
     body: ReactNode,
     action?: ReactNode,
-  ) => (
+  ) => {
+    const shownDone = done && !locked
+    return (
     <div
       key={`${lessonId}-${step}`}
-      className={`activity-card${done ? ' activity-done' : ''}`}
+      className={`activity-card${shownDone ? ' activity-done' : ''}`}
       id={`course-step-${lessonId}-${step}`}
     >
-      {done && <span className="activity-check" aria-label="Selesai">✓</span>}
+      {shownDone && <span className="activity-check" aria-label="Selesai">✓</span>}
       <div className="activity-card-head">
         <span className="activity-icon">{stepIcon(step)}</span>
         <h2>{title}</h2>
@@ -678,7 +684,8 @@ export default function CourseDetailPage() {
       {locked ? <p className="notice-box">Terkunci. Selesaikan dulu: {lockPrev}.</p> : body}
       {!locked && action && <div className="activity-action">{action}</div>}
     </div>
-  )
+    )
+  }
 
   // Baris resource bertipe link ala Mentari: "LINK URL : [ikon] judul".
   const resourceRows = (list: LessonResource[]) => (
