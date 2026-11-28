@@ -681,7 +681,10 @@ export default function CourseDetailPage() {
         <span className="activity-icon">{stepIcon(step)}</span>
         <h2>{title}</h2>
       </div>
-      {locked ? <p className="notice-box">Terkunci. Selesaikan dulu: {lockPrev}.</p> : body}
+      {/* (D25) Kotak kunci NETRAL (bukan hijau): template literal utuh agar
+          spasi setelah titik dua tidak hilang seperti kasus D24b, dan kelas
+          notice-box--locked (abu-abu) agar tidak bernuansa hijau. */}
+      {locked ? <p className="notice-box notice-box--locked">{`Terkunci. Selesaikan dulu: ${lockPrev}.`}</p> : body}
       {!locked && action && <div className="activity-action">{action}</div>}
     </div>
     )
@@ -1489,11 +1492,14 @@ export default function CourseDetailPage() {
         </div>
       )}
 
-      {/* (D24.13) Tombol pembuka drawer Course Index. */}
+      {/* (D24.13) Tombol pembuka drawer Course Index + Grade Book (D25). */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
         <button type="button" className="btn btn-ghost btn-small" onClick={() => setIndexOpen(true)}>
           ☰ Course Index
         </button>
+        <Link to={`/course/${course.id}/gradebook`} className="btn btn-ghost btn-small">
+          Grade Book
+        </Link>
       </div>
 
       <div className="detail-tabs" role="tablist" aria-label="Bagian course">

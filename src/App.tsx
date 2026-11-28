@@ -37,6 +37,7 @@ const CommunitiesPage = lazy(() => import('./pages/CommunitiesPage'))
 const CommunityDetailPage = lazy(() => import('./pages/CommunityDetailPage'))
 const CourseBuilderPage = lazy(() => import('./pages/CourseBuilderPage'))
 const CourseDetailPage = lazy(() => import('./pages/CourseDetailPage'))
+const CourseGradeBookPage = lazy(() => import('./pages/CourseGradeBookPage'))
 const CrewFinderPage = lazy(() => import('./pages/CrewFinderPage'))
 const DeadlinesPage = lazy(() => import('./pages/DeadlinesPage'))
 const EditProfilePage = lazy(() => import('./pages/EditProfilePage'))
@@ -126,6 +127,11 @@ export default function App() {
             <Route path="akademi/perkenalan" element={<IntroAcademyPage />} />
             <Route path="akademi" element={<AkademiPage />} />
             <Route path="course/:id" element={<CourseDetailPage />} />
+            {/* Grade Book per course (D25, pola Mentari) — rekap per aktivitas. */}
+            <Route
+              path="course/:id/gradebook"
+              element={<Protected><CourseGradeBookPage /></Protected>}
+            />
             <Route path="lesson/:id" element={<LessonDetailPage />} />
             {/* RPS — kini dijangkau dari Admin Panel (Editor RPS) dan
                 Mentor Workspace (tautan di Overview), bukan menu utama. */}

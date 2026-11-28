@@ -216,6 +216,42 @@ export interface GradeComponents {
   passed: boolean
 }
 
+// --- D25: Grade Book per course (pilot pola Mentari, migrasi 088) ---------
+// Satu baris agregat per aktivitas, per peserta. `done`/`total` = jumlah
+// lesson yang selesai / yang punya konten itu; `avg` = rata-rata skor
+// terbaik PER LESSON (null bila belum ada nilai). Tanpa kolom NIM
+// (keputusan Arif 28 Nov 2026: peserta tetap Provinsi/Sekolah, tanpa NIS).
+export interface GradeBookActivity {
+  done: number
+  total: number
+  avg: number | null
+}
+
+export interface GradeBookParticipant {
+  user_id: string
+  name: string | null
+  province: string | null
+  regency: string | null
+  school: string | null
+  pretest: GradeBookActivity
+  posttest: GradeBookActivity
+  tugas: GradeBookActivity & { avg_weekly: number | null; avg_final: number | null }
+  forum: GradeBookActivity & { posts: number; discussion_score: number | null }
+  kuesioner: { done: number; total: number }
+  materi: { done: number; total: number }
+}
+
+export interface CourseGradeBook {
+  course_id: string
+  course_title: string
+  lessons_total: number
+  /** "all" = admin/mentor pengampu (semua peserta); "self" = siswa (diri sendiri). */
+  viewer_scope: 'all' | 'self'
+  /** Jumlah kelas live terjadwal di course ini (kehadiran VCON tidak tercatat). */
+  vcon_scheduled: number
+  participants: GradeBookParticipant[]
+}
+
 export interface QuizQuestion {
   id: string
   quiz_id: string

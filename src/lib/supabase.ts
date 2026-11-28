@@ -11,6 +11,7 @@ import type {
   Assignment,
   Community,
   Course,
+  CourseGradeBook,
   Discussion,
   DiscussionAttachment,
   Enrollment,
@@ -223,6 +224,17 @@ export async function fetchCourse(id: string): Promise<Course | null> {
     .maybeSingle()
   if (error) throw error
   return data as Course | null
+}
+
+/** Grade Book satu course (D25, migrasi 088, RPC SECURITY DEFINER).
+ *  Admin/mentor pengampu mendapat semua peserta; siswa hanya barisnya
+ *  sendiri; orang luar course mendapat exception dari RPC. */
+export async function fetchCourseGradebook(courseId: string): Promise<CourseGradeBook> {
+  const { data, error } = await supabase.rpc('get_course_gradebook', {
+    p_course_id: courseId,
+  })
+  if (error) throw error
+  return data as CourseGradeBook
 }
 
 /** Ringkasan publik sebuah course untuk TAMU (logout) — K6. RLS courses

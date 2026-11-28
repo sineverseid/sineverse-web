@@ -302,6 +302,14 @@ export default function GradebookPage() {
                   <tr key={g.course.id}>
                     <td>
                       <Link to={`/course/${g.course.id}`}>{g.course.title}</Link>
+                      <br />
+                      {/* (D25) Rekap per aktivitas tiap course ada di Grade Book. */}
+                      <Link
+                        to={`/course/${g.course.id}/gradebook`}
+                        style={{ fontSize: '0.85rem' }}
+                      >
+                        Grade Book — rekap per aktivitas
+                      </Link>
                     </td>
                     <td>
                       {g.components.pretest === null ? '—' : g.components.pretest.toFixed(1)}

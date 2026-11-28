@@ -720,8 +720,11 @@ export default function LessonDetailPage() {
     )
   }
 
+  // (D25) Kotak kunci NETRAL (bukan hijau): template literal utuh agar
+  // spasi setelah titik dua tidak hilang seperti kasus D24b, dan kelas
+  // notice-box--locked (abu-abu) agar tidak bernuansa hijau.
   const lockBox = (prevStep: string) => (
-    <p className="notice-box">Terkunci. Selesaikan dulu: {prevStep}.</p>
+    <p className="notice-box notice-box--locked">{`Terkunci. Selesaikan dulu: ${prevStep}.`}</p>
   )
 
   // (D24.1/D24.12) Ikon per langkah (samakan dengan kartu course):
@@ -2009,7 +2012,7 @@ export default function LessonDetailPage() {
                       : 'Tandai Selesai'}
               </button>
               {!attendanceDone && status !== 'completed' && (
-                <p className="muted">Selesaikan dulu: {unfinishedSteps.join(', ')}.</p>
+                <p className="muted">{`Selesaikan dulu: ${unfinishedSteps.join(', ')}.`}</p>
               )}
             </>
           )}

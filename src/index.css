@@ -104,6 +104,15 @@ p {
   padding: 0.75rem 1rem;
 }
 
+/* (D25) Varian NETRAL untuk kotak kunci "Terkunci..." di kartu aktivitas:
+   .notice-box biasa hijau pucat (dipakai notifikasi sukses di ~40 tempat —
+   jangan diubah global); kotak kunci harus abu-abu netral. */
+.notice-box--locked {
+  background: var(--soft-white);
+  color: var(--muted);
+  border: 1px solid var(--light-grey);
+}
+
 /* --- Shell --- */
 .app-shell {
   min-height: 100svh;
