@@ -30,7 +30,7 @@ import {
   fetchLessons,
   fetchLiveClasses,
   fetchModules,
-  fetchProfile,
+  fetchProfileNames,
   fetchQuestionnaireQuestions,
   fetchQuestionnaireResponses,
   fetchQuestionnairesForLessons,
@@ -215,14 +215,17 @@ export default function LessonDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [discussions.length, user?.id])
 
-  // (D26) Nama mentor pengampu untuk kartu pembuka thread topik
-  // ("Topik diskusi" ditulis mentor). Gagal muat → tampil "Mentor".
+  // (D26b) Nama mentor pengampu untuk kartu pembuka thread topik
+  // ("Topik diskusi" ditulis mentor). WAJIB lewat public_profiles
+  // (fetchProfileNames), BUKAN fetchProfile('profiles'): RLS profiles
+  // menutup baris pengguna lain, sehingga siswa selalu mendapat null
+  // dan kartu hanya tampil "Mentor". Gagal muat → tampil "Mentor".
   useEffect(() => {
     if (!mentorId) return
     let cancelled = false
-    void fetchProfile(mentorId)
-      .then((p) => {
-        if (!cancelled) setMentorName(p?.name ?? null)
+    void fetchProfileNames([mentorId])
+      .then((m) => {
+        if (!cancelled) setMentorName(m.get(mentorId) ?? null)
       })
       .catch(() => undefined)
     return () => {
