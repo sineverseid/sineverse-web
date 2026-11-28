@@ -163,6 +163,12 @@ export default function LessonDetailPage() {
   const [newPost, setNewPost] = useState('')
   // Ref textarea form diskusi baru.
   const newPostRef = useRef<HTMLTextAreaElement | null>(null)
+  // (D27b) Ref textarea form balasan forum — WAJIB di blok hook ini,
+  // SEBELUM early return loading/error di bawah. D27 sempat menaruhnya
+  // di bawah early return (baris ~760) sehingga render pertama (loading)
+  // memanggil 67 hook dan render berikutnya 68 -> React error #310
+  // ("Rendered more hooks...") dan SEMUA halaman lesson crash.
+  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const [discussionQuery, setDiscussionQuery] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [replyBody, setReplyBody] = useState('')
@@ -756,8 +762,8 @@ export default function LessonDetailPage() {
   // (D27) Toolbar format ringkas form balasan forum (referensi Mentari,
   // spec terbatas): Tebal, Miring, Daftar bullet, Daftar bernomor, Tautan.
   // Hanya membungkus teks yang dipilih dengan penanda; yang disimpan
-  // tetap teks apa adanya. Tanpa contentEditable — textarea biasa + ref.
-  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // tetap teks apa adanya. Tanpa contentEditable — textarea biasa + ref
+  // (ref-nya di blok hook atas, lihat newPostRef).
 
   function applyReplyFormat(kind: 'bold' | 'italic' | 'bullet' | 'numbered' | 'link') {
     const ta = replyTextareaRef.current

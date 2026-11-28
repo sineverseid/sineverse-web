@@ -395,8 +395,11 @@ export default function CourseBuilderPage() {
       return
     }
     invalidateCatalogCache()
-    ok(`Urutan lesson "${lesson.title}" dipindah.`)
+    // (D27b) Toast baru setelah refresh selesai, supaya daftar di layar
+    // sudah berubah saat notifikasi muncul (sebelumnya toast mendahului
+    // refresh sehingga urutan tampak tidak berubah).
     await refresh(currentCourse.id)
+    ok(`Urutan lesson "${lesson.title}" dipindah.`)
   }
 
   async function changeAccessMode(mode: 'direct' | 'sequential') {
