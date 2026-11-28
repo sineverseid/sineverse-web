@@ -753,6 +753,142 @@ export default function LessonDetailPage() {
     )
   }
 
+  // (D27) Toolbar format ringkas form balasan forum (referensi Mentari,
+  // spec terbatas): Tebal, Miring, Daftar bullet, Daftar bernomor, Tautan.
+  // Hanya membungkus teks yang dipilih dengan penanda; yang disimpan
+  // tetap teks apa adanya. Tanpa contentEditable — textarea biasa + ref.
+  const replyTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  function applyReplyFormat(kind: 'bold' | 'italic' | 'bullet' | 'numbered' | 'link') {
+    const ta = replyTextareaRef.current
+    const start = ta?.selectionStart ?? replyBody.length
+    const end = ta?.selectionEnd ?? replyBody.length
+    const selected = replyBody.slice(start, end)
+    let next = replyBody
+    let cursor: [number, number] | null = null
+    if (kind === 'bold' || kind === 'italic') {
+      const mark = kind === 'bold' ? '**' : '*'
+      const inner = selected || (kind === 'bold' ? 'teks tebal' : 'teks miring')
+      next = replyBody.slice(0, start) + mark + inner + mark + replyBody.slice(end)
+      cursor = [start + mark.length, start + mark.length + inner.length]
+    } else if (kind === 'link') {
+      const text = selected || 'teks tautan'
+      next = replyBody.slice(0, start) + `[${text}](https://)` + replyBody.slice(end)
+      // Sorot bagian https:// supaya mentor/siswa langsung mengetik URL-nya.
+      cursor = [start + text.length + 3, start + text.length + 11]
+    } else {
+      // bullet / numbered: awali tiap baris yang tersentuh seleksi
+      // (tanpa seleksi = baris tempat kursor berada).
+      const before = replyBody.slice(0, start)
+      const lineStart = before.lastIndexOf('\n') + 1
+      const nlAfter = replyBody.indexOf('\n', end)
+      const lineEnd = nlAfter === -1 ? replyBody.length : nlAfter
+      const lines = replyBody.slice(lineStart, lineEnd).split('\n')
+      const newLines = lines.map((ln, i) => {
+        if (kind === 'bullet') return ln.startsWith('- ') ? ln : `- ${ln}`
+        return `${i + 1}. ${ln.replace(/^\d+\.\s*/, '')}`
+      })
+      next = replyBody.slice(0, lineStart) + newLines.join('\n') + replyBody.slice(lineEnd)
+    }
+    setReplyBody(next)
+    // Klik adalah discrete event: React sudah commit sebelum paint
+    // berikutnya, jadi seleksi bisa dikembalikan di frame berikut.
+    requestAnimationFrame(() => {
+      const el = replyTextareaRef.current
+      if (!el) return
+      el.focus()
+      if (cursor) el.setSelectionRange(cursor[0], cursor[1])
+    })
+  }
+
+  // (D27) Renderer aman MINIMAL untuk isi balasan forum — mendukung
+  // penanda toolbar (tebal, miring, daftar, tautan). TANPA innerHTML:
+  // semua teks dirender sebagai node React, jadi tag HTML yang diketik
+  // tampil sebagai teks biasa. Teks polos lama tetap satu paragraf
+  // (baris baru tampil sebagai ganti baris, sesuai yang diketik).
+  function renderInline(text: string): ReactNode {
+    const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g)
+    return (
+      <>
+        {parts.map((part, i) => {
+          if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+            return <strong key={i}>{part.slice(2, -2)}</strong>
+          }
+          if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+            return <em key={i}>{part.slice(1, -1)}</em>
+          }
+          const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(part)
+          if (link) {
+            return (
+              <a key={i} href={link[2]} target="_blank" rel="noreferrer">
+                {link[1]}
+              </a>
+            )
+          }
+          return <span key={i}>{part}</span>
+        })}
+      </>
+    )
+  }
+
+  function renderPostBody(text: string): ReactNode {
+    const lines = text.split('\n')
+    const blocks: ReactNode[] = []
+    let i = 0
+    let key = 0
+    const isBullet = (s: string) => s.startsWith('- ')
+    const isNumbered = (s: string) => /^\d+\.\s/.test(s)
+    while (i < lines.length) {
+      if (isBullet(lines[i])) {
+        const items: string[] = []
+        while (i < lines.length && isBullet(lines[i])) {
+          items.push(lines[i].slice(2))
+          i++
+        }
+        blocks.push(
+          <ul key={key++}>
+            {items.map((t, j) => (
+              <li key={j}>{renderInline(t)}</li>
+            ))}
+          </ul>,
+        )
+      } else if (isNumbered(lines[i])) {
+        const items: string[] = []
+        while (i < lines.length && isNumbered(lines[i])) {
+          items.push(lines[i].replace(/^\d+\.\s/, ''))
+          i++
+        }
+        blocks.push(
+          <ol key={key++}>
+            {items.map((t, j) => (
+              <li key={j}>{renderInline(t)}</li>
+            ))}
+          </ol>,
+        )
+      } else {
+        const para: string[] = []
+        while (i < lines.length && !isBullet(lines[i]) && !isNumbered(lines[i]) && lines[i].trim() !== '') {
+          para.push(lines[i])
+          i++
+        }
+        if (para.length > 0) {
+          blocks.push(
+            <p key={key++}>
+              {para.map((ln, j) => (
+                <span key={j}>
+                  {j > 0 && <br />}
+                  {renderInline(ln)}
+                </span>
+              ))}
+            </p>,
+          )
+        }
+        while (i < lines.length && lines[i].trim() === '') i++
+      }
+    }
+    return blocks.length > 0 ? <>{blocks}</> : <p>{text}</p>
+  }
+
   // (D26) Form balasan — dipakai kartu pembuka thread, tiap balasan, dan
   // kartu pembuka thread topik. parentId null = balasan langsung atas
   // topik (postingan baru top-level).
@@ -760,7 +896,25 @@ export default function LessonDetailPage() {
     <form className="form" onSubmit={(e) => handleReply(e, parentId)}>
       <label>
         Balasan
+        <span className="reply-toolbar" role="toolbar" aria-label="Format balasan">
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => applyReplyFormat('bold')} title="Tebal">
+            <strong>B</strong>
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => applyReplyFormat('italic')} title="Miring">
+            <em>I</em>
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => applyReplyFormat('bullet')} title="Daftar bullet">
+            • Daftar
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => applyReplyFormat('numbered')} title="Daftar bernomor">
+            1. Daftar
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => applyReplyFormat('link')} title="Tautan">
+            Tautan
+          </button>
+        </span>
         <textarea
+          ref={replyTextareaRef}
           value={replyBody}
           onChange={(e) => setReplyBody(e.target.value)}
           rows={3}
@@ -828,7 +982,7 @@ export default function LessonDetailPage() {
         {parent && parent.accepted_answer_id === r.id ? ' · Jawaban diterima' : ''}
       </p>
       {attachmentBlock(attachmentFor(r.id))}
-      <p>{r.body}</p>
+      {renderPostBody(r.body)}
       <div className="form-actions">
         {user && !isAdmin && (
           <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(r.id)}>
@@ -1735,7 +1889,7 @@ export default function LessonDetailPage() {
                     {selectedThread.is_resolved ? ' · Selesai' : ''}
                   </p>
                   {attachmentBlock(attachmentFor(selectedThread.id))}
-                  <p>{selectedThread.body}</p>
+                  {renderPostBody(selectedThread.body)}
                   <div className="form-actions" style={{ marginBottom: '0.5rem' }}>
                     {user && !isAdmin && (
                       <button type="button" className="btn btn-ghost btn-small" onClick={() => void toggleHelpful(selectedThread.id)}>
@@ -1800,7 +1954,23 @@ export default function LessonDetailPage() {
                     <span className="chip">Mentor</span> ·{' '}
                     {new Date(discussionPrompt.created_at).toLocaleString('id-ID')}
                   </p>
-                  <p>{discussionPrompt.body}</p>
+                  {renderPostBody(discussionPrompt.body)}
+                  {/* (D27) Lampiran Topik Diskusi: pratinjau bila gambar,
+                      tautan unduh bila file lain. Lampiran disimpan pada
+                      baris resource topik (url + file_path). */}
+                  {discussionPrompt.url ? (
+                    /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(discussionPrompt.file_path ?? discussionPrompt.url) ? (
+                      <div style={{ margin: '0.5rem 0' }}>
+                        <img src={discussionPrompt.url} alt="Lampiran topik diskusi" style={{ maxWidth: '100%' }} />
+                      </div>
+                    ) : (
+                      <p>
+                        <a href={discussionPrompt.url} target="_blank" rel="noreferrer">
+                          <Icon name="download" size={18} /> Lampiran topik diskusi
+                        </a>
+                      </p>
+                    )
+                  ) : null}
                   {user && !isAdmin && replyTo !== 'prompt' && (
                     <button type="button" className="btn btn-primary btn-small" onClick={() => setReplyTo('prompt')}>
                       ↩ REPLY

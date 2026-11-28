@@ -80,6 +80,15 @@ export default function CourseBuilderPage() {
   const [topicExistingId, setTopicExistingId] = useState<string | null>(null)
   const [topicLoading, setTopicLoading] = useState(false)
   const [topicSaving, setTopicSaving] = useState(false)
+  // (D27) Lampiran Topik Diskusi: gambar/file pada baris resource topik
+  // (kolom url + file_path; kind TETAP 'reading' supaya prompt tetap
+  // ditemukan halaman lesson). Memakai ulang jalur upload "Tambah
+  // Materi" (bucket 'lesson-resources', uploadLessonFile).
+  const [topicFile, setTopicFile] = useState<File | null>(null)
+  const [topicFileUrl, setTopicFileUrl] = useState<string | null>(null)
+  const [topicFileError, setTopicFileError] = useState<string | null>(null)
+  const [topicAttachment, setTopicAttachment] = useState<{ url: string | null; file_path: string | null } | null>(null)
+  const [topicAttachmentRemoved, setTopicAttachmentRemoved] = useState(false)
   // Media lesson di form edit (state di level atas — editForm hanya render).
   const [editResources, setEditResources] = useState<LessonResource[]>([])
   const [editResourcesLoading, setEditResourcesLoading] = useState(false)
@@ -144,6 +153,15 @@ export default function CourseBuilderPage() {
   const [rubCriteria, setRubCriteria] = useState<RubricDraftCriterion[]>([])
   const [rubLoading, setRubLoading] = useState(false)
   const [rubSaving, setRubSaving] = useState(false)
+  // (D27) Kelola Lesson: lesson yang dipilih untuk dikelola per-lesson
+  // (materi, topik diskusi, tugas, kuis) — mengikuti urutan Pertemuan.
+  const [managedLessonId, setManagedLessonId] = useState('')
+  // (D27) Materi per lesson untuk kartu Kelola Lesson.
+  const [resourcesByLesson, setResourcesByLesson] = useState<Record<string, LessonResource[]>>({})
+  // (D27) Grup daftar yang dilipat: kunci "tugas-<lessonId>" /
+  // "kuis-<lessonId>" / "soal-<quizId>" / "ujian-soal-<examId>" —
+  // default TERLIPAT (tidak ada di map = tertutup).
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   const canEdit = profile?.role === 'admin' || course?.mentor_id === user?.id
 
@@ -177,7 +195,7 @@ export default function CourseBuilderPage() {
     const allLessonIds = allLessons.map((l) => l.id)
     // Kuis + tugas + ujian dimuat paralel. Bila tidak ada lesson,
     // kuis/tugas tetap seperti semula (tidak diubah), ujian tetap dimuat.
-    const [qData, aData, eData, lcData] = await Promise.all([
+    const [qData, aData, eData, lcData, resData] = await Promise.all([
       allLessonIds.length > 0
         ? supabase.from('quizzes').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
         : Promise.resolve(null),
@@ -186,9 +204,21 @@ export default function CourseBuilderPage() {
         : Promise.resolve(null),
       supabase.from('competency_exams').select('*').eq('course_id', courseId).then((r) => r.data),
       fetchLiveClasses(courseId),
+      // (D27) Materi per lesson untuk kartu Kelola Lesson.
+      allLessonIds.length > 0
+        ? supabase.from('lesson_resources').select('*').in('lesson_id', allLessonIds).then((r) => r.data)
+        : Promise.resolve(null),
     ])
     if (qData !== null) setQuizzes((qData ?? []) as Quiz[])
     if (aData !== null) setAssignments((aData ?? []) as Assignment[])
+    if (resData !== null) {
+      const resMap: Record<string, LessonResource[]> = {}
+      for (const r of (resData ?? []) as LessonResource[]) {
+        if (!resMap[r.lesson_id]) resMap[r.lesson_id] = []
+        resMap[r.lesson_id].push(r)
+      }
+      setResourcesByLesson(resMap)
+    }
     setExams((eData ?? []) as CompetencyExam[])
     setLiveClasses(lcData)
     // Soal kuis + soal ujian dimuat setelah kuis/ujian diketahui (butuh id).
@@ -270,6 +300,11 @@ export default function CourseBuilderPage() {
   }, [resFileUrl])
   useEffect(() => {
     return () => {
+      if (topicFileUrl) URL.revokeObjectURL(topicFileUrl)
+    }
+  }, [topicFileUrl])
+  useEffect(() => {
+    return () => {
       if (editMediaUrl) URL.revokeObjectURL(editMediaUrl)
     }
   }, [editMediaUrl])
@@ -300,6 +335,69 @@ export default function CourseBuilderPage() {
   ].filter((s) => !sectionOrderTaken.has(s.order))
   const ok = (msg: string) => setNotice(msg)
   const fail = (err: unknown) => setNotice(err instanceof Error ? err.message : 'Gagal menyimpan.')
+
+  // (D27) Nomor Pertemuan = posisi lesson dalam daftar datar semua
+  // lesson (modul lalu lesson) — sama seperti halaman course
+  // (CourseDetailPage: meetingNumber = i + 1).
+  const orderedLessons = allLessons
+  const meetingOf = (lessonId: string) => orderedLessons.findIndex((l) => l.id === lessonId) + 1
+  const managedLesson = orderedLessons.find((l) => l.id === managedLessonId) ?? null
+
+  function toggleGroup(key: string) {
+    setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  /** Kelompokkan item per lesson (untuk daftar terlipat); item yang
+   *  lesson-nya tidak ditemukan masuk kelompok "Lesson lain". */
+  function groupByLesson<T extends { lesson_id: string }>(items: T[]) {
+    const map = new Map<string, T[]>()
+    for (const it of items) {
+      const arr = map.get(it.lesson_id) ?? []
+      arr.push(it)
+      map.set(it.lesson_id, arr)
+    }
+    return [...map.entries()].map(([lessonId, list]) => ({
+      lesson: orderedLessons.find((l) => l.id === lessonId) ?? null,
+      items: list,
+    }))
+  }
+
+  /** Lompat ke form di bawah (sekaligus mengisi lesson-nya dulu). */
+  function jumpToForm(formId: string, preset: () => void) {
+    preset()
+    requestAnimationFrame(() => {
+      document.getElementById(formId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  // (D27) Pindah urutan lesson di dalam modulnya: tukar order_index
+  // dengan lesson tetangga. Tanpa migrasi — kolom order_index sudah ada
+  // sejak migrasi 001 (urutan tampilan = order_index).
+  async function moveLesson(lesson: Lesson, dir: -1 | 1) {
+    const siblings = lessonsByModule[lesson.module_id] ?? []
+    const idx = siblings.findIndex((l) => l.id === lesson.id)
+    const other = siblings[idx + dir]
+    if (!other) return
+    const { error } = await supabase
+      .from('lessons')
+      .update({ order_index: other.order_index ?? 0 })
+      .eq('id', lesson.id)
+    if (error) {
+      fail(error)
+      return
+    }
+    const { error: error2 } = await supabase
+      .from('lessons')
+      .update({ order_index: lesson.order_index ?? 0 })
+      .eq('id', other.id)
+    if (error2) {
+      fail(error2)
+      return
+    }
+    invalidateCatalogCache()
+    ok(`Urutan lesson "${lesson.title}" dipindah.`)
+    await refresh(currentCourse.id)
+  }
 
   async function changeAccessMode(mode: 'direct' | 'sequential') {
     setAccessMode(mode)
@@ -436,22 +534,29 @@ export default function CourseBuilderPage() {
     setTopicLesson(lessonId)
     setTopicBody('')
     setTopicExistingId(null)
+    setTopicAttachment(null)
+    setTopicAttachmentRemoved(false)
+    if (topicFileUrl) URL.revokeObjectURL(topicFileUrl)
+    setTopicFile(null)
+    setTopicFileUrl(null)
+    setTopicFileError(null)
     if (!lessonId) return
     setTopicLoading(true)
     try {
       const { data, error } = await supabase
         .from('lesson_resources')
-        .select('id,body')
+        .select('id,body,url,file_path')
         .eq('lesson_id', lessonId)
         .eq('kind', 'reading')
         .eq('title', 'Topik diskusi')
         .order('created_at', { ascending: true })
         .limit(1)
       if (error) throw error
-      const row = (data ?? [])[0] as { id: string; body: string | null } | undefined
+      const row = (data ?? [])[0] as { id: string; body: string | null; url: string | null; file_path: string | null } | undefined
       if (row) {
         setTopicExistingId(row.id)
         setTopicBody(row.body ?? '')
+        if (row.url || row.file_path) setTopicAttachment({ url: row.url, file_path: row.file_path })
       }
     } catch (err) {
       fail(err)
@@ -473,10 +578,25 @@ export default function CourseBuilderPage() {
     }
     setTopicSaving(true)
     try {
+      // (D27) Lampiran: file baru diunggah dulu (pola Tambah Materi);
+      // file lama diganti/dihapus dari bucket supaya tidak jadi yatim.
+      let url = topicAttachment?.url ?? null
+      let filePath = topicAttachment?.file_path ?? null
+      if (topicAttachmentRemoved) {
+        if (filePath) await deleteLessonFile(filePath).catch(() => undefined)
+        url = null
+        filePath = null
+      }
+      if (topicFile) {
+        const uploaded = await uploadLessonFile(topicFile, topicLesson, user?.id ?? '')
+        if (filePath) await deleteLessonFile(filePath).catch(() => undefined)
+        url = uploaded.url
+        filePath = uploaded.path
+      }
       if (topicExistingId) {
         const { error } = await supabase
           .from('lesson_resources')
-          .update({ body })
+          .update({ body, url, file_path: filePath })
           .eq('id', topicExistingId)
         if (error) throw error
       } else {
@@ -486,8 +606,8 @@ export default function CourseBuilderPage() {
             lesson_id: topicLesson,
             kind: 'reading',
             title: 'Topik diskusi',
-            url: null,
-            file_path: null,
+            url,
+            file_path: filePath,
             body,
           })
           .select('id')
@@ -495,12 +615,47 @@ export default function CourseBuilderPage() {
         if (error) throw error
         setTopicExistingId((data as { id: string }).id)
       }
+      setTopicAttachment(url || filePath ? { url, file_path: filePath } : null)
+      setTopicAttachmentRemoved(false)
+      if (topicFileUrl) URL.revokeObjectURL(topicFileUrl)
+      setTopicFile(null)
+      setTopicFileUrl(null)
+      setTopicFileError(null)
       ok('Topik diskusi disimpan.')
+      await refresh(currentCourse.id)
     } catch (err) {
       fail(err)
     } finally {
       setTopicSaving(false)
     }
+  }
+
+  /** File terpilih di form Topik Diskusi: validasi + pratinjau. */
+  async function handleTopicFileChange(file: File | null) {
+    if (topicFileUrl) URL.revokeObjectURL(topicFileUrl)
+    setTopicFile(null)
+    setTopicFileUrl(null)
+    setTopicFileError(null)
+    if (!file) return
+    const problem = await validateLessonFile(file, kindForFile(file))
+    if (problem) {
+      setTopicFileError(problem)
+      return
+    }
+    setTopicFile(file)
+    setTopicFileUrl(URL.createObjectURL(file))
+  }
+
+  /** Nama file dari path storage lesson/.../<uuid>-<nama-file>. */
+  function topicFileName(path: string | null | undefined): string {
+    if (!path) return 'Lampiran'
+    const base = path.split('/').pop() ?? path
+    return base.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, '')
+  }
+
+  /** Apakah lampiran topik berupa gambar (pratinjau inline) atau file lain. */
+  function isTopicImagePath(path: string | null | undefined): boolean {
+    return /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(path ?? '')
   }
 
   /** File terpilih di form Tambah Materi: validasi + pratinjau + sesuaikan Jenis. */
@@ -1195,23 +1350,45 @@ export default function CourseBuilderPage() {
       />
       {notice && <p className="notice-box">{notice}</p>}
 
+      {/* (D27) Struktur ringkas: modul + lesson dalam urutan Pertemuan
+          (sama seperti yang dilihat siswa di halaman course). Tiap baris
+          punya tombol ↑ ↓ untuk memindah urutan lesson di dalam modulnya,
+          plus Edit/Hapus yang lega (bukan inline sempit). */}
       <section className="section">
         <h2>Struktur Saat Ini</h2>
+        <p className="muted">
+          Urutan lesson mengikuti nomor Pertemuan di halaman course. Pakai ↑ ↓
+          untuk memindah lesson di dalam modulnya.
+        </p>
         {modules.length === 0 ? <p className="empty">Belum ada modul.</p> : (
-          <ul>
+          <ul className="list">
             {modules.map((m) => (
-              <li key={m.id}>
-                <strong>{m.title}</strong>{' '}
-                {editDeleteButtons('module', m.id, `modul "${m.title}"`, 'modules', { title: m.title })}
+              <li key={m.id} className="builder-structure-module">
+                <p><strong>{m.title}</strong></p>
+                <div className="form-actions">
+                  {editDeleteButtons('module', m.id, `modul "${m.title}"`, 'modules', { title: m.title })}
+                </div>
                 {editing?.kind === 'module' && editing.id === m.id && editForm('module')}
-                <ul>
-                  {(lessonsByModule[m.id] ?? []).map((l) => (
-                    <li key={l.id}>
-                      {l.title}{' '}
-                      {editDeleteButtons('lesson', l.id, `lesson "${l.title}"`, 'lessons', { title: l.title, text: l.content ?? '', url: l.video_url ?? '' })}
-                      {editing?.kind === 'lesson' && editing.id === l.id && editForm('lesson')}
-                    </li>
-                  ))}
+                <ul className="list">
+                  {(lessonsByModule[m.id] ?? []).map((l) => {
+                    const siblings = lessonsByModule[m.id] ?? []
+                    const idx = siblings.findIndex((x) => x.id === l.id)
+                    return (
+                      <li key={l.id} className="builder-structure-lesson">
+                        <p><strong>Pertemuan {meetingOf(l.id)}</strong> — {l.title}</p>
+                        <div className="form-actions">
+                          <button type="button" className="btn btn-ghost btn-small" disabled={idx === 0} onClick={() => void moveLesson(l, -1)} title="Pindah ke atas">
+                            ↑
+                          </button>
+                          <button type="button" className="btn btn-ghost btn-small" disabled={idx === siblings.length - 1} onClick={() => void moveLesson(l, 1)} title="Pindah ke bawah">
+                            ↓
+                          </button>
+                          {editDeleteButtons('lesson', l.id, `lesson "${l.title}"`, 'lessons', { title: l.title, text: l.content ?? '', url: l.video_url ?? '' })}
+                        </div>
+                        {editing?.kind === 'lesson' && editing.id === l.id && editForm('lesson')}
+                      </li>
+                    )
+                  })}
                 </ul>
               </li>
             ))}
@@ -1222,8 +1399,124 @@ export default function CourseBuilderPage() {
         </p>
       </section>
 
-      <section className="section">
-        <h2>Mode Akses Section</h2>
+      {/* (D27) Kelola Lesson: pilih satu lesson, lihat dan atur isinya
+          (materi, topik diskusi, tugas, kuis) dalam satu tempat — susunan
+          mengikuti urutan Pertemuan, bukan per jenis konten. */}
+      <section className="section" id="kelola-lesson">
+        <h2>Kelola Lesson</h2>
+        <p className="muted">
+          Pilih satu lesson untuk melihat isinya. Tombol di tiap kartu akan
+          mengisi dan menggulir ke form yang bersangkutan di bawah.
+        </p>
+        <label>
+          Lesson
+          <select value={managedLessonId} onChange={(e) => setManagedLessonId(e.target.value)} style={selectStyle}>
+            <option value="">— Pilih lesson —</option>
+            {orderedLessons.map((l) => (
+              <option key={l.id} value={l.id}>
+                Pertemuan {meetingOf(l.id)} — {l.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        {managedLesson && (
+          <div className="builder-manage">
+            <div className="builder-card">
+              <h3>Materi</h3>
+              {(() => {
+                const items = (resourcesByLesson[managedLesson.id] ?? []).filter(
+                  (r) => !(r.kind === 'reading' && r.title === 'Topik diskusi'),
+                )
+                if (items.length === 0) return <p className="muted">Belum ada materi untuk lesson ini.</p>
+                return (
+                  <ul className="list">
+                    {items.map((r) => (
+                      <li key={r.id}>
+                        <strong>{r.title}</strong>{' '}
+                        <span className="muted">
+                          {r.kind === 'reading' ? 'Bacaan' : r.kind === 'image' ? 'Gambar' : r.kind === 'pdf' ? 'PDF' : r.kind === 'video' ? 'Video' : r.kind === 'file' ? 'File' : 'Tautan'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary btn-small" onClick={() => jumpToForm('form-materi', () => setResLesson(managedLesson.id))}>
+                  Tambah Materi
+                </button>
+              </div>
+            </div>
+            <div className="builder-card">
+              <h3>Topik Diskusi</h3>
+              {(() => {
+                const topic = (resourcesByLesson[managedLesson.id] ?? []).find(
+                  (r) => r.kind === 'reading' && r.title === 'Topik diskusi',
+                )
+                if (!topic) return <p className="muted">Belum ada topik diskusi untuk lesson ini.</p>
+                return (
+                  <>
+                    <p>{topic.body ? `${topic.body.slice(0, 160)}${topic.body.length > 160 ? '…' : ''}` : '(Topik kosong)'}</p>
+                    {topic.file_path ? <p className="muted">Lampiran: {topicFileName(topic.file_path)}</p> : null}
+                  </>
+                )
+              })()}
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary btn-small" onClick={() => jumpToForm('form-topik', () => void loadTopicPrompt(managedLesson.id))}>
+                  Tulis / Edit Topik Diskusi
+                </button>
+              </div>
+            </div>
+            <div className="builder-card">
+              <h3>Tugas</h3>
+              {(() => {
+                const items = assignments.filter((a) => a.lesson_id === managedLesson.id)
+                if (items.length === 0) return <p className="muted">Belum ada tugas untuk lesson ini.</p>
+                return (
+                  <ul className="list">
+                    {items.map((a) => (
+                      <li key={a.id}>
+                        <strong>{a.title}</strong> — maks. {a.max_score}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary btn-small" onClick={() => jumpToForm('form-tugas', () => setAsgLesson(managedLesson.id))}>
+                  Buat Tugas
+                </button>
+              </div>
+            </div>
+            <div className="builder-card">
+              <h3>Kuis (Pretest / Posttest)</h3>
+              {(() => {
+                const items = quizzes.filter((q) => q.lesson_id === managedLesson.id)
+                if (items.length === 0) return <p className="muted">Belum ada kuis untuk lesson ini.</p>
+                return (
+                  <ul className="list">
+                    {items.map((q) => (
+                      <li key={q.id}>
+                        <strong>{q.title}</strong> ({q.kind === 'pretest' ? 'Pretest' : q.kind === 'posttest' ? 'Posttest' : 'Kuis'}) · lulus {q.passing_score}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary btn-small" onClick={() => jumpToForm('form-kuis', () => setQuizLesson(managedLesson.id))}>
+                  Buat Kuis
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* (D27) Perkakas level course dilipat secara default supaya halaman
+          tidak mengintimidasi saat dibuka. */}
+      <details className="section builder-details">
+        <summary>Mode Akses Section</summary>
         <form
           className="form"
           onSubmit={(e) => {
@@ -1244,10 +1537,10 @@ export default function CourseBuilderPage() {
           </label>
           {accessSaving && <p className="muted">Menyimpan…</p>}
         </form>
-      </section>
+      </details>
 
-      <section className="section">
-        <h2>Tambah Modul</h2>
+      <details className="section builder-details">
+        <summary>Tambah Modul</summary>
         <p className="muted">
           Modul Orientasi sudah ada dan tidak diubah. Setiap course maksimal 2 section:
           Section 1 dan Section 2, masing-masing berisi 5 lesson.
@@ -1270,7 +1563,7 @@ export default function CourseBuilderPage() {
             <button type="submit" className="btn btn-primary">Tambah Modul</button>
           </form>
         )}
-      </section>
+      </details>
 
       <section className="section">
         <h2>Tambah Lesson</h2>
@@ -1300,7 +1593,7 @@ export default function CourseBuilderPage() {
         </form>
       </section>
 
-      <section className="section">
+      <section className="section" id="form-materi">
         <h2>Tambah Materi Lesson (bacaan / gambar / PDF / video / file / tautan)</h2>
         <form className="form" onSubmit={addResource}>
           <label>
@@ -1356,7 +1649,7 @@ export default function CourseBuilderPage() {
       {/* (D26) Topik Diskusi — prompt forum per lesson ditulis mentor
           (format Mentari: pengantar + "Studi Kasus" + pertanyaan pemandu).
           Prompt tampil sebagai kartu pembuka thread di Forum Diskusi. */}
-      <section className="section">
+      <section className="section" id="form-topik">
         <h2>Topik Diskusi</h2>
         <p className="muted">
           Topik yang dibuka siswa di Forum Diskusi lesson ini. Tulis seperti
@@ -1387,13 +1680,54 @@ export default function CourseBuilderPage() {
               />
             </label>
           )}
+          {/* (D27) Lampiran Topik Diskusi: gambar/file pada prompt — tampil
+              di kartu pembuka thread topik (pratinjau bila gambar, tautan
+              unduh bila file lain). Memakai ulang jalur upload materi. */}
+          {topicAttachment && !topicAttachmentRemoved && (
+            <div>
+              <p className="muted">Lampiran saat ini: {topicFileName(topicAttachment.file_path)}</p>
+              {isTopicImagePath(topicAttachment.file_path) && topicAttachment.url ? (
+                <img src={topicAttachment.url} alt={topicFileName(topicAttachment.file_path)} style={{ maxWidth: '100%', maxHeight: 240 }} />
+              ) : topicAttachment.url ? (
+                <p>
+                  <a href={topicAttachment.url} target="_blank" rel="noreferrer">
+                    Buka lampiran
+                  </a>
+                </p>
+              ) : null}
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => setTopicAttachmentRemoved(true)}>
+                Hapus lampiran
+              </button>
+            </div>
+          )}
+          <label>
+            Lampiran gambar/file (opsional)
+            <input
+              type="file"
+              accept="image/*,video/*,application/pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.txt"
+              onChange={(e) => void handleTopicFileChange(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          {topicFileError && <p className="error-box">{topicFileError}</p>}
+          {topicFile && topicFileUrl && (
+            <div>
+              <p className="muted">
+                {topicFile.name} · {formatFileSize(topicFile.size)}
+              </p>
+              {kindForFile(topicFile) === 'image' ? (
+                <img src={topicFileUrl} alt={topicFile.name} style={{ maxWidth: '100%', maxHeight: 240 }} />
+              ) : kindForFile(topicFile) === 'video' ? (
+                <video controls src={topicFileUrl} style={{ maxWidth: '100%', maxHeight: 240 }} />
+              ) : null}
+            </div>
+          )}
           <button type="submit" className="btn btn-primary" disabled={topicSaving || topicLoading}>
             {topicSaving ? 'Menyimpan…' : topicExistingId ? 'Simpan Perubahan Topik' : 'Simpan Topik Diskusi'}
           </button>
         </form>
       </section>
 
-      <section className="section">
+      <section className="section" id="form-tugas">
         <h2>Buat Tugas</h2>
         <form className="form" onSubmit={addAssignment}>
           <label>
@@ -1422,16 +1756,35 @@ export default function CourseBuilderPage() {
         {assignments.length > 0 && (
           <>
             <h3>Tugas yang Sudah Dibuat</h3>
-            <ul>
-              {assignments.map((a) => (
-                <li key={a.id}>
-                  <strong>{a.title}</strong> — maks. {a.max_score}
-                  {a.due_date ? ` · tenggat ${new Date(a.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}{' '}
-                  {editDeleteButtons('assignment', a.id, `tugas "${a.title}"`, 'assignments', { title: a.title, text: a.description ?? '', num: String(a.max_score), num2: toLocalInput(a.due_date) })}
-                  {editing?.kind === 'assignment' && editing.id === a.id && editForm('assignment')}
-                </li>
-              ))}
-            </ul>
+            {/* (D27) Dikelompokkan per lesson dan TERLIPAT secara default. */}
+            {groupByLesson(assignments).map(({ lesson, items }) => {
+              const key = `tugas-${lesson?.id ?? 'lain'}`
+              const open = !!openGroups[key]
+              const label = lesson ? `Pertemuan ${meetingOf(lesson.id)} — ${lesson.title}` : 'Lesson lain'
+              return (
+                <div key={key} className="builder-group">
+                  <button type="button" className="builder-group-toggle" onClick={() => toggleGroup(key)} aria-expanded={open}>
+                    {open ? '▾' : '▸'} {label} ({items.length} tugas)
+                  </button>
+                  {open && (
+                    <ul className="list">
+                      {items.map((a) => (
+                        <li key={a.id} className="builder-item">
+                          <p>
+                            <strong>{a.title}</strong> — maks. {a.max_score}
+                            {a.due_date ? ` · tenggat ${new Date(a.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+                          </p>
+                          <div className="form-actions">
+                            {editDeleteButtons('assignment', a.id, `tugas "${a.title}"`, 'assignments', { title: a.title, text: a.description ?? '', num: String(a.max_score), num2: toLocalInput(a.due_date) })}
+                          </div>
+                          {editing?.kind === 'assignment' && editing.id === a.id && editForm('assignment')}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )
+            })}
           </>
         )}
       </section>
@@ -1511,7 +1864,7 @@ export default function CourseBuilderPage() {
         </form>
       </section>
 
-      <section className="section">
+      <section className="section" id="form-kuis">
         <h2>Buat Kuis + Soal</h2>
         <form className="form" onSubmit={addQuiz}>
           <label>
@@ -1561,32 +1914,68 @@ export default function CourseBuilderPage() {
         {quizzes.length > 0 && (
           <>
             <h3>Kuis yang Sudah Dibuat</h3>
-            <ul>
-              {quizzes.map((q) => (
-                <li key={q.id}>
-                  <strong>{q.title}</strong> ({q.kind === 'pretest' ? 'Pretest' : q.kind === 'posttest' ? 'Posttest' : 'Kuis'}) · lulus {q.passing_score}{' '}
-                  {editDeleteButtons('quiz', q.id, `kuis "${q.title}"`, 'quizzes', { title: q.title, num: String(q.passing_score) })}
-                  {editing?.kind === 'quiz' && editing.id === q.id && editForm('quiz')}
-                  {quizQuestions.filter((qq) => qq.quiz_id === q.id).length > 0 && (
-                    <ul>
-                      {quizQuestions.filter((qq) => qq.quiz_id === q.id).map((qq) => (
-                        <li key={qq.id}>
-                          {qq.question}{' '}
-                          {editDeleteButtons('quizQuestion', qq.id, 'soal kuis ini', 'quiz_questions', { text: qq.question, answer: qq.correct_answer ?? '', expl: qq.explanation ?? '', options: (qq.options ?? []).join('\n'), qkind: qq.kind })}
-                          {editing?.kind === 'quizQuestion' && editing.id === qq.id && editForm('quizQuestion')}
-                        </li>
-                      ))}
+            {/* (D27) Dikelompokkan per lesson dan TERLIPAT secara default;
+                soal tiap kuis juga terlipat — tidak pernah tampil semua
+                soal terbuka secara default. */}
+            {groupByLesson(quizzes).map(({ lesson, items }) => {
+              const key = `kuis-${lesson?.id ?? 'lain'}`
+              const open = !!openGroups[key]
+              const label = lesson ? `Pertemuan ${meetingOf(lesson.id)} — ${lesson.title}` : 'Lesson lain'
+              return (
+                <div key={key} className="builder-group">
+                  <button type="button" className="builder-group-toggle" onClick={() => toggleGroup(key)} aria-expanded={open}>
+                    {open ? '▾' : '▸'} {label} ({items.length} kuis)
+                  </button>
+                  {open && (
+                    <ul className="list">
+                      {items.map((q) => {
+                        const qs = quizQuestions.filter((qq) => qq.quiz_id === q.id)
+                        const qKey = `soal-${q.id}`
+                        const qOpen = !!openGroups[qKey]
+                        return (
+                          <li key={q.id} className="builder-item">
+                            <p>
+                              <strong>{q.title}</strong> ({q.kind === 'pretest' ? 'Pretest' : q.kind === 'posttest' ? 'Posttest' : 'Kuis'}) · lulus {q.passing_score}
+                            </p>
+                            <div className="form-actions">
+                              {editDeleteButtons('quiz', q.id, `kuis "${q.title}"`, 'quizzes', { title: q.title, num: String(q.passing_score) })}
+                            </div>
+                            {editing?.kind === 'quiz' && editing.id === q.id && editForm('quiz')}
+                            {qs.length > 0 && (
+                              <>
+                                <button type="button" className="builder-group-toggle" onClick={() => toggleGroup(qKey)} aria-expanded={qOpen}>
+                                  {qOpen ? '▾' : '▸'} Lihat {qs.length} soal
+                                </button>
+                                {qOpen && (
+                                  <ul className="list">
+                                    {qs.map((qq) => (
+                                      <li key={qq.id}>
+                                        <p>{qq.question}</p>
+                                        <div className="form-actions">
+                                          {editDeleteButtons('quizQuestion', qq.id, 'soal kuis ini', 'quiz_questions', { text: qq.question, answer: qq.correct_answer ?? '', expl: qq.explanation ?? '', options: (qq.options ?? []).join('\n'), qkind: qq.kind })}
+                                        </div>
+                                        {editing?.kind === 'quizQuestion' && editing.id === qq.id && editForm('quizQuestion')}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </>
+                            )}
+                          </li>
+                        )
+                      })}
                     </ul>
                   )}
-                </li>
-              ))}
-            </ul>
+                </div>
+              )
+            })}
           </>
         )}
       </section>
 
-      <section className="section">
-        <h2>Buat Ujian Kompetensi + Soal</h2>
+      {/* (D27) Perkakas level course dilipat secara default. */}
+      <details className="section builder-details">
+        <summary>Buat Ujian Kompetensi + Soal</summary>
         <form className="form" onSubmit={addExam}>
           <label>Judul ujian<input value={examTitle} onChange={(e) => setExamTitle(e.target.value)} required /></label>
           <label>Deskripsi<textarea value={examDesc} onChange={(e) => setExamDesc(e.target.value)} rows={2} /></label>
@@ -1621,33 +2010,51 @@ export default function CourseBuilderPage() {
         {exams.length > 0 && (
           <>
             <h3>Ujian yang Sudah Dibuat</h3>
-            <ul>
-              {exams.map((x) => (
-                <li key={x.id}>
-                  <strong>{x.title}</strong> · lulus {x.passing_score}
-                  {x.max_attempts ? ` · maks. ${x.max_attempts} percobaan` : ''}{' '}
-                  {editDeleteButtons('exam', x.id, `ujian "${x.title}"`, 'competency_exams', { title: x.title, text: x.description ?? '', num: String(x.passing_score), num2: x.max_attempts ? String(x.max_attempts) : '' })}
-                  {editing?.kind === 'exam' && editing.id === x.id && editForm('exam')}
-                  {examQuestions.filter((eq) => eq.exam_id === x.id).length > 0 && (
-                    <ul>
-                      {examQuestions.filter((eq) => eq.exam_id === x.id).map((eq) => (
-                        <li key={eq.id}>
-                          {eq.question}{' '}
-                          {editDeleteButtons('examQuestion', eq.id, 'soal ujian ini', 'exam_questions', { text: eq.question, answer: eq.correct_answer ?? '', expl: eq.explanation ?? '', options: (eq.options ?? []).join('\n'), qkind: eq.kind })}
-                          {editing?.kind === 'examQuestion' && editing.id === eq.id && editForm('examQuestion')}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              ))}
+            <ul className="list">
+              {exams.map((x) => {
+                const eqs = examQuestions.filter((eq) => eq.exam_id === x.id)
+                const xKey = `ujian-soal-${x.id}`
+                const xOpen = !!openGroups[xKey]
+                return (
+                  <li key={x.id} className="builder-item">
+                    <p>
+                      <strong>{x.title}</strong> · lulus {x.passing_score}
+                      {x.max_attempts ? ` · maks. ${x.max_attempts} percobaan` : ''}
+                    </p>
+                    <div className="form-actions">
+                      {editDeleteButtons('exam', x.id, `ujian "${x.title}"`, 'competency_exams', { title: x.title, text: x.description ?? '', num: String(x.passing_score), num2: x.max_attempts ? String(x.max_attempts) : '' })}
+                    </div>
+                    {editing?.kind === 'exam' && editing.id === x.id && editForm('exam')}
+                    {eqs.length > 0 && (
+                      <>
+                        <button type="button" className="builder-group-toggle" onClick={() => toggleGroup(xKey)} aria-expanded={xOpen}>
+                          {xOpen ? '▾' : '▸'} Lihat {eqs.length} soal
+                        </button>
+                        {xOpen && (
+                          <ul className="list">
+                            {eqs.map((eq) => (
+                              <li key={eq.id}>
+                                <p>{eq.question}</p>
+                                <div className="form-actions">
+                                  {editDeleteButtons('examQuestion', eq.id, 'soal ujian ini', 'exam_questions', { text: eq.question, answer: eq.correct_answer ?? '', expl: eq.explanation ?? '', options: (eq.options ?? []).join('\n'), qkind: eq.kind })}
+                                </div>
+                                {editing?.kind === 'examQuestion' && editing.id === eq.id && editForm('examQuestion')}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </>
         )}
-      </section>
+      </details>
 
-      <section className="section">
-        <h2>Kelas Live</h2>
+      <details className="section builder-details">
+        <summary>Kelas Live</summary>
         <p className="muted">
           Jadwalkan sesi tatap muka daring untuk course ini. Siswa yang terdaftar
           bisa melihat jadwal dan tautan meet-nya.
@@ -1692,7 +2099,7 @@ export default function CourseBuilderPage() {
             ))}
           </ul>
         )}
-      </section>
+      </details>
     </div>
   )
 }
